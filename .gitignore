@@ -4,6 +4,7 @@ node_modules/
 
 # AlloLib (cloned separately)
 allolib/
+al_ext/
 
 # Build outputs
 dist/

@@ -34,7 +34,7 @@ allolib-studio-online/
 │   ├── docker/         # Dockerfile and compile script
 │   └── ...
 ├── allolib/            # AlloLib library (cloned separately)
-├── allolib-wasm/       # AlloLib WebAssembly port helpers
+├── al_ext/             # AlloLib extensions (cloned separately)
 └── docs/               # Documentation
 ```
 
@@ -72,6 +72,12 @@ cd Allolib-Studio-Online
 # Clone AlloLib (required for compilation)
 git clone https://github.com/AlloSphere-Research-Group/allolib.git
 cd allolib
+git submodule update --init --recursive
+cd ..
+
+# Clone AlloLib extensions (optional, for additional features)
+git clone https://github.com/AlloSphere-Research-Group/al_ext.git
+cd al_ext
 git submodule update --init --recursive
 cd ..
 

@@ -9,11 +9,13 @@ JOB_ID="${3:-default}"
 
 ALLOLIB_DIR="${ALLOLIB_DIR:-/app/allolib}"
 GAMMA_DIR="${GAMMA_DIR:-/app/allolib/external/Gamma}"
+AL_EXT_DIR="${AL_EXT_DIR:-/app/al_ext}"
 
 echo "[INFO] Starting compilation for job: $JOB_ID"
 echo "[INFO] Source: $SOURCE_FILE"
 echo "[INFO] Output: $OUTPUT_DIR"
 echo "[INFO] AlloLib: $ALLOLIB_DIR"
+echo "[INFO] AlloLib Extensions: $AL_EXT_DIR"
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -43,6 +45,9 @@ INCLUDE_FLAGS=(
     -I"$ALLOLIB_DIR/external/json/single_include"
     -I"$ALLOLIB_DIR/external/imgui"
     -I"$GAMMA_DIR"
+    -I"$AL_EXT_DIR/soundfile"
+    -I"$AL_EXT_DIR/spatialaudio"
+    -I"$AL_EXT_DIR/assets3d"
 )
 
 # Compile

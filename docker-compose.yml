@@ -18,6 +18,7 @@ services:
     volumes:
       - ./backend/docker/compile.sh:/app/compile.sh:ro
       - ./allolib:/app/allolib:ro
+      - ./al_ext:/app/al_ext:ro
       - compiler-source:/app/source
       - compiler-output:/app/output
       - compiler-cache:/app/cache
@@ -25,6 +26,7 @@ services:
       - EMSDK=/emsdk
       - ALLOLIB_DIR=/app/allolib
       - GAMMA_DIR=/app/allolib/external/Gamma
+      - AL_EXT_DIR=/app/al_ext
     # Keep container running for compilation requests
     command: tail -f /dev/null
 
