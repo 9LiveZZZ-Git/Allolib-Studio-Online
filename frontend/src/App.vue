@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useAppStore } from './stores/app'
 import Toolbar from './components/Toolbar.vue'
 import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
 import Console from './components/Console.vue'
 
-const isRunning = ref(false)
-const consoleOutput = ref<string[]>([])
+const appStore = useAppStore()
+const editorRef = ref<InstanceType<typeof EditorPane>>()
 
-const handleRun = () => {
-  isRunning.value = true
-  consoleOutput.value.push('[INFO] Starting compilation...')
+const handleRun = async () => {
+  const code = editorRef.value?.getCode() || ''
+  await appStore.compile(code)
 }
 
 const handleStop = () => {
-  isRunning.value = false
-  consoleOutput.value.push('[INFO] Execution stopped.')
+  appStore.stop()
 }
 </script>
 
@@ -23,7 +23,7 @@ const handleStop = () => {
   <div class="h-screen flex flex-col bg-editor-bg">
     <!-- Toolbar -->
     <Toolbar
-      :is-running="isRunning"
+      :status="appStore.status"
       @run="handleRun"
       @stop="handleStop"
     />
@@ -32,13 +32,19 @@ const handleStop = () => {
     <div class="flex-1 flex overflow-hidden">
       <!-- Left Pane: Editor + Console -->
       <div class="w-1/2 flex flex-col border-r border-editor-border">
-        <EditorPane class="flex-1" />
-        <Console :output="consoleOutput" class="h-1/3" />
+        <EditorPane ref="editorRef" class="flex-[2]" />
+        <Console :output="appStore.consoleOutput" class="flex-1 min-h-[150px]" />
       </div>
 
       <!-- Right Pane: Viewer -->
       <div class="w-1/2">
-        <ViewerPane :is-running="isRunning" />
+        <ViewerPane
+          :status="appStore.status"
+          :js-url="appStore.jsUrl"
+          @started="appStore.setRunning"
+          @error="appStore.setError"
+          @log="appStore.log"
+        />
       </div>
     </div>
   </div>

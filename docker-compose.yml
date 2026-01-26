@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # Redis for job queue and caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+
+  # Emscripten compilation service
+  compiler:
+    build:
+      context: ./backend/docker
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend/docker/compile.sh:/app/compile.sh:ro
+      - compiler-cache:/app/cache
+      - compiler-output:/app/output
+    environment:
+      - EMSDK=/emsdk
+    # Keep container running for compilation requests
+    command: tail -f /dev/null
+
+  # Backend API server (development)
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - compiler-output:/app/compiled
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - compiler
+    command: npm run dev
+
+volumes:
+  redis-data:
+  compiler-cache:
+  compiler-output:
