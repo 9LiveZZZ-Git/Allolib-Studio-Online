@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.wasm
+*.js.map
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE and tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+*.tsbuildinfo
+
+# Docker
+docker-compose.override.yml
+
+# Redis dump
+dump.rdb
+
+# Emscripten cache
+.emscripten_cache/
+
+# Compiled WASM artifacts (cached builds)
+compiled-cache/
+
+# Temporary files
+tmp/
+temp/

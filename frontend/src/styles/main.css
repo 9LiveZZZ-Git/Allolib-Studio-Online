@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --editor-bg: #1e1e1e;
+  --editor-sidebar: #252526;
+  --editor-active: #37373d;
+  --editor-border: #3c3c3c;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--editor-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--editor-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #505050;
+}
+
+/* Split pane resize handle */
+.gutter {
+  background-color: var(--editor-border);
+  background-repeat: no-repeat;
+  background-position: 50%;
+}
+
+.gutter:hover {
+  background-color: #505050;
+}
+
+.gutter-horizontal {
+  cursor: col-resize;
+}
+
+.gutter-vertical {
+  cursor: row-resize;
+}
