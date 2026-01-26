@@ -17,10 +17,14 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./backend/docker/compile.sh:/app/compile.sh:ro
-      - compiler-cache:/app/cache
+      - ./allolib:/app/allolib:ro
+      - compiler-source:/app/source
       - compiler-output:/app/output
+      - compiler-cache:/app/cache
     environment:
       - EMSDK=/emsdk
+      - ALLOLIB_DIR=/app/allolib
+      - GAMMA_DIR=/app/allolib/external/Gamma
     # Keep container running for compilation requests
     command: tail -f /dev/null
 
@@ -38,6 +42,7 @@ services:
       - NODE_ENV=development
       - PORT=4000
       - REDIS_URL=redis://redis:6379
+      - USE_DOCKER=true
     depends_on:
       - redis
       - compiler
@@ -46,4 +51,5 @@ services:
 volumes:
   redis-data:
   compiler-cache:
+  compiler-source:
   compiler-output:

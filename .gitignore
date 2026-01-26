@@ -2,6 +2,9 @@
 node_modules/
 .pnpm-store/
 
+# AlloLib (cloned separately)
+allolib/
+
 # Build outputs
 dist/
 build/

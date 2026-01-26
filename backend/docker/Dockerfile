@@ -14,16 +14,16 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Create directories for compilation
-RUN mkdir -p /app/source /app/output /app/cache
-
-# Pre-download and cache common AlloLib headers
-# This will be populated when AlloLib is integrated
-RUN mkdir -p /app/allolib
+RUN mkdir -p /app/source /app/output /app/cache /app/allolib
 
 # Environment variables
 ENV EMSDK=/emsdk
 ENV EM_CONFIG=/emsdk/.emscripten
 ENV PATH="/emsdk:/emsdk/upstream/emscripten:${PATH}"
+
+# AlloLib include paths (mounted at runtime)
+ENV ALLOLIB_DIR=/app/allolib
+ENV GAMMA_DIR=/app/allolib/external/Gamma
 
 # Compilation script
 COPY compile.sh /app/compile.sh
