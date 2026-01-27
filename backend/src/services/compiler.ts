@@ -25,7 +25,9 @@ export interface CompilationJob {
 
 const jobs = new Map<string, CompilationJob>()
 const COMPILE_DIR = process.env.COMPILE_DIR || './compiled'
+const SOURCE_DIR = process.env.SOURCE_DIR || './source'
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
+const COMPILER_CONTAINER = process.env.COMPILER_CONTAINER || 'allolib-compiler'
 
 export async function createCompilationJob(source: string): Promise<CompilationJob> {
   const job: CompilationJob = {
@@ -59,16 +61,17 @@ async function compileAsync(job: CompilationJob): Promise<void> {
   const startTime = Date.now()
   job.status = 'compiling'
 
-  const jobDir = join(COMPILE_DIR, job.id)
-  const sourceFile = join(jobDir, 'main.cpp')
-  const outputDir = join(jobDir, 'output')
+  // Source files go to shared source volume, output to compiled volume
+  const sourceJobDir = join(SOURCE_DIR, job.id)
+  const sourceFile = join(sourceJobDir, 'main.cpp')
+  const outputDir = join(COMPILE_DIR, job.id)
 
   try {
-    // Create job directory
-    await mkdir(jobDir, { recursive: true })
+    // Create job directories
+    await mkdir(sourceJobDir, { recursive: true })
     await mkdir(outputDir, { recursive: true })
 
-    // Write source file
+    // Write source file to shared volume
     await writeFile(sourceFile, job.source)
 
     if (USE_DOCKER) {
@@ -109,37 +112,51 @@ async function compileWithDocker(
   outputDir: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const process = spawn('docker', [
+    // Paths inside the compiler container
+    const containerSourceFile = `/app/source/${job.id}/main.cpp`
+    const containerOutputDir = `/app/output/${job.id}`
+
+    logger.info(`[${job.id}] Starting Docker compilation...`)
+    logger.info(`[${job.id}] Container: ${COMPILER_CONTAINER}`)
+    logger.info(`[${job.id}] Source: ${containerSourceFile}`)
+    logger.info(`[${job.id}] Output: ${containerOutputDir}`)
+
+    const dockerProcess = spawn('docker', [
       'exec',
-      'allolib-studio-online-compiler-1',
+      COMPILER_CONTAINER,
       '/app/compile.sh',
-      `/app/source/${job.id}/main.cpp`,
-      `/app/output/${job.id}`,
+      containerSourceFile,
+      containerOutputDir,
       job.id,
     ])
 
     let stdout = ''
     let stderr = ''
 
-    process.stdout.on('data', (data) => {
+    dockerProcess.stdout.on('data', (data) => {
       stdout += data.toString()
-      logger.debug(`[${job.id}] ${data}`)
+      logger.info(`[${job.id}] ${data.toString().trim()}`)
     })
 
-    process.stderr.on('data', (data) => {
+    dockerProcess.stderr.on('data', (data) => {
       stderr += data.toString()
-      logger.warn(`[${job.id}] ${data}`)
+      logger.warn(`[${job.id}] ${data.toString().trim()}`)
     })
 
-    process.on('close', (code) => {
+    dockerProcess.on('close', (code) => {
       if (code === 0) {
+        logger.info(`[${job.id}] Compilation successful`)
         resolve()
       } else {
+        logger.error(`[${job.id}] Compilation failed with code ${code}`)
         reject(new Error(`Compilation failed with code ${code}: ${stderr}`))
       }
     })
 
-    process.on('error', reject)
+    dockerProcess.on('error', (err) => {
+      logger.error(`[${job.id}] Docker process error: ${err.message}`)
+      reject(err)
+    })
   })
 }
 
@@ -169,7 +186,8 @@ export default function createModule(config = {}) {
 }
 
 export async function getCompiledFile(jobId: string, filename: string): Promise<Buffer | null> {
-  const filePath = join(COMPILE_DIR, jobId, 'output', filename)
+  // Output files are directly in the job directory (copied from compiler output volume)
+  const filePath = join(COMPILE_DIR, jobId, filename)
   try {
     return await readFile(filePath)
   } catch {

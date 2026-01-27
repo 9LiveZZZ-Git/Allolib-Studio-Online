@@ -17,6 +17,11 @@ const handleRun = async () => {
 const handleStop = () => {
   appStore.stop()
 }
+
+const handleLoadExample = (code: string) => {
+  editorRef.value?.setCode(code)
+  appStore.log('[INFO] Example loaded')
+}
 </script>
 
 <template>
@@ -26,6 +31,7 @@ const handleStop = () => {
       :status="appStore.status"
       @run="handleRun"
       @stop="handleStop"
+      @load-example="handleLoadExample"
     />
 
     <!-- Main Content -->

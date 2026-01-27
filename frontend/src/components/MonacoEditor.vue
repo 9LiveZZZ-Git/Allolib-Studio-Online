@@ -3,33 +3,15 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import { configureMonaco, defaultCode } from '@/utils/monaco-config'
 
+// Import Monaco workers using Vite's ?worker syntax
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+
 // Initialize Monaco workers
 self.MonacoEnvironment = {
-  getWorker: function (_moduleId: string, label: string) {
-    const getWorkerModule = (moduleUrl: string) => {
-      return new Worker(
-        new URL(moduleUrl, import.meta.url),
-        { type: 'module' }
-      )
-    }
-
-    switch (label) {
-      case 'json':
-        return getWorkerModule('monaco-editor/esm/vs/language/json/json.worker.js')
-      case 'css':
-      case 'scss':
-      case 'less':
-        return getWorkerModule('monaco-editor/esm/vs/language/css/css.worker.js')
-      case 'html':
-      case 'handlebars':
-      case 'razor':
-        return getWorkerModule('monaco-editor/esm/vs/language/html/html.worker.js')
-      case 'typescript':
-      case 'javascript':
-        return getWorkerModule('monaco-editor/esm/vs/language/typescript/ts.worker.js')
-      default:
-        return getWorkerModule('monaco-editor/esm/vs/editor/editor.worker.js')
-    }
+  getWorker: function (_moduleId: string, _label: string) {
+    // For C++ editing, we only need the basic editor worker
+    // No need for language-specific workers (JSON, TS, etc.)
+    return new editorWorker()
   },
 }
 

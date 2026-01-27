@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { ref, computed } from 'vue'
 import type { AppStatus } from '@/stores/app'
+import { categories, examples, type Example } from '@/data/examples'
 
 defineProps<{
   status: AppStatus
@@ -8,6 +10,7 @@ defineProps<{
 const emit = defineEmits<{
   run: []
   stop: []
+  loadExample: [code: string]
 }>()
 
 const statusColors: Record<AppStatus, string> = {
@@ -24,6 +27,46 @@ const statusLabels: Record<AppStatus, string> = {
   loading: 'Loading...',
   running: 'Running',
   error: 'Error',
+}
+
+// Examples dropdown state
+const showExamples = ref(false)
+const expandedCategory = ref<string | null>(null)
+const expandedSubcategory = ref<string | null>(null)
+
+function toggleCategory(catId: string) {
+  if (expandedCategory.value === catId) {
+    expandedCategory.value = null
+    expandedSubcategory.value = null
+  } else {
+    expandedCategory.value = catId
+    expandedSubcategory.value = null
+  }
+}
+
+function toggleSubcategory(subId: string) {
+  if (expandedSubcategory.value === subId) {
+    expandedSubcategory.value = null
+  } else {
+    expandedSubcategory.value = subId
+  }
+}
+
+function getExamplesForSubcategory(catId: string, subId: string): Example[] {
+  return examples.filter(e => e.category === catId && e.subcategory === subId)
+}
+
+function selectExample(example: Example) {
+  emit('loadExample', example.code)
+  showExamples.value = false
+  expandedCategory.value = null
+  expandedSubcategory.value = null
+}
+
+function closeDropdown() {
+  showExamples.value = false
+  expandedCategory.value = null
+  expandedSubcategory.value = null
 }
 </script>
 
@@ -77,13 +120,117 @@ const statusLabels: Record<AppStatus, string> = {
     <!-- Spacer -->
     <div class="flex-1" />
 
-    <!-- Right side actions -->
-    <button class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors">
-      Examples
-    </button>
+    <!-- Examples Dropdown -->
+    <div class="relative">
+      <button
+        class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors flex items-center gap-1"
+        @click="showExamples = !showExamples"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+        Examples
+        <svg class="w-3 h-3 ml-1" :class="{ 'rotate-180': showExamples }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- Dropdown Panel -->
+      <div
+        v-if="showExamples"
+        class="absolute right-0 top-full mt-1 w-80 max-h-[80vh] overflow-y-auto bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50"
+      >
+        <!-- Header -->
+        <div class="sticky top-0 bg-editor-sidebar px-4 py-2 border-b border-editor-border">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium">Example Code</span>
+            <button @click="closeDropdown" class="text-gray-400 hover:text-white">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Categories -->
+        <div class="py-1">
+          <div v-for="category in categories" :key="category.id" class="border-b border-editor-border last:border-b-0">
+            <!-- Category Header -->
+            <button
+              class="w-full px-4 py-2 text-left text-sm font-medium hover:bg-editor-active flex items-center justify-between"
+              @click="toggleCategory(category.id)"
+            >
+              <span>{{ category.title }}</span>
+              <svg
+                class="w-4 h-4 transition-transform"
+                :class="{ 'rotate-90': expandedCategory === category.id }"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+
+            <!-- Subcategories -->
+            <div v-if="expandedCategory === category.id && category.subcategories" class="bg-editor-sidebar">
+              <div v-for="sub in category.subcategories" :key="sub.id">
+                <!-- Subcategory Header -->
+                <button
+                  class="w-full pl-6 pr-4 py-1.5 text-left text-sm text-gray-300 hover:bg-editor-active flex items-center justify-between"
+                  @click="toggleSubcategory(sub.id)"
+                >
+                  <span>{{ sub.title }}</span>
+                  <svg
+                    class="w-3 h-3 transition-transform"
+                    :class="{ 'rotate-90': expandedSubcategory === sub.id }"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+
+                <!-- Examples in Subcategory -->
+                <div v-if="expandedSubcategory === sub.id" class="bg-editor-bg">
+                  <button
+                    v-for="example in getExamplesForSubcategory(category.id, sub.id)"
+                    :key="example.id"
+                    class="w-full pl-10 pr-4 py-2 text-left hover:bg-editor-active group"
+                    @click="selectExample(example)"
+                  >
+                    <div class="text-sm text-allolib-blue group-hover:text-white">{{ example.title }}</div>
+                    <div class="text-xs text-gray-500 group-hover:text-gray-400">{{ example.description }}</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="sticky bottom-0 bg-editor-sidebar px-4 py-2 border-t border-editor-border">
+          <div class="text-xs text-gray-500 text-center">
+            {{ examples.length }} examples available
+          </div>
+        </div>
+      </div>
+
+      <!-- Click outside to close -->
+      <div
+        v-if="showExamples"
+        class="fixed inset-0 z-40"
+        @click="closeDropdown"
+      ></div>
+    </div>
+
+    <!-- Settings Button -->
     <button class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors">
       Settings
     </button>
+
+    <!-- GitHub Link -->
     <a
       href="https://github.com/9LiveZZZ-Git/Allolib-Studio-Online"
       target="_blank"

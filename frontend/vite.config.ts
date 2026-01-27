@@ -35,4 +35,8 @@ export default defineConfig({
   optimizeDeps: {
     include: ['monaco-editor'],
   },
+  // Handle Monaco editor workers
+  worker: {
+    format: 'es',
+  },
 })
