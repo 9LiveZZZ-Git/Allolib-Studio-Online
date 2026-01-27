@@ -48,7 +48,7 @@ const handleLoadExample = (code: string) => {
       <div class="w-1/2 flex flex-col border-r border-editor-border">
         <EditorPane ref="editorRef" class="flex-1" />
         <Console
-          v-if="settingsStore.display.showConsole"
+          v-show="settingsStore.display.showConsole"
           :output="appStore.consoleOutput"
           :style="panelHeightStyle"
           class="shrink-0"

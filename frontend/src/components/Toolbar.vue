@@ -261,6 +261,7 @@ function closeDropdown() {
       <div
         v-if="showSettings"
         class="absolute right-0 top-full mt-1 w-96 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50"
+        @click.stop
       >
         <!-- Header with tabs -->
         <div class="flex items-center border-b border-editor-border">

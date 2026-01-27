@@ -142,7 +142,7 @@ function handleResize() {
 
       <!-- Audio Analysis Panel -->
       <AudioAnalysisPanel
-        v-if="showAudioPanel !== false"
+        v-show="showAudioPanel !== false"
         :is-running="isAudioRunning"
         :panel-height="audioPanelHeight"
       />
