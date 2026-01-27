@@ -111,6 +111,69 @@ shader.compile(R"(
     documentation: 'Basic shader program',
     range: undefined as any,
   },
+  // Scene System Snippets
+  {
+    label: 'synthvoice',
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    insertText: `// Polyphonic voice with envelope
+struct \${1:SineVoice} : SynthVoice {
+  gam::Sine<> osc;
+  gam::ADSR<> env{0.01, 0.1, 0.7, 0.3};
+  float amp = 0.2f;
+
+  void setFreq(float f) { osc.freq(f); }
+
+  void onProcess(AudioIOData& io) override {
+    while (io()) {
+      float s = osc() * env() * amp;
+      io.out(0) += s;
+      io.out(1) += s;
+    }
+    if (env.done()) free();
+  }
+
+  void onTriggerOn() override { env.reset(); }
+  void onTriggerOff() override { env.release(); }
+};`,
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    documentation: 'SynthVoice template for polyphonic synthesis',
+    range: undefined as any,
+  },
+  {
+    label: 'polysynth',
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    insertText: `#include "al/scene/al_PolySynth.hpp"
+
+// In your app class:
+PolySynth synth;
+
+// In onCreate():
+synth.allocatePolyphony<\${1:SineVoice}>(16);
+
+// In onSound():
+synth.render(io);
+
+// Trigger a voice:
+auto* voice = synth.getVoice<\${1:SineVoice}>();
+voice->setFreq(440.0f);
+synth.triggerOn(voice);`,
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    documentation: 'PolySynth setup for polyphonic voice management',
+    range: undefined as any,
+  },
+  {
+    label: 'stereopanner',
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    insertText: `// Stereo panning - pan value from -1 (left) to 1 (right)
+float pan = \${1:0.0f}; // center
+float leftGain = cosf((pan + 1.0f) * M_PI / 4.0f);
+float rightGain = sinf((pan + 1.0f) * M_PI / 4.0f);
+io.out(0) += sample * leftGain;
+io.out(1) += sample * rightGain;`,
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    documentation: 'Simple stereo panning (equal power)',
+    range: undefined as any,
+  },
 ]
 
 // AlloLib theme (dark)

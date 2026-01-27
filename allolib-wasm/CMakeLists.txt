@@ -159,6 +159,7 @@ set(ALLOLIB_SOURCES
 
     # Types
     ${ALLOLIB_DIR}/src/types/al_Color.cpp
+    ${ALLOLIB_DIR}/src/types/al_VariantValue.cpp
 
     # UI (minimal - no imgui for now)
     ${ALLOLIB_DIR}/src/ui/al_Parameter.cpp
@@ -171,6 +172,8 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebApp.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_DefaultShaderString_Web.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_DefaultShaders_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_Demangle_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_OSC_Web.cpp
 )
 
 add_library(al_web STATIC ${ALLOLIB_SOURCES} ${WEB_SOURCES})
