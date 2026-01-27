@@ -56,7 +56,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="h-full flex flex-col bg-editor-bg">
+  <div class="flex flex-col bg-editor-bg h-full min-h-0">
     <!-- Editor Header -->
     <div class="h-8 bg-editor-sidebar border-b border-editor-border flex items-center px-3 justify-between">
       <div class="flex items-center gap-2">
@@ -127,7 +127,7 @@ defineExpose({
         <span class="text-xs text-gray-500">C++17</span>
       </div>
     </div>
-    <div class="flex-1 overflow-hidden">
+    <div class="flex-1 min-h-0 overflow-hidden">
       <MonacoEditor
         ref="editorRef"
         v-model="code"

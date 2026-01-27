@@ -125,8 +125,8 @@ const handleAnalysisResize = (height: number) => {
     <!-- Main Content -->
     <div class="flex-1 flex overflow-hidden">
       <!-- Left Pane: Editor + Console -->
-      <div class="w-1/2 flex flex-col border-r border-editor-border">
-        <EditorPane ref="editorRef" class="flex-1" />
+      <div class="w-1/2 flex flex-col border-r border-editor-border overflow-hidden">
+        <EditorPane ref="editorRef" class="flex-1 min-h-0" />
         <Console
           :output="appStore.consoleOutput"
           :style="consoleHeightStyle"
