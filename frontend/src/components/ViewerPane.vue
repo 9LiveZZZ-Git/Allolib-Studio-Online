@@ -7,6 +7,8 @@ import AudioAnalysisPanel from './AudioAnalysisPanel.vue'
 const props = defineProps<{
   status: AppStatus
   jsUrl: string | null
+  showAudioPanel?: boolean
+  audioPanelHeight?: number
 }>()
 
 // Computed property for audio panel
@@ -139,7 +141,11 @@ function handleResize() {
       </div>
 
       <!-- Audio Analysis Panel -->
-      <AudioAnalysisPanel :is-running="isAudioRunning" />
+      <AudioAnalysisPanel
+        v-if="showAudioPanel !== false"
+        :is-running="isAudioRunning"
+        :panel-height="audioPanelHeight"
+      />
     </div>
   </div>
 </template>

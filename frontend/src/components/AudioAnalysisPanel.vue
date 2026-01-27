@@ -11,6 +11,7 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 
 const props = defineProps<{
   isRunning: boolean
+  panelHeight?: number
 }>()
 
 // Canvas refs
@@ -418,7 +419,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="audio-analysis-panel bg-editor-sidebar border-t border-editor-border">
+  <div
+    class="audio-analysis-panel bg-editor-sidebar border-t border-editor-border shrink-0"
+    :style="panelHeight ? { height: `${panelHeight}px`, minHeight: `${panelHeight}px` } : {}"
+  >
     <!-- Header -->
     <div class="flex items-center justify-between px-3 py-1 border-b border-editor-border">
       <span class="text-xs text-gray-400 font-medium">Audio Analysis</span>

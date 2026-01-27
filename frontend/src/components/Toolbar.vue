@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { AppStatus } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import { categories, examples, type Example } from '@/data/examples'
 
 defineProps<{
   status: AppStatus
 }>()
 
+const settings = useSettingsStore()
+
 const emit = defineEmits<{
   run: []
   stop: []
   loadExample: [code: string]
+  settingsChanged: []
 }>()
+
+// Settings dropdown state
+const showSettings = ref(false)
+const activeSettingsTab = ref<'editor' | 'audio' | 'compiler' | 'display'>('editor')
+
+function closeSettings() {
+  showSettings.value = false
+}
+
+function handleSettingChange() {
+  emit('settingsChanged')
+}
 
 const statusColors: Record<AppStatus, string> = {
   idle: 'text-gray-500',
@@ -225,10 +241,323 @@ function closeDropdown() {
       ></div>
     </div>
 
-    <!-- Settings Button -->
-    <button class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors">
-      Settings
-    </button>
+    <!-- Settings Dropdown -->
+    <div class="relative">
+      <button
+        class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors flex items-center gap-1"
+        @click="showSettings = !showSettings"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        Settings
+        <svg class="w-3 h-3 ml-1" :class="{ 'rotate-180': showSettings }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- Settings Panel -->
+      <div
+        v-if="showSettings"
+        class="absolute right-0 top-full mt-1 w-96 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50"
+      >
+        <!-- Header with tabs -->
+        <div class="flex items-center border-b border-editor-border">
+          <button
+            v-for="tab in ['editor', 'audio', 'compiler', 'display'] as const"
+            :key="tab"
+            :class="[
+              'flex-1 px-3 py-2 text-xs font-medium transition-colors capitalize',
+              activeSettingsTab === tab
+                ? 'text-allolib-blue border-b-2 border-allolib-blue bg-editor-sidebar'
+                : 'text-gray-400 hover:text-white hover:bg-editor-active'
+            ]"
+            @click="activeSettingsTab = tab"
+          >
+            {{ tab }}
+          </button>
+          <button @click="closeSettings" class="px-3 py-2 text-gray-400 hover:text-white">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Editor Settings -->
+        <div v-if="activeSettingsTab === 'editor'" class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Font Size</label>
+            <select
+              v-model.number="settings.editor.fontSize"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option v-for="size in [10, 12, 14, 16, 18, 20, 22, 24]" :key="size" :value="size">{{ size }}px</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Tab Size</label>
+            <select
+              v-model.number="settings.editor.tabSize"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option v-for="size in [2, 4, 8]" :key="size" :value="size">{{ size }} spaces</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Word Wrap</label>
+            <select
+              v-model="settings.editor.wordWrap"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+              <option value="wordWrapColumn">At Column</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Line Numbers</label>
+            <select
+              v-model="settings.editor.lineNumbers"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+              <option value="relative">Relative</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Minimap</label>
+            <button
+              @click="settings.editor.minimap = !settings.editor.minimap; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.editor.minimap ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.editor.minimap ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
+          <button
+            @click="settings.resetEditor(); handleSettingChange()"
+            class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
+          >
+            Reset Editor Settings
+          </button>
+        </div>
+
+        <!-- Audio Settings -->
+        <div v-if="activeSettingsTab === 'audio'" class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Sample Rate</label>
+            <select
+              v-model.number="settings.audio.sampleRate"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option :value="44100">44100 Hz</option>
+              <option :value="48000">48000 Hz</option>
+              <option :value="96000">96000 Hz</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Buffer Size</label>
+            <select
+              v-model.number="settings.audio.bufferSize"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option :value="128">128 (Low latency)</option>
+              <option :value="256">256</option>
+              <option :value="512">512</option>
+              <option :value="1024">1024</option>
+              <option :value="2048">2048 (Stable)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Channels</label>
+            <select
+              v-model.number="settings.audio.channels"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option :value="1">Mono</option>
+              <option :value="2">Stereo</option>
+            </select>
+          </div>
+
+          <div class="text-xs text-gray-500 bg-editor-sidebar p-2 rounded">
+            Audio settings will apply on next compilation. Lower buffer sizes reduce latency but may cause audio glitches on slower systems.
+          </div>
+
+          <button
+            @click="settings.resetAudio(); handleSettingChange()"
+            class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
+          >
+            Reset Audio Settings
+          </button>
+        </div>
+
+        <!-- Compiler Settings -->
+        <div v-if="activeSettingsTab === 'compiler'" class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Optimization Level</label>
+            <select
+              v-model="settings.compiler.optimization"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option value="O0">-O0 (None, fastest compile)</option>
+              <option value="O1">-O1 (Basic)</option>
+              <option value="O2">-O2 (Recommended)</option>
+              <option value="O3">-O3 (Aggressive)</option>
+              <option value="Os">-Os (Size optimized)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Debug Info</label>
+            <button
+              @click="settings.compiler.debugInfo = !settings.compiler.debugInfo; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.compiler.debugInfo ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.compiler.debugInfo ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Show Warnings</label>
+            <button
+              @click="settings.compiler.warnings = !settings.compiler.warnings; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.compiler.warnings ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.compiler.warnings ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div class="text-xs text-gray-500 bg-editor-sidebar p-2 rounded">
+            Higher optimization levels produce faster code but increase compile time. Debug info enables better error messages but increases binary size.
+          </div>
+
+          <button
+            @click="settings.resetCompiler(); handleSettingChange()"
+            class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
+          >
+            Reset Compiler Settings
+          </button>
+        </div>
+
+        <!-- Display Settings -->
+        <div v-if="activeSettingsTab === 'display'" class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Show Audio Panel</label>
+            <button
+              @click="settings.display.showAudioPanel = !settings.display.showAudioPanel; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.display.showAudioPanel ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.display.showAudioPanel ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Show Console</label>
+            <button
+              @click="settings.display.showConsole = !settings.display.showConsole; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.display.showConsole ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.display.showConsole ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Panel Height</label>
+            <input
+              type="range"
+              v-model.number="settings.display.consoleHeight"
+              @input="settings.display.audioPanelHeight = settings.display.consoleHeight; handleSettingChange()"
+              min="100"
+              max="400"
+              step="10"
+              class="w-32 accent-allolib-blue"
+            />
+            <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.consoleHeight }}px</span>
+          </div>
+
+          <button
+            @click="settings.resetDisplay(); handleSettingChange()"
+            class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
+          >
+            Reset Display Settings
+          </button>
+        </div>
+
+        <!-- Footer -->
+        <div class="border-t border-editor-border px-4 py-2 flex justify-between items-center">
+          <span class="text-xs text-gray-500">Settings auto-save to browser</span>
+          <button
+            @click="settings.resetAll(); handleSettingChange()"
+            class="text-xs text-red-400 hover:text-red-300"
+          >
+            Reset All
+          </button>
+        </div>
+      </div>
+
+      <!-- Click outside to close -->
+      <div
+        v-if="showSettings"
+        class="fixed inset-0 z-40"
+        @click="closeSettings"
+      ></div>
+    </div>
 
     <!-- GitHub Link -->
     <a

@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useAppStore } from './stores/app'
+import { useSettingsStore } from './stores/settings'
 import Toolbar from './components/Toolbar.vue'
 import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
 import Console from './components/Console.vue'
 
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
+
+// Computed panel height style
+const panelHeightStyle = computed(() => ({
+  height: `${settingsStore.display.consoleHeight}px`,
+  minHeight: `${settingsStore.display.consoleHeight}px`,
+}))
 
 const handleRun = async () => {
   const code = editorRef.value?.getCode() || ''
@@ -38,8 +46,13 @@ const handleLoadExample = (code: string) => {
     <div class="flex-1 flex overflow-hidden">
       <!-- Left Pane: Editor + Console -->
       <div class="w-1/2 flex flex-col border-r border-editor-border">
-        <EditorPane ref="editorRef" class="flex-[2]" />
-        <Console :output="appStore.consoleOutput" class="flex-1 min-h-[150px]" />
+        <EditorPane ref="editorRef" class="flex-1" />
+        <Console
+          v-if="settingsStore.display.showConsole"
+          :output="appStore.consoleOutput"
+          :style="panelHeightStyle"
+          class="shrink-0"
+        />
       </div>
 
       <!-- Right Pane: Viewer -->
@@ -47,6 +60,8 @@ const handleLoadExample = (code: string) => {
         <ViewerPane
           :status="appStore.status"
           :js-url="appStore.jsUrl"
+          :show-audio-panel="settingsStore.display.showAudioPanel"
+          :audio-panel-height="settingsStore.display.audioPanelHeight"
           @started="appStore.setRunning"
           @error="appStore.setError"
           @log="appStore.log"

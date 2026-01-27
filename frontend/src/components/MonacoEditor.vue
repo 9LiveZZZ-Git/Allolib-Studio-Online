@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import { configureMonaco, defaultCode } from '@/utils/monaco-config'
+import { useSettingsStore } from '@/stores/settings'
 
 // Import Monaco workers using Vite's ?worker syntax
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -19,6 +20,8 @@ const props = defineProps<{
   modelValue?: string
 }>()
 
+const settings = useSettingsStore()
+
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   save: []
@@ -33,25 +36,25 @@ onMounted(() => {
   // Configure Monaco with AlloLib settings
   configureMonaco()
 
-  // Create editor instance
+  // Create editor instance with settings from store
   editor = monaco.editor.create(editorContainer.value, {
     value: props.modelValue || defaultCode,
     language: 'cpp',
-    theme: 'allolib-dark',
+    theme: settings.editor.theme,
     automaticLayout: true,
-    fontSize: 14,
+    fontSize: settings.editor.fontSize,
     fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
     fontLigatures: true,
     minimap: {
-      enabled: true,
+      enabled: settings.editor.minimap,
       scale: 1,
     },
     scrollBeyondLastLine: false,
-    wordWrap: 'off',
-    tabSize: 2,
+    wordWrap: settings.editor.wordWrap,
+    tabSize: settings.editor.tabSize,
     insertSpaces: true,
     renderWhitespace: 'selection',
-    lineNumbers: 'on',
+    lineNumbers: settings.editor.lineNumbers,
     glyphMargin: true,
     folding: true,
     bracketPairColorization: {
@@ -92,6 +95,21 @@ watch(() => props.modelValue, (newValue) => {
     editor.setValue(newValue)
   }
 })
+
+// Watch for settings changes and update editor options
+watch(() => settings.editor, (newSettings) => {
+  if (editor) {
+    editor.updateOptions({
+      fontSize: newSettings.fontSize,
+      tabSize: newSettings.tabSize,
+      wordWrap: newSettings.wordWrap,
+      minimap: { enabled: newSettings.minimap },
+      lineNumbers: newSettings.lineNumbers,
+    })
+    // Theme requires special handling
+    monaco.editor.setTheme(newSettings.theme)
+  }
+}, { deep: true })
 
 function handleResize() {
   editor?.layout()
