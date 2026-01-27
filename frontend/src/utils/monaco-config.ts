@@ -5,11 +5,13 @@ export const allolibSnippets: monaco.languages.CompletionItem[] = [
   {
     label: 'allolib-app',
     kind: monaco.languages.CompletionItemKind.Snippet,
-    insertText: `#include "al/app/al_App.hpp"
+    insertText: `#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
-struct MyApp : App {
+class MyApp : public WebApp {
+public:
   void onCreate() override {
     \${1:// Initialize}
   }
@@ -19,25 +21,21 @@ struct MyApp : App {
   }
 
   void onDraw(Graphics& g) override {
-    g.clear(\${3:0.1f});
-    \${4:// Draw}
+    g.clear(0.1f, 0.1f, 0.15f);
+    \${3:// Draw}
   }
 };
 
-int main() {
-  MyApp app;
-  app.start();
-  return 0;
-}`,
+ALLOLIB_WEB_MAIN(MyApp)`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-    documentation: 'Basic AlloLib application template',
+    documentation: 'Basic AlloLib Web application template',
     range: undefined as any,
   },
   {
     label: 'mesh-sphere',
     kind: monaco.languages.CompletionItemKind.Snippet,
     insertText: `Mesh mesh;
-addSphere(mesh, \${1:1.0}, \${2:32}, \${3:32});
+al::addSphere(mesh, \${1:1.0}, \${2:32}, \${3:32});
 mesh.generateNormals();`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create a sphere mesh',
@@ -47,7 +45,7 @@ mesh.generateNormals();`,
     label: 'mesh-cube',
     kind: monaco.languages.CompletionItemKind.Snippet,
     insertText: `Mesh mesh;
-addCube(mesh, \${1:1.0});
+al::addCube(mesh, \${1:1.0});
 mesh.generateNormals();`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create a cube mesh',
@@ -174,16 +172,25 @@ export function configureMonaco() {
       if (!word) return null
 
       const docs: Record<string, string> = {
-        App: 'Base class for AlloLib applications. Provides lifecycle methods and rendering context.',
+        WebApp: 'Web application class for AlloLib. Inherit from this and override onCreate(), onAnimate(), onDraw(), onSound().',
+        App: 'Desktop AlloLib application (use WebApp for web builds).',
         Mesh: 'Container for vertex data including positions, colors, normals, and texture coordinates.',
         Graphics: 'Graphics context for rendering. Provides drawing methods and state management.',
         Vec3f: '3D vector with float components (x, y, z).',
+        Vec3d: '3D vector with double components (x, y, z).',
         Color: 'RGBA color value.',
         HSV: 'Create a color from Hue, Saturation, and Value.',
         Nav: '3D navigation/camera controller.',
+        Pose: '3D position and orientation.',
         ShaderProgram: 'OpenGL shader program for custom rendering.',
         Sine: 'Gamma sine wave oscillator.',
         ADSR: 'Gamma ADSR envelope generator.',
+        AudioIOData: 'Audio buffer data passed to onSound(). Use io.out(channel) to write samples.',
+        addSphere: 'Add sphere geometry to a mesh. al::addSphere(mesh, radius, slices, stacks)',
+        addCube: 'Add cube geometry to a mesh. al::addCube(mesh, size)',
+        addCone: 'Add cone geometry to a mesh. al::addCone(mesh, radius, height)',
+        addCylinder: 'Add cylinder geometry to a mesh. al::addCylinder(mesh, radius, height)',
+        addTorus: 'Add torus geometry to a mesh. al::addTorus(mesh, minorRadius, majorRadius)',
       }
 
       const doc = docs[word.word]
@@ -207,44 +214,78 @@ export function configureMonaco() {
   })
 }
 
-// Default code template
-export const defaultCode = `#include "al/app/al_App.hpp"
+// Default code template for AlloLib Web (with audio)
+export const defaultCode = `/**
+ * AlloLib Web - Audio Visual Demo
+ * Rotating sphere with sine wave audio
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
 
 using namespace al;
 
-struct MyApp : App {
+class MyApp : public WebApp {
+public:
   Mesh mesh;
-  float angle = 0;
+  double angle = 0;
+
+  // Audio: sine oscillator
+  gam::Sine<> osc{440.0};
+  float amplitude = 0.3f;
 
   void onCreate() override {
     // Create a sphere mesh
-    addSphere(mesh, 1.0, 32, 32);
+    al::addSphere(mesh, 1.0, 32, 32);
     mesh.generateNormals();
 
     // Set up camera
     nav().pos(0, 0, 5);
-    nav().faceToward(Vec3f(0, 0, 0));
+
+    // Configure audio (44100 Hz, 128 frames, stereo)
+    configureWebAudio(44100, 128, 2, 0);
   }
 
   void onAnimate(double dt) override {
     // Rotate the sphere
-    angle += dt * 0.5;
+    angle += dt * 30.0;  // degrees per second
   }
 
   void onDraw(Graphics& g) override {
-    g.clear(0.1f);
+    g.clear(0.1f, 0.1f, 0.15f);
+    g.depthTesting(true);
+    g.lighting(true);
 
     g.pushMatrix();
     g.rotate(angle, 0, 1, 0);
-    g.color(HSV(angle * 0.1, 1, 1));
+    g.color(HSV(fmod(angle * 0.01, 1.0), 0.8, 1.0));
     g.draw(mesh);
     g.popMatrix();
   }
+
+  void onSound(AudioIOData& io) override {
+    while (io()) {
+      // Generate sine wave
+      float sample = osc() * amplitude;
+
+      // Output to both channels
+      io.out(0) = sample;
+      io.out(1) = sample;
+    }
+  }
+
+  bool onKeyDown(const Keyboard& k) override {
+    // Change frequency with number keys 1-8
+    if (k.key() >= '1' && k.key() <= '8') {
+      float freq = 220.0f * (k.key() - '0');  // 220Hz to 1760Hz
+      osc.freq(freq);
+    }
+    return true;
+  }
 };
 
-int main() {
-  MyApp app;
-  app.start();
-  return 0;
-}
+// Create the web application with WASM exports
+ALLOLIB_WEB_MAIN(MyApp)
 `

@@ -13,19 +13,25 @@ RUN apt-get update && apt-get install -y \
 # Set up working directory
 WORKDIR /app
 
-# Create directories for compilation
-RUN mkdir -p /app/source /app/output /app/cache /app/allolib
+# Create directories
+RUN mkdir -p /app/source /app/output /app/cache /app/allolib /app/allolib-wasm /app/lib
 
 # Environment variables
 ENV EMSDK=/emsdk
 ENV EM_CONFIG=/emsdk/.emscripten
 ENV PATH="/emsdk:/emsdk/upstream/emscripten:${PATH}"
 
-# AlloLib include paths (mounted at runtime)
+# AlloLib paths (mounted at runtime)
 ENV ALLOLIB_DIR=/app/allolib
+ENV ALLOLIB_WASM_DIR=/app/allolib-wasm
 ENV GAMMA_DIR=/app/allolib/external/Gamma
+ENV AL_EXT_DIR=/app/al_ext
 
-# Compilation script
+# Build script for pre-compiling AlloLib
+COPY build-allolib.sh /app/build-allolib.sh
+RUN chmod +x /app/build-allolib.sh
+
+# Compilation script for user code
 COPY compile.sh /app/compile.sh
 RUN chmod +x /app/compile.sh
 

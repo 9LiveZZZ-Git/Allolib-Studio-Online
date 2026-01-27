@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { AllolibRuntime } from '@/services/runtime'
 import type { AppStatus } from '@/stores/app'
+import AudioAnalysisPanel from './AudioAnalysisPanel.vue'
 
 const props = defineProps<{
   status: AppStatus
   jsUrl: string | null
 }>()
+
+// Computed property for audio panel
+const isAudioRunning = computed(() => props.status === 'running')
 
 const emit = defineEmits<{
   started: []
@@ -78,17 +82,22 @@ function handleResize() {
       <span class="text-sm text-gray-400">Output</span>
       <div class="flex items-center gap-3">
         <span class="text-xs flex items-center gap-1">
-          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
           WebGL2
         </span>
         <span class="text-xs flex items-center gap-1">
-          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
           Audio
         </span>
       </div>
     </div>
-    <div ref="containerRef" class="flex-1 relative overflow-hidden">
+
+    <!-- Main content area with canvas and audio panel -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- WebGL Canvas -->
+      <div ref="containerRef" class="flex-1 relative overflow-hidden">
       <canvas
+        id="canvas"
         ref="canvasRef"
         class="absolute inset-0 w-full h-full"
       />
@@ -127,6 +136,10 @@ function handleResize() {
           <p class="text-gray-500 text-sm mt-2">Check the console for details.</p>
         </div>
       </div>
+      </div>
+
+      <!-- Audio Analysis Panel -->
+      <AudioAnalysisPanel :is-running="isAudioRunning" />
     </div>
   </div>
 </template>

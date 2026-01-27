@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Redis for job queue and caching
   redis:
@@ -12,19 +10,24 @@ services:
 
   # Emscripten compilation service
   compiler:
+    container_name: allolib-compiler
     build:
       context: ./backend/docker
       dockerfile: Dockerfile
     volumes:
       - ./backend/docker/compile.sh:/app/compile.sh:ro
+      - ./backend/docker/build-allolib.sh:/app/build-allolib.sh:ro
       - ./allolib:/app/allolib:ro
+      - ./allolib-wasm:/app/allolib-wasm:ro
       - ./al_ext:/app/al_ext:ro
       - compiler-source:/app/source
       - compiler-output:/app/output
       - compiler-cache:/app/cache
+      - compiler-lib:/app/lib
     environment:
       - EMSDK=/emsdk
       - ALLOLIB_DIR=/app/allolib
+      - ALLOLIB_WASM_DIR=/app/allolib-wasm
       - GAMMA_DIR=/app/allolib/external/Gamma
       - AL_EXT_DIR=/app/al_ext
     # Keep container running for compilation requests
@@ -38,20 +41,27 @@ services:
       - "4000:4000"
     volumes:
       - ./backend:/app
-      - /app/node_modules
+      - backend-node-modules:/app/node_modules
+      - compiler-source:/app/source
       - compiler-output:/app/compiled
+      - //var/run/docker.sock:/var/run/docker.sock
     environment:
       - NODE_ENV=development
       - PORT=4000
       - REDIS_URL=redis://redis:6379
       - USE_DOCKER=true
+      - COMPILER_CONTAINER=allolib-compiler
+      - SOURCE_DIR=/app/source
+      - COMPILE_DIR=/app/compiled
     depends_on:
       - redis
       - compiler
-    command: npm run dev
+    command: sh -c "apk add --no-cache docker-cli && npm install && npm run dev"
 
 volumes:
   redis-data:
   compiler-cache:
   compiler-source:
   compiler-output:
+  compiler-lib:
+  backend-node-modules:

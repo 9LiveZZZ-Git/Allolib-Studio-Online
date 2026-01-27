@@ -1,0 +1,473 @@
+#include "al_WebApp.hpp"
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#include <EGL/egl.h>
+#endif
+
+// Forward declare GLAD loader
+extern "C" int gladLoadGLLoader(void* (*load)(const char*));
+
+#include <cmath>
+#include <cstring>
+#include <iostream>
+
+// Gamma DSP library for oscillators etc.
+#include "Gamma/Domain.h"
+
+namespace al {
+
+// Forward declarations for Emscripten event callbacks
+#ifdef __EMSCRIPTEN__
+static EM_BOOL keyCallback(int eventType, const EmscriptenKeyboardEvent* e, void* userData);
+static EM_BOOL mouseCallback(int eventType, const EmscriptenMouseEvent* e, void* userData);
+static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void* userData);
+#endif
+
+WebApp::WebApp() {
+    // Default navigation position (camera at z=5 looking at origin)
+    mNav.pos(0, 0, 5);
+}
+
+WebApp::~WebApp() {
+    stop();
+    cleanupAudio();
+    cleanupGraphics();
+}
+
+void WebApp::configureWebAudio(const WebAudioConfig& config) {
+    mAudioConfig = config;
+}
+
+void WebApp::configureWebAudio(int sampleRate, int bufferSize, int outputChannels, int inputChannels) {
+    mAudioConfig.sampleRate = sampleRate;
+    mAudioConfig.bufferSize = bufferSize;
+    mAudioConfig.outputChannels = outputChannels;
+    mAudioConfig.inputChannels = inputChannels;
+}
+
+void WebApp::dimensions(int width, int height) {
+    mWidth = width;
+    mHeight = height;
+}
+
+void WebApp::start() {
+    if (mRunning) return;
+
+    std::cout << "[AlloLib] Starting web application..." << std::endl;
+
+    // Initialize graphics
+    initGraphics();
+
+    // Initialize audio
+    initAudio();
+
+    // Call user's onCreate
+    onCreate();
+
+    mRunning = true;
+
+#ifdef __EMSCRIPTEN__
+    // Get initial time
+    mLastTime = emscripten_get_now() / 1000.0;
+
+    // Register keyboard event handlers
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, keyCallback);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, keyCallback);
+
+    // Register mouse event handlers on canvas
+    emscripten_set_mousedown_callback("#canvas", this, EM_TRUE, mouseCallback);
+    emscripten_set_mouseup_callback("#canvas", this, EM_TRUE, mouseCallback);
+    emscripten_set_mousemove_callback("#canvas", this, EM_TRUE, mouseCallback);
+    emscripten_set_wheel_callback("#canvas", this, EM_TRUE, wheelCallback);
+
+    EM_ASM({ console.log('[AlloLib] Input event handlers registered'); });
+
+    // Start Emscripten main loop
+    // 0 = use requestAnimationFrame (vsync)
+    // 1 = simulate infinite loop (don't return from this function)
+    emscripten_set_main_loop_arg(mainLoopCallback, this, 0, 0);
+
+    // Note: Audio worklet is loaded by the JavaScript runtime from the correct path
+    // The runtime.ts handles audio context creation and worklet setup
+    EM_ASM({
+        console.log('[AlloLib] Audio configuration: sampleRate=' + $0 + ', channels=' + $1);
+    }, mAudioConfig.sampleRate, mAudioConfig.outputChannels);
+#endif
+
+    std::cout << "[AlloLib] Application started" << std::endl;
+}
+
+void WebApp::stop() {
+    if (!mRunning) return;
+
+    std::cout << "[AlloLib] Stopping application..." << std::endl;
+
+    // Call user's onExit
+    onExit();
+
+    mRunning = false;
+
+#ifdef __EMSCRIPTEN__
+    emscripten_cancel_main_loop();
+
+    // Cleanup audio
+    EM_ASM({
+        if (window.alloWorkletNode) {
+            window.alloWorkletNode.disconnect();
+            window.alloWorkletNode = null;
+        }
+        if (window.alloAudioContext) {
+            window.alloAudioContext.suspend();
+        }
+    });
+#endif
+
+    std::cout << "[AlloLib] Application stopped" << std::endl;
+}
+
+void WebApp::tick(double dt) {
+    // Call user's onAnimate
+    onAnimate(dt);
+
+    // Render graphics
+    if (mGraphics) {
+        // Set up view matrix from navigation pose
+        mGraphics->camera(mNav);
+
+        // Clear the screen
+        mGraphics->clear(0.1f, 0.1f, 0.1f);
+
+        // Call user's onDraw
+        onDraw(*mGraphics);
+    }
+}
+
+void WebApp::mainLoopCallback(void* arg) {
+    WebApp* app = static_cast<WebApp*>(arg);
+
+    if (!app || !app->mRunning) return;
+
+#ifdef __EMSCRIPTEN__
+    // Calculate delta time
+    double now = emscripten_get_now() / 1000.0;
+    double dt = now - app->mLastTime;
+    app->mLastTime = now;
+
+    // Cap delta time to prevent huge jumps
+    if (dt > 0.1) dt = 0.1;
+
+    app->tick(dt);
+#endif
+}
+
+// Static pointer for event callbacks
+static WebApp* gCurrentApp = nullptr;
+
+// Helper classes to access protected members of Keyboard and Mouse
+// These are needed because the setters are protected and only accessible to WindowImpl
+class KeyboardAccess : public Keyboard {
+public:
+    void setKey(int k, bool v) { Keyboard::setKey(k, v); }
+    void shift(bool state) { Keyboard::shift(state); }
+    void ctrl(bool state) { Keyboard::ctrl(state); }
+    void alt(bool state) { Keyboard::alt(state); }
+};
+
+class MouseAccess : public Mouse {
+public:
+    void position(int x, int y) { Mouse::position(x, y); }
+    void button(int b, bool v) { Mouse::button(b, v); }
+    void scroll(double x, double y) { Mouse::scroll(x, y); }
+};
+
+#ifdef __EMSCRIPTEN__
+// Keyboard event callback
+static EM_BOOL keyCallback(int eventType, const EmscriptenKeyboardEvent* e, void* userData) {
+    WebApp* app = static_cast<WebApp*>(userData);
+    if (!app) return EM_FALSE;
+
+    // Create AlloLib Keyboard object using helper class
+    KeyboardAccess k;
+
+    // Map key code - use 'key' string for printable characters, 'code' for special keys
+    int key = 0;
+    if (e->key[0] != '\0' && e->key[1] == '\0') {
+        // Single character key
+        key = e->key[0];
+    } else {
+        // Special key - map common ones
+        if (strcmp(e->code, "Space") == 0) key = ' ';
+        else if (strcmp(e->code, "Enter") == 0) key = 13;
+        else if (strcmp(e->code, "Escape") == 0) key = 27;
+        else if (strcmp(e->code, "Tab") == 0) key = 9;
+        else if (strcmp(e->code, "Backspace") == 0) key = 8;
+        else if (strcmp(e->code, "ArrowUp") == 0) key = Keyboard::UP;
+        else if (strcmp(e->code, "ArrowDown") == 0) key = Keyboard::DOWN;
+        else if (strcmp(e->code, "ArrowLeft") == 0) key = Keyboard::LEFT;
+        else if (strcmp(e->code, "ArrowRight") == 0) key = Keyboard::RIGHT;
+        else key = e->keyCode;
+    }
+
+    // Set key state
+    k.setKey(key, eventType == EMSCRIPTEN_EVENT_KEYDOWN);
+
+    // Set modifier states
+    k.shift(e->shiftKey);
+    k.ctrl(e->ctrlKey);
+    k.alt(e->altKey);
+
+    // Call appropriate handler
+    bool handled = false;
+    if (eventType == EMSCRIPTEN_EVENT_KEYDOWN) {
+        handled = app->onKeyDown(k);
+    } else if (eventType == EMSCRIPTEN_EVENT_KEYUP) {
+        handled = app->onKeyUp(k);
+    }
+
+    return handled ? EM_TRUE : EM_FALSE;
+}
+
+// Mouse event callback
+static EM_BOOL mouseCallback(int eventType, const EmscriptenMouseEvent* e, void* userData) {
+    WebApp* app = static_cast<WebApp*>(userData);
+    if (!app) return EM_FALSE;
+
+    MouseAccess m;
+
+    // Set position
+    m.position(e->targetX, e->targetY);
+
+    // Set button state based on event type
+    bool isDown = (eventType == EMSCRIPTEN_EVENT_MOUSEDOWN);
+    int buttonIndex = e->button; // 0=left, 1=middle, 2=right
+    m.button(buttonIndex, isDown);
+
+    // Call appropriate handler
+    bool handled = false;
+    switch (eventType) {
+        case EMSCRIPTEN_EVENT_MOUSEDOWN:
+            handled = app->onMouseDown(m);
+            break;
+        case EMSCRIPTEN_EVENT_MOUSEUP:
+            handled = app->onMouseUp(m);
+            break;
+        case EMSCRIPTEN_EVENT_MOUSEMOVE:
+            if (e->buttons) {
+                handled = app->onMouseDrag(m);
+            } else {
+                handled = app->onMouseMove(m);
+            }
+            break;
+    }
+
+    return handled ? EM_TRUE : EM_FALSE;
+}
+
+// Mouse wheel callback
+static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void* userData) {
+    (void)eventType;
+    WebApp* app = static_cast<WebApp*>(userData);
+    if (!app) return EM_FALSE;
+
+    MouseAccess m;
+    m.position(e->mouse.targetX, e->mouse.targetY);
+    m.scroll(e->deltaX, e->deltaY);
+
+    return app->onMouseScroll(m) ? EM_TRUE : EM_FALSE;
+}
+#endif
+
+void WebApp::initGraphics() {
+#ifdef __EMSCRIPTEN__
+    gCurrentApp = this;
+    EM_ASM({ console.log('[AlloLib] initGraphics() - using Emscripten WebGL'); });
+
+    // Create WebGL2 context directly using Emscripten API
+    EmscriptenWebGLContextAttributes attrs;
+    emscripten_webgl_init_context_attributes(&attrs);
+    attrs.majorVersion = 2;  // WebGL2
+    attrs.minorVersion = 0;
+    attrs.alpha = false;
+    attrs.depth = true;
+    attrs.stencil = true;
+    attrs.antialias = true;
+    attrs.premultipliedAlpha = false;
+    attrs.preserveDrawingBuffer = true;
+
+    EM_ASM({ console.log('[AlloLib] Creating WebGL2 context on #canvas...'); });
+
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas", &attrs);
+    if (ctx <= 0) {
+        EM_ASM({ console.error('[AlloLib] Failed to create WebGL2 context! Error: ' + $0); }, ctx);
+        return;
+    }
+
+    EM_ASM({ console.log('[AlloLib] WebGL2 context created: ' + $0); }, ctx);
+
+    EMSCRIPTEN_RESULT res = emscripten_webgl_make_context_current(ctx);
+    if (res != EMSCRIPTEN_RESULT_SUCCESS) {
+        EM_ASM({ console.error('[AlloLib] Failed to make context current! Error: ' + $0); }, res);
+        return;
+    }
+
+    EM_ASM({ console.log('[AlloLib] WebGL2 context is current'); });
+
+    // Initialize GLAD with EGL proc address for Emscripten
+    EM_ASM({ console.log('[AlloLib] Initializing GLAD with eglGetProcAddress...'); });
+
+    int gladResult = gladLoadGLLoader((void* (*)(const char*))eglGetProcAddress);
+    EM_ASM({ console.log('[AlloLib] GLAD loaded: ' + $0); }, gladResult);
+
+    if (!gladResult) {
+        EM_ASM({ console.error('[AlloLib] GLAD initialization failed!'); });
+        // Continue anyway - some functions might work
+    }
+
+    // Don't use AlloLib's Window class for Emscripten
+    mWindow = nullptr;
+
+    // Create graphics context
+    EM_ASM({ console.log('[AlloLib] Creating AlloLib Graphics object...'); });
+    mGraphics = std::make_unique<Graphics>();
+
+    // Initialize Graphics (compiles all default shaders)
+    EM_ASM({ console.log('[AlloLib] Initializing Graphics (compiling shaders)...'); });
+    mGraphics->init();
+
+    EM_ASM({ console.log('[AlloLib] Graphics initialized successfully!'); });
+#else
+    // Desktop path - use AlloLib's Window class
+    mWindow = std::make_unique<Window>();
+    mWindow->dimensions(mWidth, mHeight);
+    mWindow->title("AlloLib Web");
+    mWindow->create();
+    mGraphics = std::make_unique<Graphics>();
+#endif
+}
+
+void WebApp::initAudio() {
+    std::cout << "[AlloLib] Initializing audio..." << std::endl;
+
+    // Clean up any existing audio IO
+    if (mAudioIO) {
+        delete mAudioIO;
+        mAudioIO = nullptr;
+    }
+
+    // Set up Gamma DSP sample rate (required for oscillators to work correctly)
+    gam::sampleRate(mAudioConfig.sampleRate);
+
+    // Create and configure AudioIOData with proper buffers
+    mAudioIO = new AudioIOData();
+    mAudioIO->framesPerBuffer(mAudioConfig.bufferSize);
+    mAudioIO->framesPerSecond(mAudioConfig.sampleRate);
+    mAudioIO->channelsOut(mAudioConfig.outputChannels);
+    mAudioIO->channelsIn(mAudioConfig.inputChannels);
+
+    mAudioInitialized = true;
+
+    std::cout << "[AlloLib] Audio initialized with sample rate: " << mAudioConfig.sampleRate << std::endl;
+}
+
+void WebApp::cleanupGraphics() {
+    mGraphics.reset();
+    mWindow.reset();
+}
+
+void WebApp::cleanupAudio() {
+    mAudioInitialized = false;
+
+    if (mAudioIO) {
+        delete mAudioIO;
+        mAudioIO = nullptr;
+    }
+}
+
+static int audioCallCount = 0;
+
+void WebApp::processAudioBuffer(float* outputBuffer, int numFrames, int numChannels) {
+#ifdef __EMSCRIPTEN__
+    // Debug: log state on first few calls
+    if (audioCallCount < 5) {
+        EM_ASM({
+            console.log('[WASM Audio] processAudioBuffer: mRunning=' + $0 + ', mAudioInit=' + $1 + ', mAudioIO=' + $2);
+        }, mRunning ? 1 : 0, mAudioInitialized ? 1 : 0, mAudioIO ? 1 : 0);
+    }
+#endif
+
+    if (!mRunning || !mAudioInitialized || !mAudioIO) {
+        // Fill with silence
+        for (int i = 0; i < numFrames * numChannels; ++i) {
+            outputBuffer[i] = 0.0f;
+        }
+#ifdef __EMSCRIPTEN__
+        if (audioCallCount < 5) {
+            EM_ASM({ console.log('[WASM Audio] Early return - state check failed'); });
+        }
+#endif
+        audioCallCount++;
+        return;
+    }
+
+#ifdef __EMSCRIPTEN__
+    // Debug: log first few calls
+    if (audioCallCount < 5) {
+        EM_ASM({
+            console.log('[WASM Audio] Processing audio: frames=' + $0 + ', channels=' + $1);
+        }, numFrames, numChannels);
+    }
+#endif
+    audioCallCount++;
+
+    // Reset frame counter
+    mAudioIO->frame(0);
+
+    // Zero the output buffer
+    mAudioIO->zeroOut();
+
+    // Call user's audio callback
+    onSound(*mAudioIO);
+
+    // Copy from non-interleaved format to interleaved output
+    for (int frame = 0; frame < numFrames; ++frame) {
+        for (int ch = 0; ch < numChannels; ++ch) {
+            outputBuffer[frame * numChannels + ch] = mAudioIO->out(ch, frame);
+        }
+    }
+
+#ifdef __EMSCRIPTEN__
+    // Debug: check if we have non-zero output
+    if (audioCallCount <= 5) {
+        float maxSample = 0;
+        for (int i = 0; i < numFrames * numChannels; ++i) {
+            float absVal = outputBuffer[i] > 0 ? outputBuffer[i] : -outputBuffer[i];
+            if (absVal > maxSample) maxSample = absVal;
+        }
+        EM_ASM({
+            console.log('[WASM Audio] Max output sample: ' + $0);
+        }, maxSample);
+    }
+#endif
+}
+
+void WebApp::setListenerPose(const Pose& pose) {
+#ifdef __EMSCRIPTEN__
+    // Update spatial audio listener position
+    EM_ASM({
+        if (window.alloWorkletNode) {
+            window.alloWorkletNode.port.postMessage({
+                type: 'setListener',
+                pos: { x: $0, y: $1, z: $2 },
+                quat: { w: $3, x: $4, y: $5, z: $6 }
+            });
+        }
+    }, pose.pos().x, pose.pos().y, pose.pos().z,
+       pose.quat().w, pose.quat().x, pose.quat().y, pose.quat().z);
+#else
+    (void)pose;
+#endif
+}
+
+} // namespace al

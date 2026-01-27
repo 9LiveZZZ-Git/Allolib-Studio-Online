@@ -1,3 +1,10 @@
+/**
+ * AlloLib WASM Runtime Manager
+ *
+ * Manages the lifecycle of AlloLib WebAssembly applications
+ * including graphics rendering and audio processing.
+ */
+
 export interface RuntimeConfig {
   canvas: HTMLCanvasElement
   onPrint?: (text: string) => void
@@ -6,83 +13,258 @@ export interface RuntimeConfig {
 }
 
 export interface WasmModule {
+  // Emscripten standard exports
   _main?: () => number
-  canvas?: HTMLCanvasElement
-  GL?: WebGLRenderingContext
-  requestAnimationFrame?: typeof requestAnimationFrame
+  _malloc?: (size: number) => number
+  _free?: (ptr: number) => void
   cwrap?: (name: string, returnType: string, argTypes: string[]) => Function
   ccall?: (name: string, returnType: string, argTypes: string[], args: any[]) => any
+  HEAPF32?: Float32Array
+  canvas?: HTMLCanvasElement
+  GL?: WebGLRenderingContext
+
+  // AlloLib-specific exports
+  _allolib_create?: () => void
+  _allolib_start?: () => void
+  _allolib_stop?: () => void
+  _allolib_destroy?: () => void
+  _allolib_process_audio?: (buffer: number, frames: number, channels: number) => void
+  _allolib_configure_audio?: (sampleRate: number, bufferSize: number, outCh: number, inCh: number) => void
+}
+
+declare global {
+  interface Window {
+    Module: WasmModule
+    alloAudioContext: AudioContext | null
+    alloWorkletNode: AudioWorkletNode | null
+  }
 }
 
 export class AllolibRuntime {
   private module: WasmModule | null = null
   private canvas: HTMLCanvasElement
-  private gl: WebGLRenderingContext | null = null
-  private animationFrameId: number | null = null
   private isRunning = false
   private onPrint: (text: string) => void
   private onError: (text: string) => void
   private onExit: (code: number) => void
-
   constructor(config: RuntimeConfig) {
     this.canvas = config.canvas
     this.onPrint = config.onPrint || console.log
     this.onError = config.onError || console.error
     this.onExit = config.onExit || (() => {})
 
-    // Initialize WebGL context
-    this.initWebGL()
-  }
-
-  private initWebGL(): void {
-    const gl = this.canvas.getContext('webgl2', {
-      alpha: false,
-      antialias: true,
-      depth: true,
-      stencil: true,
-      premultipliedAlpha: false,
-      preserveDrawingBuffer: true,
-    })
-
-    if (!gl) {
-      this.onError('WebGL2 not supported')
-      return
-    }
-
-    this.gl = gl
-
-    // Set viewport
+    // Don't create WebGL context here - let Emscripten/GLFW handle it
+    // Just set up the canvas size
     this.resize()
   }
 
   async load(jsUrl: string): Promise<void> {
-    this.onPrint('[INFO] Loading WASM module...')
+    this.onPrint('[INFO] Loading AlloLib WASM module...')
+
+    // Clean up any previous module
+    this.cleanup()
 
     try {
-      // Dynamic import of the compiled module
-      const moduleFactory = await import(/* @vite-ignore */ jsUrl)
-      const createModule = moduleFactory.default
+      // Get the base URL for loading related files
+      const baseUrl = jsUrl.replace(/\/[^/]+$/, '')
 
-      // Configure and instantiate the module
-      this.module = await createModule({
+      // Load audio worklet processor first
+      await this.loadAudioWorklet(baseUrl)
+
+      // Module configuration for Emscripten
+      const moduleConfig = {
         canvas: this.canvas,
-        print: this.onPrint,
-        printErr: this.onError,
-        onExit: this.onExit,
+        print: (text: string) => this.onPrint(text),
+        printErr: (text: string) => this.onError(text),
+        onExit: (code: number) => {
+          this.isRunning = false
+          this.onExit(code)
+        },
         locateFile: (path: string) => {
-          // Handle .wasm file location
           if (path.endsWith('.wasm')) {
             return jsUrl.replace('.js', '.wasm')
           }
-          return path
+          return `${baseUrl}/${path}`
         },
-      })
+      }
 
-      this.onPrint('[SUCCESS] WASM module loaded')
+      // Dynamically import the ES6 module
+      // The module exports a factory function that returns a Promise<Module>
+      this.onPrint('[INFO] Importing ES6 module...')
+      const createModule = await this.importModule(jsUrl)
+
+      this.onPrint('[INFO] Instantiating WASM module...')
+      const wasmModule = await createModule(moduleConfig)
+
+      // Store reference to the module
+      this.module = wasmModule as WasmModule
+      window.Module = this.module
+
+      this.onPrint('[SUCCESS] AlloLib WASM module loaded')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.onError(`[ERROR] Failed to load module: ${message}`)
       throw error
+    }
+  }
+
+  private async loadAudioWorklet(baseUrl: string): Promise<void> {
+    try {
+      // Create audio context if needed
+      if (!window.alloAudioContext) {
+        window.alloAudioContext = new AudioContext({
+          sampleRate: 44100,
+          latencyHint: 'interactive',
+        })
+        this.onPrint(`[INFO] Audio context created (state: ${window.alloAudioContext.state})`)
+      }
+
+      // Load the audio worklet processor
+      const workletUrl = `${baseUrl}/allolib-audio-processor.js`
+      this.onPrint(`[INFO] Loading audio worklet from: ${workletUrl}`)
+      await window.alloAudioContext.audioWorklet.addModule(workletUrl)
+      this.onPrint('[INFO] Audio worklet processor registered')
+    } catch (error) {
+      // Audio worklet is optional, app can still run without audio
+      this.onPrint(`[WARN] Audio worklet not available: ${error}`)
+      console.warn('Audio worklet load error:', error)
+    }
+  }
+
+  private setupAudioWorklet(): void {
+    if (!window.alloAudioContext || !this.module) {
+      this.onPrint('[WARN] Cannot setup audio: no context or module')
+      return
+    }
+
+    try {
+      this.onPrint('[INFO] Creating AudioWorkletNode...')
+
+      // Create the AudioWorkletNode
+      window.alloWorkletNode = new AudioWorkletNode(
+        window.alloAudioContext,
+        'allolib-processor',
+        {
+          numberOfInputs: 0,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          processorOptions: {
+            bufferSize: 128,
+            sampleRate: 44100,
+            outputChannels: 2,
+          },
+        }
+      )
+
+      // Handle messages from worklet (audio buffer requests)
+      window.alloWorkletNode.port.onmessage = (event) => {
+        if (event.data.type === 'requestBuffer') {
+          this.processAudioRequest(event.data.frames, event.data.channels)
+        }
+      }
+
+      // Connect to audio output
+      window.alloWorkletNode.connect(window.alloAudioContext.destination)
+      this.onPrint(`[INFO] Audio worklet connected (state: ${window.alloAudioContext.state})`)
+    } catch (error) {
+      console.warn('Audio worklet setup error:', error)
+      this.onPrint(`[WARN] Audio worklet setup failed: ${error}`)
+    }
+  }
+
+  private audioRequestCount = 0
+
+  private processAudioRequest(frames: number, channels: number): void {
+    if (!this.module || !window.alloWorkletNode) return
+
+    try {
+      // Log first few requests for debugging
+      if (this.audioRequestCount < 5) {
+        console.log(`[Audio] Request ${this.audioRequestCount}: ${frames} frames, ${channels} channels`)
+        console.log(`[Audio] HEAPF32: ${this.module.HEAPF32 ? 'exists' : 'missing'}`)
+        console.log(`[Audio] _malloc: ${this.module._malloc ? 'exists' : 'missing'}`)
+        console.log(`[Audio] _allolib_process_audio: ${this.module._allolib_process_audio ? 'exists' : 'missing'}`)
+      }
+      this.audioRequestCount++
+
+      // Allocate buffer in WASM memory
+      const bufferSize = frames * channels * 4 // float32 = 4 bytes
+      const bufferPtr = this.module._malloc?.(bufferSize)
+
+      if (!bufferPtr) {
+        console.warn('[Audio] Failed to allocate buffer')
+        return
+      }
+
+      if (!this.module._allolib_process_audio) {
+        console.warn('[Audio] _allolib_process_audio not found')
+        return
+      }
+
+      if (this.audioRequestCount <= 5) {
+        console.log(`[Audio] Calling WASM with bufferPtr=${bufferPtr}`)
+      }
+
+      // Call WASM to fill the buffer
+      this.module._allolib_process_audio(bufferPtr, frames, channels)
+
+      if (this.audioRequestCount <= 5) {
+        console.log(`[Audio] WASM call returned`)
+      }
+
+      // Copy data from WASM memory to JavaScript
+      // HEAPF32 is a Float32Array view, so bufferPtr is an element offset (not byte offset)
+      const elementOffset = bufferPtr / 4  // Convert byte offset to float32 element offset
+      const audioData = this.module.HEAPF32!.subarray(elementOffset, elementOffset + frames * channels)
+
+      // Log sample values for first few requests
+      if (this.audioRequestCount <= 5) {
+        const maxSample = Math.max(...Array.from(audioData).map(Math.abs))
+        console.log(`[Audio] Max sample value: ${maxSample}`)
+      }
+
+      // Send to worklet (make a copy since we'll free the memory)
+      const bufferCopy = audioData.slice()
+      window.alloWorkletNode.port.postMessage({
+        type: 'audioBuffer',
+        buffer: bufferCopy.buffer,
+      }, [bufferCopy.buffer])
+
+      // Free the buffer
+      this.module._free?.(bufferPtr)
+    } catch (error) {
+      console.warn('Audio processing error:', error)
+    }
+  }
+
+  private async importModule(url: string): Promise<(config: any) => Promise<WasmModule>> {
+    // Use dynamic import to load the ES6 module
+    // We need to handle CORS and module loading properly
+    try {
+      // For cross-origin modules, we may need to fetch and create a blob URL
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch module: ${response.status} ${response.statusText}`)
+      }
+
+      const moduleText = await response.text()
+
+      // Create a blob URL for the module code
+      const blob = new Blob([moduleText], { type: 'application/javascript' })
+      const blobUrl = URL.createObjectURL(blob)
+
+      try {
+        // Import the module from the blob URL
+        const module = await import(/* @vite-ignore */ blobUrl)
+        return module.default
+      } finally {
+        // Clean up blob URL
+        URL.revokeObjectURL(blobUrl)
+      }
+    } catch (error) {
+      // Fallback: try direct import (may work if same-origin)
+      const module = await import(/* @vite-ignore */ url)
+      return module.default
     }
   }
 
@@ -98,13 +280,17 @@ export class AllolibRuntime {
     }
 
     this.isRunning = true
-    this.onPrint('[INFO] Starting application...')
+    this.onPrint('[INFO] Starting AlloLib application...')
 
     try {
-      // Call the main function if it exists
-      if (this.module._main) {
-        this.module._main()
-      }
+      // With MODULARIZE=1 + EXPORT_ES6=1, main() runs automatically during module init
+      // The ALLOLIB_WEB_MAIN macro's main() calls allolib_create() and allolib_start()
+
+      // Set up audio worklet now that we have the module
+      this.setupAudioWorklet()
+
+      // Resume audio context (must be after user interaction)
+      this.resumeAudio()
 
       this.onPrint('[SUCCESS] Application started')
     } catch (error) {
@@ -114,28 +300,69 @@ export class AllolibRuntime {
     }
   }
 
+  private resumeAudio(): void {
+    if (window.alloAudioContext) {
+      this.onPrint(`[INFO] Audio context state: ${window.alloAudioContext.state}`)
+      if (window.alloAudioContext.state === 'suspended') {
+        window.alloAudioContext.resume().then(() => {
+          this.onPrint(`[INFO] Audio context resumed, now: ${window.alloAudioContext?.state}`)
+        }).catch(err => {
+          console.warn('Audio resume failed:', err)
+        })
+      }
+    }
+  }
+
   stop(): void {
     if (!this.isRunning) return
 
     this.isRunning = false
 
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId)
-      this.animationFrameId = null
+    // Stop the AlloLib app
+    if (this.module?._allolib_stop) {
+      try {
+        this.module._allolib_stop()
+      } catch (error) {
+        console.warn('Stop error:', error)
+      }
+    }
+
+    // Suspend audio
+    if (window.alloAudioContext) {
+      window.alloAudioContext.suspend()
+    }
+
+    // Disconnect audio worklet
+    if (window.alloWorkletNode) {
+      window.alloWorkletNode.disconnect()
+      window.alloWorkletNode = null
     }
 
     // Clear the canvas
-    if (this.gl) {
-      this.gl.clearColor(0.1, 0.1, 0.1, 1.0)
-      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT)
+    const gl = this.canvas.getContext('webgl2')
+    if (gl) {
+      gl.clearColor(0.1, 0.1, 0.1, 1.0)
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
     }
 
     this.onPrint('[INFO] Application stopped')
   }
 
-  resize(): void {
-    if (!this.gl) return
+  private cleanup(): void {
+    // Destroy previous module
+    if (this.module?._allolib_destroy) {
+      try {
+        this.module._allolib_destroy()
+      } catch (error) {
+        console.warn('Cleanup error:', error)
+      }
+    }
 
+    this.module = null
+    window.Module = null as any
+  }
+
+  resize(): void {
     const dpr = window.devicePixelRatio || 1
     const width = this.canvas.clientWidth * dpr
     const height = this.canvas.clientHeight * dpr
@@ -143,14 +370,24 @@ export class AllolibRuntime {
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width
       this.canvas.height = height
-      this.gl.viewport(0, 0, width, height)
+
+      // Update viewport if we have a context
+      const gl = this.canvas.getContext('webgl2')
+      if (gl) {
+        gl.viewport(0, 0, width, height)
+      }
     }
   }
 
   destroy(): void {
     this.stop()
-    this.module = null
-    this.gl = null
+    this.cleanup()
+
+    // Close audio context
+    if (window.alloAudioContext) {
+      window.alloAudioContext.close()
+      window.alloAudioContext = null
+    }
   }
 
   get running(): boolean {
@@ -169,10 +406,6 @@ export class AudioRuntime {
       sampleRate: 44100,
       latencyHint: 'interactive',
     })
-
-    // Load audio worklet processor
-    // This will be implemented when we have the actual audio worklet
-    // await this.audioContext.audioWorklet.addModule('/audio-processor.js')
   }
 
   async start(): Promise<void> {

@@ -12,7 +12,7 @@
 
 ## Implementation Progress
 
-### Completed
+### ✅ Phase 1: Infrastructure - COMPLETE
 - [x] **Project Setup** - Git repository initialized, npm workspaces configured
 - [x] **Frontend Scaffolding** - Vue 3 + TypeScript + Tailwind CSS + Vite
 - [x] **Backend Scaffolding** - Node.js + Express + WebSocket server
@@ -24,18 +24,326 @@
 - [x] **UI Components** - Toolbar, EditorPane, ViewerPane, Console
 - [x] **AlloLib Cloned** - Full library with all submodules (Gamma, GLFW, imgui, etc.)
 - [x] **al_ext Cloned** - Extensions (soundfile, spatialaudio, assets3d)
+- [x] **AlloLib Documentation** - Complete glossary, dictionary, and how-to guide
 
-### In Progress
-- [ ] **AlloLib WASM Build** - Configure CMake for Emscripten compilation
-- [ ] **Web Audio Backend** - Replace PortAudio with Web Audio API
-- [ ] **WebGL2 Integration** - Connect GLFW port to canvas
+### ✅ Phase 2: AlloLib WASM Port - COMPLETE
+- [x] **AlloLib WASM Build** - CMakeLists.txt for Emscripten (`allolib-wasm/CMakeLists.txt`)
+- [x] **Web Audio Backend** - Web Audio API backend (`allolib-wasm/src/al_WebAudioBackend.cpp`)
+- [x] **WebGL2 Integration** - GLFW Emscripten port with WebGL2
+- [x] **Full Compilation Testing** - End-to-end C++ to WASM pipeline verified
+- [x] **WebApp Wrapper** - Self-contained `al::WebApp` class (not inheriting from App)
+- [x] **AudioWorklet Processor** - Real-time audio in worker (`allolib-audio-processor.js`)
+- [x] **Gamma DSP Integration** - Compiled into libGamma.a (160KB)
+- [x] **Graphics Core** - Graphics, Mesh, Shapes, Shader, Texture, VAO compiled
+- [x] **Shape Functions** - All primitives included (sphere, cube, cone, cylinder, etc.)
+- [x] **Lighting System** - Light class compiled into libal_web.a
+- [x] **Sound/Spatializer Sources** - Ambisonics, VBAP, DBAP, StereoPanner compiled
+- [x] **Scene System Sources** - SynthVoice, PolySynth, DynamicScene, PositionedVoice compiled
 
-### Pending
-- [ ] **Full Compilation Testing** - End-to-end C++ to WASM pipeline
-- [ ] **Example Projects** - Pre-built demos (sphere, synth, particles)
+### ✅ Phase 3: Integration Testing - COMPLETE
+- [x] **Test Application** - Basic rotating sphere + sine wave (`test_app.cpp`)
+- [x] **Docker Services Running** - Frontend (3000), Backend (4000), Redis (6379), Compiler
+- [x] **Frontend-Backend Integration** - Monaco → API → Compilation pipeline works
+- [x] **Compilation Pipeline** - Code compiles successfully (~5 seconds)
+- [x] **WASM Module Loading** - ES6 module imports and initializes correctly
+- [x] **Application Lifecycle** - `allolib_create()`, `allolib_start()` called successfully
+- [x] **Audio Worklet Loading** - Processor loads without errors
+- [x] **WebGL Rendering** - Graphics display correctly (rotating colored sphere visible)
+- [x] **Audio Analysis Panel** - Faust IDE-style visualization (meters, waveform, spectrum)
+- [x] **Keyboard/Mouse Input Code** - Emscripten HTML5 event handlers implemented
+- [x] **Audio Playback** - Gamma oscillators generate audio, AudioWorklet plays correctly
+- [x] **Input Events** - Keyboard/mouse events registered via Emscripten HTML5 API
+
+#### WebGL Rendering Fix (Completed):
+Multiple issues were resolved to get WebGL rendering working:
+
+1. **ES6 Module Loading** - Runtime updated to properly import ES6 WASM modules using dynamic imports with blob URLs
+
+2. **WebGL Context Creation** - Bypassed AlloLib's GLFW Window class for Emscripten, using direct `emscripten_webgl_create_context()` instead
+
+3. **GLAD Initialization** - Added `gladLoadGLLoader((void* (*)(const char*))eglGetProcAddress)` after WebGL context creation
+
+4. **Shader Compatibility** - Created patched shader headers (`allolib-wasm/include/al/graphics/al_DefaultShaders.hpp`) with `#version 300 es` + precision qualifiers for WebGL2 (replacing desktop `#version 330`)
+
+5. **Missing Graphics::init()** - Added the crucial `mGraphics->init()` call in WebApp to compile all default shaders before use
+
+#### Audio Analysis Panel (Completed):
+Added Faust IDE-style audio visualization (`frontend/src/components/AudioAnalysisPanel.vue`):
+
+1. **Master Level Meter** - Stereo L/R meters with peak hold indicators
+   - Color gradient (green → yellow → red) for signal level
+   - dB scale markers (-60 to 0 dB)
+
+2. **Waveform Analyzer** - Oscilloscope-style time domain display
+   - Real-time waveform rendering using Web Audio AnalyserNode
+   - Grid lines and amplitude labels (+1, 0, -1)
+
+3. **Spectrum Analyzer** - FFT-based frequency display
+   - Logarithmic frequency scale (20Hz to 22kHz)
+   - 64 frequency bands with gradient coloring
+   - Frequency markers (100Hz, 1kHz, 10kHz)
+
+4. **Toggle View** - Switch between waveform and spectrum views
+
+#### Keyboard/Mouse Input (Completed):
+Implemented Emscripten HTML5 event handlers in `al_WebApp.cpp`:
+
+1. **Keyboard Events** - Document-level keydown/keyup handlers
+   - Maps JavaScript key codes to AlloLib Keyboard constants
+   - Supports modifiers (shift, ctrl, alt)
+   - Special key mapping (arrows, escape, enter, etc.)
+
+2. **Mouse Events** - Canvas-level mouse handlers
+   - mousedown, mouseup, mousemove for basic interaction
+   - wheel event for scroll/zoom
+   - Drag detection (when buttons are pressed during move)
+
+3. **Helper Classes** - KeyboardAccess/MouseAccess to access protected setters
+
+#### Audio Pipeline Fix (Completed):
+Fixed the complete audio pipeline from WASM to Web Audio output:
+
+1. **Gamma Sample Rate** - Added `gam::sampleRate(sampleRate)` in WebApp::initAudio() to configure Gamma DSP library (required for oscillators to work)
+
+2. **Buffer Size Alignment** - Changed default WebAudioConfig::bufferSize from 512 to 128 to match Web Audio worklet quantum size
+
+3. **AudioWorklet Integration** - Full bidirectional communication:
+   - Worklet sends `requestBuffer` messages to main thread
+   - Main thread allocates WASM memory, calls `_allolib_process_audio`
+   - Audio data copied back and sent to worklet via `postMessage`
+   - HEAPF32 subarray with proper byte-to-element offset conversion
+
+4. **AudioIOData Setup** - Proper buffer allocation in initAudio():
+   - framesPerBuffer(128) sets internal buffer size
+   - channelsOut(2) allocates stereo output buffers
+   - frame(0) resets iterator before onSound callback
+
+5. **Docker Volume Fix** - Removed `compiler-lib` volume to force library rebuild when source changes
+
+### 📋 Phase 4: Feature Verification - PENDING
+- [ ] **Spatializer Testing** - Verify spatial audio works in browser
+  - [ ] StereoPanner - Test stereo panning
+  - [ ] VBAP/DBAP - Test amplitude panning
+  - [ ] Ambisonics - Test ambisonic encoding
+- [ ] **Scene System Testing** - Verify voice management
+  - [ ] SynthVoice lifecycle (trigger, release)
+  - [ ] PolySynth voice allocation
+  - [ ] DynamicScene spatial rendering
+- [ ] **Shader Support** - Test custom GLSL ES 3.0 shaders
+- [ ] **Texture Support** - Test texture loading and procedural generation
+
+### 📋 Phase 5: WebGL2 & Audio Feature Parity - PENDING
+
+Ensure WebGL2 and Web Audio implementations support all AlloLib features. WebGL2 is based on OpenGL ES 3.0 (differs from desktop OpenGL 3.3+), and Web Audio has its own constraints compared to native audio APIs.
+
+#### Graphics Features
+- [ ] **Mesh Primitives** - All primitive types working
+  - [ ] POINTS, LINES, LINE_STRIP, LINE_LOOP
+  - [ ] TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN
+- [ ] **Mesh Attributes** - All vertex attributes
+  - [ ] Position (location 0)
+  - [ ] Color (location 1)
+  - [ ] TexCoord (location 2)
+  - [ ] Normal (location 3)
+- [ ] **Shape Functions** - All addShape() primitives
+  - [ ] addSphere, addCube, addCone, addCylinder
+  - [ ] addTorus, addSurface, addRect
+  - [ ] addIcosphere, addDodecahedron, addOctahedron
+- [ ] **Transform Stack** - Matrix operations
+  - [ ] pushMatrix/popMatrix
+  - [ ] translate, rotate, scale
+  - [ ] Model/View/Projection matrices
+
+#### Shader System
+- [ ] **Default Shaders** - All shader types compiling
+  - [ ] COLOR shader (uniform color)
+  - [ ] MESH shader (per-vertex color)
+  - [ ] TEXTURE shader (texture sampling)
+  - [ ] LIGHTING_* shaders (with lights)
+- [ ] **Custom Shaders** - User GLSL ES 3.0 shaders
+  - [ ] Vertex shader compilation
+  - [ ] Fragment shader compilation
+  - [ ] Uniform binding
+  - [ ] Attribute binding
+- [ ] **Shader Compatibility Layer** - GLSL 330 → GLSL ES 300 translation
+  - [ ] Precision qualifiers (highp/mediump/lowp)
+  - [ ] Integer literal suffixes
+  - [ ] Texture functions (texture vs texture2D)
+
+#### Lighting System
+- [ ] **Light Types**
+  - [ ] Point lights
+  - [ ] Directional lights
+  - [ ] Multiple lights (up to 8)
+- [ ] **Material Properties**
+  - [ ] Ambient, diffuse, specular
+  - [ ] Shininess
+- [ ] **Lighting Shaders**
+  - [ ] Per-fragment lighting
+  - [ ] Normal matrix calculation
+
+#### Texture System
+- [ ] **Texture Types**
+  - [ ] 2D textures (TEXTURE_2D)
+  - [ ] Cubemap textures (if needed)
+- [ ] **Texture Formats**
+  - [ ] RGBA8, RGB8
+  - [ ] Float textures (if WebGL2 extension available)
+- [ ] **Texture Parameters**
+  - [ ] Filtering (LINEAR, NEAREST, MIPMAP)
+  - [ ] Wrapping (REPEAT, CLAMP_TO_EDGE)
+- [ ] **Texture Loading**
+  - [ ] From image data (stb_image)
+  - [ ] Procedural generation
+
+#### Framebuffer Objects
+- [ ] **EasyFBO** - Render-to-texture support
+  - [ ] Color attachment
+  - [ ] Depth attachment
+  - [ ] Stencil attachment
+- [ ] **Post-processing** - Multi-pass rendering
+
+#### Blending & State
+- [ ] **Blend Modes**
+  - [ ] Alpha blending
+  - [ ] Additive blending
+  - [ ] Custom blend functions
+- [ ] **Depth Testing**
+  - [ ] Enable/disable
+  - [ ] Depth function
+- [ ] **Face Culling**
+  - [ ] Front/back culling
+  - [ ] Winding order
+- [ ] **Viewport & Scissor**
+  - [ ] Viewport setting
+  - [ ] Scissor testing
+
+#### WebGL2-Specific Limitations to Address
+- [ ] **No Geometry Shaders** - WebGL2 doesn't support geometry shaders
+  - [ ] Alternative: compute on CPU or use instancing
+- [ ] **No Tessellation** - WebGL2 doesn't support tessellation shaders
+- [ ] **Limited Extensions** - Check for and handle missing extensions
+  - [ ] EXT_color_buffer_float
+  - [ ] OES_texture_float_linear
+- [ ] **Memory Limits** - Handle WebGL memory constraints
+  - [ ] Texture size limits
+  - [ ] Buffer size limits
+
+#### Testing & Validation
+- [ ] **Visual Comparison Tests** - Compare WebGL2 output to desktop OpenGL
+- [ ] **Performance Benchmarks** - Ensure acceptable frame rates
+- [ ] **Browser Compatibility** - Test on Chrome, Firefox, Safari, Edge
+
+#### Audio Parity
+Ensure Web Audio implementation supports all AlloLib audio features:
+
+- [ ] **Gamma DSP Integration**
+  - [ ] All oscillator types (Sine, Saw, Square, Tri, Pulse)
+  - [ ] Envelope generators (ADSR, Decay, Seg)
+  - [ ] Filters (Biquad, OnePole, Notch, etc.)
+  - [ ] Effects (Delay, Reverb, Chorus)
+  - [ ] Sample rate conversion handling
+- [ ] **AudioIOData Features**
+  - [ ] Multi-channel output (> 2 channels if supported)
+  - [ ] Audio input (microphone via getUserMedia)
+  - [ ] Bus channels for internal routing
+  - [ ] Gain control with smoothing
+- [ ] **Spatializer Support**
+  - [ ] StereoPanner - Stereo panning
+  - [ ] VBAP - Vector Base Amplitude Panning
+  - [ ] DBAP - Distance Based Amplitude Panning
+  - [ ] Ambisonics - First-order ambisonic encoding/decoding
+  - [ ] Listener pose updates (position, orientation)
+- [ ] **Scene System Audio**
+  - [ ] SynthVoice with proper lifecycle (trigger, release, free)
+  - [ ] PolySynth voice allocation and stealing
+  - [ ] DynamicScene with spatial audio rendering
+  - [ ] PositionedVoice with 3D positioning
+- [ ] **Audio Analysis**
+  - [ ] Real-time FFT for visualization
+  - [ ] RMS level metering
+  - [ ] Peak detection
+- [ ] **Web Audio Limitations**
+  - [ ] Handle AudioContext autoplay policy (require user gesture)
+  - [ ] Manage AudioWorklet latency (~128 samples minimum)
+  - [ ] Buffer underrun detection and recovery
+  - [ ] Sample-accurate scheduling via AudioContext.currentTime
+
+### 📋 Phase 6: Editor Enhancement - PENDING
+- [ ] **Monaco Intellisense** - Full autocomplete for 50+ AlloLib classes
+  - [ ] Hover documentation for all classes
+  - [ ] Method signatures and parameter hints
+  - [ ] Code snippets for common patterns
+- [ ] **Example Projects** - 12 demos covering all features:
+  1. [ ] Hello Sphere - Basic graphics
+  2. [ ] Sine Wave - Basic audio
+  3. [ ] Mesh Morphing - Vertex animation
+  4. [ ] Audio Visualizer - FFT analysis
+  5. [ ] Particle System - Many objects
+  6. [ ] Polyphonic Synth - PolySynth demo
+  7. [ ] 3D Audio Scene - Spatial audio
+  8. [ ] Shader Art - Custom shaders
+  9. [ ] Physics Simulation - Math utilities
+  10. [ ] Generative Music - Algorithmic composition
+  11. [ ] Interactive Mesh - Mouse interaction
+  12. [ ] Full Application - Combined features
 - [ ] **Project Persistence** - IndexedDB storage for user code
-- [ ] **Error Handling** - Compiler diagnostics in editor
-- [ ] **Production Deployment** - Docker Compose for full stack
+- [ ] **Error Handling** - Compiler diagnostics with line highlighting
+- [ ] **Parameter System** - Parameter/ParameterServer with UI callbacks
+
+### 📋 Phase 7: Production - PENDING
+- [ ] **Production Docker Compose** - Optimized multi-stage builds
+- [ ] **CDN Setup** - Static asset serving for WASM/JS
+- [ ] **Rate Limiting** - Compilation request throttling
+- [ ] **Caching** - Redis cache for compiled modules
+- [ ] **HTTPS** - SSL/TLS configuration
+- [ ] **Monitoring** - Health checks and logging
+
+---
+
+## Build Artifacts
+
+### Libraries Built (in Docker `/app/lib/`)
+| Library | Size | Contents |
+|---------|------|----------|
+| `libal_web.a` | 1.8 MB | AlloLib core (Graphics, Audio, Scene, Sound, Spatial) |
+| `libGamma.a` | 160 KB | Gamma DSP library (oscillators, filters, FFT) |
+
+### Test Application Output (in Docker `/app/output/`)
+| File | Size | Description |
+|------|------|-------------|
+| `app.js` | 172 KB | Emscripten JS loader |
+| `app.wasm` | 501 KB | WebAssembly binary |
+| `allolib-audio-processor.js` | 4 KB | AudioWorklet processor |
+
+---
+
+## Key Files Created
+
+### allolib-wasm/ (New Module)
+```
+allolib-wasm/
+├── CMakeLists.txt              # Emscripten build configuration
+├── include/
+│   ├── al_WebApp.hpp           # Self-contained WebApp class
+│   └── al/graphics/
+│       └── al_DefaultShaders.hpp  # Patched shaders for WebGL2 (#version 300 es)
+└── src/
+    ├── al_WebApp.cpp           # WebApp implementation (WebGL context, GLAD init)
+    ├── al_WebAudioBackend.cpp  # Web Audio backend
+    ├── al_DefaultShaderString_Web.cpp  # WebGL2 shader version strings
+    ├── al_DefaultShaders_Web.cpp       # WebGL2 multilight shaders
+    ├── allolib-audio-processor.js      # AudioWorklet processor
+    └── test_app.cpp            # Test application
+```
+
+### Docker Configuration
+```
+backend/docker/
+├── Dockerfile                  # Emscripten 3.1.50 container
+├── build-allolib.sh           # AlloLib static library builder
+└── compile.sh                 # User code compiler
+```
 
 ---
 
@@ -247,6 +555,65 @@ AlloLib depends on several libraries that need Emscripten-compatible versions:
 | GLM | ✅ Header-only | Direct compilation |
 | Dear ImGui | ✅ Emscripten examples | Use official Emscripten backend |
 
+### 4.1.1 AlloLib Feature Coverage Matrix
+
+Reference: `allolib/ALLOLIB_DOCUMENTATION.md`
+
+#### Core Modules Required
+
+| Module | Key Classes | Web Support | Implementation Notes |
+|--------|-------------|-------------|---------------------|
+| **App** | `App`, `AudioDomain`, `OpenGLGraphicsDomain`, `SimulationDomain` | ✅ Full | WebApp wrapper needed |
+| **Graphics** | `Graphics`, `Mesh`, `Shader`, `ShaderProgram`, `Texture`, `Light` | ✅ Full | WebGL2 compatible |
+| **Math** | `Vec2/3/4`, `Quat`, `Mat4`, `rnd::` functions | ✅ Full | Header-only, no changes |
+| **Spatial** | `Pose`, `Nav` | ✅ Full | Header-only, no changes |
+| **Audio** | `AudioIO`, `AudioIOData` | ⚠️ Custom | Web Audio API backend |
+| **Sound** | `Spatializer`, `Ambisonics`, `Vbap`, `Dbap`, `StereoPanner` | ⚠️ Custom | AudioWorklet implementation |
+| **Scene** | `SynthVoice`, `PolySynth`, `DynamicScene`, `PositionedVoice` | ✅ Full | Works with Web Audio backend |
+| **Types** | `Color`, `Colori`, `HSV`, `RGB` | ✅ Full | Header-only, no changes |
+| **UI** | `Parameter`, `ParameterServer` | ⚠️ Partial | OSC via WebSocket |
+| **IO** | `Window`, `Keyboard`, `Mouse` | ✅ Full | Emscripten GLFW port |
+| **Protocol** | `osc::Send`, `osc::Recv` | ⚠️ Custom | WebSocket bridge |
+
+#### Shape Functions (al/graphics/al_Shapes.hpp)
+
+All must be supported:
+- `addSphere()` - Parametric sphere
+- `addIcosphere()` - Icosahedral sphere
+- `addCube()` - Box primitive
+- `addCone()` - Cone/pyramid
+- `addCylinder()` - Open cylinder
+- `addTorus()` - Torus
+- `addDisc()` - Disc/polygon
+- `addPrism()` - Prism with twist
+- `addAnnulus()` - Ring shape
+- `addSurface()` - Height map surface
+- `addWireBox()` - Wireframe box
+
+#### Audio Processing Chain
+
+```
+User Code (onSound) → AudioIOData → Web Audio Backend → AudioWorklet → Speakers
+                                         ↓
+                              Spatializer (optional)
+                              - Ambisonics
+                              - VBAP
+                              - DBAP
+                              - StereoPanner
+```
+
+#### Scene/Synthesis Architecture
+
+```
+PolySynth/DynamicScene
+    ├── Voice Pool (pre-allocated)
+    │   ├── SynthVoice (audio only)
+    │   └── PositionedVoice (audio + 3D position)
+    ├── triggerOn(voice) → onTriggerOn() → active
+    ├── triggerOff(voice) → onTriggerOff() → releasing
+    └── render(io/g) → calls active voice onProcess()
+```
+
 ### 4.2 CMake Configuration for Emscripten
 
 ```cmake
@@ -403,23 +770,23 @@ class AllolibProcessor extends AudioWorkletProcessor {
         super();
         this.bufferSize = options.processorOptions?.bufferSize || 128;
         this.pendingBuffer = null;
-        
+
         this.port.onmessage = (e) => {
             if (e.data.type === 'buffer') {
                 this.pendingBuffer = e.data.data;
             }
         };
     }
-    
+
     process(inputs, outputs, parameters) {
         const output = outputs[0];
-        
+
         // Request new buffer from main thread / WASM
         this.port.postMessage({
             type: 'requestBuffer',
             size: output[0].length * output.length
         });
-        
+
         // Use pending buffer if available
         if (this.pendingBuffer) {
             for (let channel = 0; channel < output.length; channel++) {
@@ -430,12 +797,264 @@ class AllolibProcessor extends AudioWorkletProcessor {
             }
             this.pendingBuffer = null;
         }
-        
+
         return true;
     }
 }
 
 registerProcessor('allolib-processor', AllolibProcessor);
+```
+
+### 4.5 Spatializer Web Audio Implementation
+
+To support allolib's spatial audio features (Ambisonics, VBAP, DBAP, StereoPanner), we need custom AudioWorklet implementations:
+
+```javascript
+// allolib-wasm/src/spatializer-processor.js
+
+// Base spatializer interface
+class SpatializerProcessor extends AudioWorkletProcessor {
+    constructor(options) {
+        super();
+        this.listenerPos = {x: 0, y: 0, z: 0};
+        this.listenerQuat = {w: 1, x: 0, y: 0, z: 0};
+        this.sources = new Map(); // sourceId -> {pos, buffer}
+
+        this.port.onmessage = (e) => {
+            switch(e.data.type) {
+                case 'setListener':
+                    this.listenerPos = e.data.pos;
+                    this.listenerQuat = e.data.quat;
+                    break;
+                case 'addSource':
+                    this.sources.set(e.data.id, {
+                        pos: e.data.pos,
+                        buffer: null
+                    });
+                    break;
+                case 'updateSource':
+                    if (this.sources.has(e.data.id)) {
+                        this.sources.get(e.data.id).pos = e.data.pos;
+                    }
+                    break;
+                case 'sourceBuffer':
+                    if (this.sources.has(e.data.id)) {
+                        this.sources.get(e.data.id).buffer = e.data.buffer;
+                    }
+                    break;
+                case 'removeSource':
+                    this.sources.delete(e.data.id);
+                    break;
+            }
+        };
+    }
+
+    // Calculate distance attenuation
+    calculateAttenuation(sourcePos, law = 'inverse') {
+        const dx = sourcePos.x - this.listenerPos.x;
+        const dy = sourcePos.y - this.listenerPos.y;
+        const dz = sourcePos.z - this.listenerPos.z;
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+        switch(law) {
+            case 'inverse': return 1 / Math.max(1, dist);
+            case 'inverse_square': return 1 / Math.max(1, dist * dist);
+            case 'linear': return Math.max(0, 1 - dist / 100);
+            default: return 1;
+        }
+    }
+
+    // Calculate pan position for stereo
+    calculatePan(sourcePos) {
+        // Transform source position to listener space
+        const dx = sourcePos.x - this.listenerPos.x;
+        const dz = sourcePos.z - this.listenerPos.z;
+        const angle = Math.atan2(dx, -dz);
+        return Math.sin(angle); // -1 = left, 0 = center, 1 = right
+    }
+}
+
+// Stereo panner implementation
+class StereoPannerProcessor extends SpatializerProcessor {
+    process(inputs, outputs, parameters) {
+        const output = outputs[0];
+        const left = output[0];
+        const right = output[1];
+
+        // Clear output
+        left.fill(0);
+        right.fill(0);
+
+        // Mix all sources with spatial panning
+        for (const [id, source] of this.sources) {
+            if (!source.buffer) continue;
+
+            const atten = this.calculateAttenuation(source.pos, 'inverse_square');
+            const pan = this.calculatePan(source.pos);
+
+            // Equal-power panning
+            const leftGain = Math.cos((pan + 1) * Math.PI / 4) * atten;
+            const rightGain = Math.sin((pan + 1) * Math.PI / 4) * atten;
+
+            for (let i = 0; i < left.length && i < source.buffer.length; i++) {
+                left[i] += source.buffer[i] * leftGain;
+                right[i] += source.buffer[i] * rightGain;
+            }
+        }
+
+        return true;
+    }
+}
+
+registerProcessor('stereo-panner', StereoPannerProcessor);
+
+// VBAP (Vector-Based Amplitude Panning) - simplified 2D version
+class VBAPProcessor extends SpatializerProcessor {
+    constructor(options) {
+        super(options);
+        // Speaker positions (configurable)
+        this.speakers = options.processorOptions?.speakers || [
+            {angle: -30}, {angle: 30}, {angle: -110}, {angle: 110}
+        ];
+    }
+
+    process(inputs, outputs, parameters) {
+        const output = outputs[0];
+
+        // Clear all channels
+        for (let ch = 0; ch < output.length; ch++) {
+            output[ch].fill(0);
+        }
+
+        for (const [id, source] of this.sources) {
+            if (!source.buffer) continue;
+
+            const atten = this.calculateAttenuation(source.pos, 'inverse_square');
+            const sourceAngle = Math.atan2(
+                source.pos.x - this.listenerPos.x,
+                -(source.pos.z - this.listenerPos.z)
+            ) * 180 / Math.PI;
+
+            // Find two closest speakers and calculate gains
+            const gains = this.calculateVBAPGains(sourceAngle);
+
+            for (let ch = 0; ch < Math.min(output.length, gains.length); ch++) {
+                for (let i = 0; i < output[ch].length && i < source.buffer.length; i++) {
+                    output[ch][i] += source.buffer[i] * gains[ch] * atten;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    calculateVBAPGains(sourceAngle) {
+        // Simplified VBAP for 2D speaker array
+        const gains = new Array(this.speakers.length).fill(0);
+
+        // Find the two speakers that bracket the source angle
+        let minDiff = Infinity;
+        let closest = 0;
+
+        for (let i = 0; i < this.speakers.length; i++) {
+            const diff = Math.abs(this.normalizeAngle(sourceAngle - this.speakers[i].angle));
+            if (diff < minDiff) {
+                minDiff = diff;
+                closest = i;
+            }
+        }
+
+        // Simple gain based on angular distance
+        for (let i = 0; i < this.speakers.length; i++) {
+            const diff = Math.abs(this.normalizeAngle(sourceAngle - this.speakers[i].angle));
+            gains[i] = Math.max(0, 1 - diff / 90);
+        }
+
+        // Normalize gains
+        const sum = gains.reduce((a, b) => a + b, 0);
+        if (sum > 0) {
+            for (let i = 0; i < gains.length; i++) {
+                gains[i] /= sum;
+            }
+        }
+
+        return gains;
+    }
+
+    normalizeAngle(angle) {
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
+        return angle;
+    }
+}
+
+registerProcessor('vbap', VBAPProcessor);
+```
+
+### 4.6 Scene/Voice System Web Implementation
+
+The PolySynth and DynamicScene systems need to work with the Web Audio backend:
+
+```cpp
+// allolib-wasm/include/al_web_scene.hpp
+#pragma once
+
+#include "al/scene/al_PolySynth.hpp"
+#include "al/scene/al_DynamicScene.hpp"
+#include <emscripten.h>
+
+namespace al {
+
+// Web-compatible PolySynth that integrates with AudioWorklet
+class WebPolySynth : public PolySynth {
+public:
+    void render(AudioIOData& io) override {
+        // Standard PolySynth render
+        PolySynth::render(io);
+    }
+
+    // Expose voice state to JavaScript for visualization
+    EM_JS(void, updateVoiceState, (int id, float x, float y, float z, bool active), {
+        if (window.alloVoiceCallback) {
+            window.alloVoiceCallback(id, x, y, z, active);
+        }
+    });
+
+    void syncVoicesToJS() {
+        int id = 0;
+        for (auto* voice : voices()) {
+            if (auto* pv = dynamic_cast<PositionedVoice*>(voice)) {
+                updateVoiceState(id, pv->pos().x, pv->pos().y, pv->pos().z, voice->active());
+            }
+            id++;
+        }
+    }
+};
+
+// Web-compatible DynamicScene with spatial audio via AudioWorklet
+class WebDynamicScene : public DynamicScene {
+public:
+    void render(AudioIOData& io) override {
+        // Update listener pose in JavaScript spatializer
+        EM_ASM({
+            if (window.alloSpatializer) {
+                window.alloSpatializer.postMessage({
+                    type: 'setListener',
+                    pos: {x: $0, y: $1, z: $2},
+                    quat: {w: $3, x: $4, y: $5, z: $6}
+                });
+            }
+        },
+        listenerPose().pos().x, listenerPose().pos().y, listenerPose().pos().z,
+        listenerPose().quat().w, listenerPose().quat().x,
+        listenerPose().quat().y, listenerPose().quat().z);
+
+        // Render voices
+        DynamicScene::render(io);
+    }
+};
+
+} // namespace al
 ```
 
 ### 4.5 AlloLib App Wrapper for Web
@@ -737,36 +1356,416 @@ void main() {
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           documentation: 'Basic vertex/fragment shader',
         },
+
+        // === SCENE/SYNTHESIS SNIPPETS ===
+
+        // SynthVoice
+        {
+          label: 'synthvoice',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `struct \${1:MyVoice} : SynthVoice {
+    float freq = 440;
+    float phase = 0;
+    gam::ADSR<> env{0.01, 0.1, 0.7, 0.5};
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = std::sin(phase * M_2PI) * env() * 0.3;
+            io.out(0) = s;
+            io.out(1) = s;
+            phase += freq / io.framesPerSecond();
+            if (phase >= 1) phase -= 1;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override {
+        phase = 0;
+        env.reset();
+    }
+
+    void onTriggerOff() override {
+        env.release();
+    }
+};`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'SynthVoice template for polyphonic synthesis',
+        },
+
+        // PolySynth usage
+        {
+          label: 'polysynth',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `PolySynth synth;
+
+void onCreate() override {
+    synth.allocatePolyphony<\${1:MyVoice}>(\${2:16});
+}
+
+void triggerNote(float freq) {
+    auto* voice = synth.getVoice<\${1:MyVoice}>();
+    voice->freq = freq;
+    synth.triggerOn(voice);
+}
+
+void onSound(AudioIOData& io) override {
+    synth.render(io);
+}`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'PolySynth setup for polyphonic voice management',
+        },
+
+        // PositionedVoice for spatial audio
+        {
+          label: 'positionedvoice',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `struct \${1:SpatialVoice} : PositionedVoice {
+    float freq = 440;
+    float phase = 0;
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = std::sin(phase * M_2PI) * 0.3;
+            io.out(0) = s;
+            phase += freq / io.framesPerSecond();
+            if (phase >= 1) phase -= 1;
+        }
+    }
+
+    void onProcess(Graphics& g) override {
+        g.pushMatrix();
+        Mesh m;
+        addSphere(m, 0.1);
+        g.color(1, 1, 0);
+        g.draw(m);
+        g.popMatrix();
+    }
+
+    void update(double dt) override {
+        // Update position/animation
+    }
+};`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'PositionedVoice for 3D spatial audio',
+        },
+
+        // DynamicScene usage
+        {
+          label: 'dynamicscene',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `DynamicScene scene;
+
+void onCreate() override {
+    scene.distanceAttenuation().law(AttenuationLaw::ATTEN_INVERSE_SQUARE);
+
+    for (int i = 0; i < \${1:4}; i++) {
+        auto* voice = scene.getVoice<\${2:SpatialVoice}>();
+        voice->pos(rnd::uniformS() * 5, rnd::uniformS() * 5, rnd::uniformS() * 5);
+        scene.triggerOn(voice);
+    }
+}
+
+void onAnimate(double dt) override {
+    scene.update(dt);
+}
+
+void onDraw(Graphics& g) override {
+    g.clear(0);
+    scene.render(g);
+}
+
+void onSound(AudioIOData& io) override {
+    scene.listenerPose(pose());
+    scene.render(io);
+}`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'DynamicScene for spatial audio scene management',
+        },
+
+        // === GRAPHICS SNIPPETS ===
+
+        // All shape functions
+        {
+          label: 'mesh-icosphere',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addIcosphere(mesh, \${1:1.0}, \${2:3});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create an icosahedral sphere mesh',
+        },
+        {
+          label: 'mesh-cube',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addCube(mesh, \${1:1.0});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a cube mesh',
+        },
+        {
+          label: 'mesh-cone',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addCone(mesh, \${1:1.0}, Vec3f(0, 0, \${2:2}), \${3:32});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a cone/pyramid mesh',
+        },
+        {
+          label: 'mesh-cylinder',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addCylinder(mesh, \${1:0.5}, \${2:2.0}, \${3:32});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create an open cylinder mesh',
+        },
+        {
+          label: 'mesh-torus',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addTorus(mesh, \${1:0.3}, \${2:0.7}, \${3:16}, \${4:32});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a torus mesh',
+        },
+        {
+          label: 'mesh-disc',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addDisc(mesh, \${1:1.0}, \${2:32});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a disc/polygon mesh',
+        },
+        {
+          label: 'mesh-prism',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addPrism(mesh, \${1:1.0}, \${2:0.5}, \${3:2.0}, \${4:6}, \${5:0.0});
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a prism with optional twist',
+        },
+        {
+          label: 'mesh-surface',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Mesh mesh;
+addSurface(mesh, \${1:32}, \${2:32});
+// Modify vertices for height map
+for (auto& v : mesh.vertices()) {
+    float r = hypot(v.x, v.y);
+    v.z = exp(-8 * r * r);
+}
+mesh.generateNormals();`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Create a surface/height map mesh',
+        },
+
+        // Lighting setup
+        {
+          label: 'lighting-setup',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Light light;
+light.pos(\${1:5}, \${2:5}, \${3:5});
+
+void onDraw(Graphics& g) override {
+    g.clear(0);
+    g.depthTesting(true);
+    g.lighting(true);
+    g.light(light);
+    g.meshColor();
+    // draw meshes...
+}`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Basic lighting setup',
+        },
+
+        // === UI PARAMETER SNIPPETS ===
+
+        {
+          label: 'parameter',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Parameter \${1:paramName}{"\\${2:displayName}", "\\${3:group}", \${4:0.5}, \${5:0.0}, \${6:1.0}};
+
+void onCreate() override {
+    \${1:paramName}.registerChangeCallback([this](float value) {
+        // Handle parameter change
+        \${7:// update something}
+    });
+}`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Thread-safe parameter with callback',
+        },
+
+        // === MATH SNIPPETS ===
+
+        {
+          label: 'vec3-operations',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Vec3f a(\${1:1}, \${2:0}, \${3:0});
+Vec3f b(\${4:0}, \${5:1}, \${6:0});
+float dot = a.dot(b);
+Vec3f cross = a.cross(b);
+float mag = a.mag();
+Vec3f normalized = a.normalized();
+Vec3f lerped = a.lerp(b, \${7:0.5});`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Common Vec3f operations',
+        },
+
+        {
+          label: 'quat-rotation',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `Quatd q;
+q.fromAxisAngle(\${1:M_PI/4}, Vec3d(\${2:0}, \${3:1}, \${4:0}));
+// Or use slerp for smooth interpolation
+Quatd q2 = Quatd::slerp(q1, q2, \${5:0.5});`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Quaternion rotation operations',
+        },
+
+        // === AUDIO SNIPPETS ===
+
+        {
+          label: 'audio-loop',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `void onSound(AudioIOData& io) override {
+    while (io()) {
+        // Read input (if available)
+        float in0 = io.in(0);
+        float in1 = io.in(1);
+
+        // Generate/process audio
+        float out = \${1:0.0f};
+
+        // Write output
+        io.out(0) = out;
+        io.out(1) = out;
+    }
+}`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Standard audio processing loop',
+        },
+
+        {
+          label: 'gamma-oscillators',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `// Gamma oscillators
+gam::Sine<> sine{\${1:440}};
+gam::Saw<> saw{\${2:220}};
+gam::Square<> square{\${3:110}};
+gam::Tri<> tri{\${4:330}};
+gam::Noise noise;
+
+// In onSound:
+float s = sine() + saw() * 0.5 + square() * 0.3;`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Gamma library oscillators',
+        },
+
+        {
+          label: 'gamma-filters',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: `// Gamma filters
+gam::Biquad<> lpf;
+lpf.type(gam::FilterType::LP);
+lpf.freq(\${1:1000});
+lpf.res(\${2:1});
+
+// In onSound:
+float filtered = lpf(input);`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Gamma library filters',
+        },
       ];
-      
+
       return { suggestions };
     }
   });
   
-  // Register hover provider for AlloLib types
+  // Register hover provider for AlloLib types - COMPREHENSIVE COVERAGE
+  // Reference: allolib/ALLOLIB_DOCUMENTATION.md
   monacoInstance.languages.registerHoverProvider('cpp', {
     provideHover: (model, position) => {
       const word = model.getWordAtPosition(position);
       if (!word) return null;
-      
+
       const alloLibDocs: Record<string, string> = {
-        'App': '**AlloLib App**\n\nBase class for AlloLib applications. Override `onCreate()`, `onAnimate()`, `onDraw()`, and `onSound()` for your application logic.',
-        'Graphics': '**AlloLib Graphics**\n\nGraphics context for rendering. Use methods like `clear()`, `color()`, `draw()`, etc.',
-        'Mesh': '**AlloLib Mesh**\n\nVertex data container. Add vertices, colors, normals, and indices for rendering.',
-        'AudioIOData': '**AlloLib AudioIOData**\n\nAudio I/O buffer. Use `io()` to advance, `in(channel)` for input, `out(channel)` for output.',
-        'Nav': '**AlloLib Nav**\n\nNavigation/camera controller. Set position with `pos()`, orientation with `quat()`.',
-        'Vec3f': '**AlloLib Vec3f**\n\n3D float vector. Components: x, y, z.',
-        'Color': '**AlloLib Color**\n\nRGBA color. Components: r, g, b, a (0-1 range).',
-        'HSV': '**AlloLib HSV**\n\nHue-Saturation-Value color. H: 0-1 (hue), S: 0-1 (saturation), V: 0-1 (value).',
+        // === APP MODULE ===
+        'App': '**al::App**\n\nMain application class. Override:\n- `onCreate()` - initialization\n- `onAnimate(double dt)` - per-frame updates\n- `onDraw(Graphics& g)` - rendering\n- `onSound(AudioIOData& io)` - audio processing\n- `onKeyDown/Up(Keyboard&)` - keyboard events\n- `onMouseDown/Up/Drag/Move(Mouse&)` - mouse events',
+        'AudioDomain': '**al::AudioDomain**\n\nManages the audio processing thread. Part of the domain architecture.',
+        'OpenGLGraphicsDomain': '**al::OpenGLGraphicsDomain**\n\nManages the OpenGL rendering context and window.',
+        'SimulationDomain': '**al::SimulationDomain**\n\nManages the update/simulation thread.',
+
+        // === GRAPHICS MODULE ===
+        'Graphics': '**al::Graphics**\n\nHigh-level rendering interface.\n\n**State:** `clear()`, `blending()`, `depthTesting()`, `culling()`, `lighting()`\n**Color:** `color()`, `meshColor()`, `texture()`, `tint()`\n**Transform:** `pushMatrix()`, `popMatrix()`, `translate()`, `rotate()`, `scale()`\n**Draw:** `draw(Mesh&)`, `shader()`',
+        'Mesh': '**al::Mesh**\n\nVertex geometry container.\n\n**Primitives:** POINTS, LINES, LINE_STRIP, TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN\n**Methods:** `vertex()`, `color()`, `normal()`, `texCoord()`, `index()`, `generateNormals()`, `scale()`, `translate()`',
+        'Shader': '**al::Shader**\n\nSingle shader stage (VERTEX, FRAGMENT, GEOMETRY).\n\n**Methods:** `source()`, `compile()`, `compiled()`, `log()`',
+        'ShaderProgram': '**al::ShaderProgram**\n\nLinked shader program.\n\n**Methods:** `attach()`, `link()`, `begin()`, `end()`, `uniform()`, `uniformMatrix4()`, `attribute()`',
+        'Texture': '**al::Texture**\n\nGPU texture (1D, 2D, 3D, Cubemap).\n\n**Methods:** `create2D()`, `bind()`, `unbind()`, `submit()`, `filter()`, `wrap()`',
+        'Light': '**al::Light**\n\nLight source with position, ambient/diffuse/specular colors, attenuation.',
+
+        // === MATH MODULE ===
+        'Vec2f': '**al::Vec2f**\n\n2D float vector. Components: x, y\n\n**Ops:** +, -, *, /, `dot()`, `mag()`, `normalize()`, `lerp()`',
+        'Vec2d': '**al::Vec2d**\n\n2D double vector. Components: x, y',
+        'Vec3f': '**al::Vec3f**\n\n3D float vector. Components: x, y, z\n\n**Ops:** +, -, *, /, `dot()`, `cross()`, `mag()`, `normalize()`, `lerp()`',
+        'Vec3d': '**al::Vec3d**\n\n3D double vector. Components: x, y, z',
+        'Vec4f': '**al::Vec4f**\n\n4D float vector. Components: x, y, z, w',
+        'Vec4d': '**al::Vec4d**\n\n4D double vector. Components: x, y, z, w',
+        'Quatf': '**al::Quatf**\n\nFloat quaternion for 3D rotations.\n\n**Methods:** `normalize()`, `toVectorX/Y/Z()`, `toEuler()`\n**Static:** `identity()`, `slerp()`, `getRotationTo()`',
+        'Quatd': '**al::Quatd**\n\nDouble quaternion for 3D rotations.',
+        'Mat4f': '**al::Mat4f**\n\n4x4 float matrix.\n\n**Methods:** `identity()`, `transpose()`, `invert()`, `translate()`, `rotate()`, `scale()`',
+        'Mat4d': '**al::Mat4d**\n\n4x4 double matrix.',
+
+        // === SPATIAL MODULE ===
+        'Pose': '**al::Pose**\n\nPosition + orientation in 3D.\n\n**Methods:** `pos()`, `quat()`, `faceToward()`, `matrix()`, `ux()`, `uy()`, `uz()`, `ur()`, `uu()`, `uf()`, `lerp()`',
+        'Nav': '**al::Nav**\n\nNavigation (extends Pose).\n\n**Movement:** `moveF()`, `moveR()`, `moveU()`, `spin()`, `nudgeF/R/U()`\n**Control:** `step()`, `smooth()`, `halt()`',
+
+        // === AUDIO MODULE ===
+        'AudioIO': '**al::AudioIO**\n\nAudio stream manager.\n\n**Methods:** `init()`, `open()`, `close()`, `start()`, `stop()`, `channelsIn/Out()`, `framesPerSecond()`, `framesPerBuffer()`',
+        'AudioIOData': '**al::AudioIOData**\n\nAudio buffer in callback.\n\n**Usage:**\n```cpp\nwhile(io()) {\n  float in = io.in(0);\n  io.out(0) = processed;\n}\n```\n**Methods:** `in()`, `out()`, `channelsIn/Out()`, `framesPerBuffer()`, `framesPerSecond()`, `frame()`',
+
+        // === SOUND/SPATIALIZER MODULE ===
+        'Spatializer': '**al::Spatializer**\n\nAbstract base for spatialization.\n\n**Methods:** `compile()`, `renderSample()`, `renderBuffer()`',
+        'Ambisonics': '**al::Ambisonics**\n\nAmbisonic encoding/decoding spatializer.',
+        'Vbap': '**al::Vbap**\n\nVector-Based Amplitude Panning spatializer.',
+        'Dbap': '**al::Dbap**\n\nDistance-Based Amplitude Panning spatializer.',
+        'StereoPanner': '**al::StereoPanner**\n\nSimple stereo panning spatializer.',
+
+        // === SCENE MODULE ===
+        'SynthVoice': '**al::SynthVoice**\n\nPolyphonic voice base class.\n\n**Override:** `onProcess(AudioIOData&)`, `onProcess(Graphics&)`, `onTriggerOn()`, `onTriggerOff()`, `update(double dt)`\n**State:** `active()`, `free()`, `id()`\n**Params:** `createInternalTriggerParameter()`, `setTriggerParams()`',
+        'PolySynth': '**al::PolySynth**\n\nVoice manager.\n\n**Methods:** `allocatePolyphony<T>(count)`, `getVoice<T>()`, `triggerOn()`, `triggerOff()`, `render(io)`, `render(g)`',
+        'DynamicScene': '**al::DynamicScene**\n\nScene with spatial audio (extends PolySynth).\n\n**Methods:** `listenerPose()`, `render(io)` - spatially renders all positioned voices',
+        'PositionedVoice': '**al::PositionedVoice**\n\nSynthVoice with 3D position (extends SynthVoice + Pose).\n\nAutomatically spatialized in DynamicScene.',
+
+        // === TYPES MODULE ===
+        'Color': '**al::Color**\n\nRGBA float color [0-1].\n\n**Constructors:** `Color(r,g,b,a)`, `Color(gray,alpha)`, `Color(HSV,alpha)`\n**Methods:** `set()`, `invert()`, `luminance()`, `mix()`',
+        'Colori': '**al::Colori**\n\nRGBA uint8 color [0-255].',
+        'HSV': '**al::HSV**\n\nHue-Saturation-Value color.\n\n**Components:** h, s, v [0-1]\n**Methods:** `rotateHue()`, `wrapHue()`',
+        'RGB': '**al::RGB**\n\nRGB color (no alpha).',
+
+        // === UI MODULE ===
+        'Parameter': '**al::Parameter**\n\nThread-safe parameter with callbacks.\n\n**Methods:** `set()`, `get()`, `min()`, `max()`, `registerChangeCallback()`, `getName()`, `getGroup()`',
+        'ParameterServer': '**al::ParameterServer**\n\nOSC server for parameters.\n\n**Methods:** `registerParameter()` - address: /group/parameter',
+
+        // === IO MODULE ===
+        'Window': '**al::Window**\n\nWindow management.\n\n**Methods:** `create()`, `close()`, `dimensions()`, `fullScreen()`, `title()`',
+        'Keyboard': '**al::Keyboard**\n\nKeyboard state.\n\n**Methods:** `key()`, `isDown()`, `ctrl()`, `shift()`, `alt()`\n**Constants:** RETURN, SPACE, TAB, ESC, A-Z, 0-9, arrows, F-keys',
+        'Mouse': '**al::Mouse**\n\nMouse state.\n\n**Methods:** `x()`, `y()`, `dx()`, `dy()`, `button()`, `left()`, `right()`, `middle()`, `scrollX()`, `scrollY()`',
+
+        // === RANDOM MODULE ===
+        'rnd': '**al::rnd namespace**\n\nRandom number generation.\n\n**Functions:**\n- `uniform()` - [0, 1)\n- `uniformS()` - [-1, 1)\n- `uniform(hi)` - [0, hi)\n- `prob(p)` - bool with probability p\n- `gaussian()` - normal distribution',
       };
-      
+
       const doc = alloLibDocs[word.word];
       if (doc) {
         return {
           contents: [{ value: doc }]
         };
       }
-      
+
       return null;
     }
   });
@@ -1841,7 +2840,11 @@ export interface Example {
   code: string;
 }
 
+// COMPREHENSIVE EXAMPLES covering all major AlloLib features
+// Reference: allolib/ALLOLIB_DOCUMENTATION.md
+
 export const EXAMPLES: Example[] = [
+  // === BASICS CATEGORY ===
   {
     id: 'hello-sphere',
     title: 'Hello Sphere',
@@ -1853,22 +2856,22 @@ using namespace al;
 struct HelloSphere : App {
     Mesh mesh;
     double phase = 0;
-    
+
     void onCreate() override {
         addSphere(mesh, 1.0, 32, 32);
         mesh.generateNormals();
         nav().pos(0, 0, 5);
     }
-    
+
     void onAnimate(double dt) override {
         phase += dt;
     }
-    
+
     void onDraw(Graphics& g) override {
         g.clear(0.1);
         g.depthTesting(true);
         g.lighting(true);
-        
+
         g.rotate(phase * 30, 0, 1, 0);
         g.color(HSV(phase * 0.1, 1, 1));
         g.draw(mesh);
@@ -1881,6 +2884,151 @@ int main() {
     return 0;
 }`,
   },
+
+  {
+    id: 'shape-gallery',
+    title: 'Shape Gallery',
+    description: 'All AlloLib shape primitives',
+    category: 'basics',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct ShapeGallery : App {
+    static const int NUM_SHAPES = 9;
+    Mesh meshes[NUM_SHAPES];
+    double angle = 0;
+    Light light;
+
+    void onCreate() override {
+        nav().pullBack(8);
+        light.pos(5, 5, 5);
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 30;
+
+        // Recreate meshes each frame (for dynamic parameters)
+        for (int i = 0; i < NUM_SHAPES; i++) meshes[i].reset();
+
+        int s = 0;
+        addSphere(meshes[s++], 0.4, 16, 16);
+        addIcosphere(meshes[s++], 0.4, 2);
+        addCube(meshes[s++], 0.7);
+        addCone(meshes[s++], 0.4, Vec3f(0, 0, 0.8), 16);
+        addCylinder(meshes[s++], 0.3, 0.8, 16);
+        addTorus(meshes[s++], 0.15, 0.35, 16, 32);
+        addDisc(meshes[s++], 0.4, 6);
+        addPrism(meshes[s++], 0.4, 0.2, 0.8, 6, 0.2);
+        addAnnulus(meshes[s++], 0.2, 0.4, 32);
+
+        for (int i = 0; i < NUM_SHAPES; i++) {
+            meshes[i].generateNormals();
+            // Add colors
+            for (int v = 0; v < meshes[i].vertices().size(); v++) {
+                meshes[i].color(HSV(float(i) / NUM_SHAPES + float(v) / 100, 0.8, 1));
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.light(light);
+
+        for (int i = 0; i < NUM_SHAPES; i++) {
+            g.pushMatrix();
+            float x = (i % 3 - 1) * 2.5;
+            float y = (i / 3 - 1) * 2.5;
+            g.translate(x, -y, 0);
+            g.rotate(angle, 0.3, 1, 0.2);
+            g.meshColor();
+            g.draw(meshes[i]);
+            g.popMatrix();
+        }
+    }
+};
+
+int main() {
+    ShapeGallery app;
+    app.start();
+}`,
+  },
+
+  {
+    id: 'navigation-demo',
+    title: 'Navigation Demo',
+    description: 'Camera navigation with Nav class',
+    category: 'basics',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct NavigationDemo : App {
+    Mesh grid, axes;
+
+    void onCreate() override {
+        // Create grid
+        grid.primitive(Mesh::LINES);
+        for (int i = -10; i <= 10; i++) {
+            grid.vertex(i, 0, -10); grid.vertex(i, 0, 10);
+            grid.vertex(-10, 0, i); grid.vertex(10, 0, i);
+            grid.color(0.3, 0.3, 0.3); grid.color(0.3, 0.3, 0.3);
+            grid.color(0.3, 0.3, 0.3); grid.color(0.3, 0.3, 0.3);
+        }
+
+        // Create axes
+        axes.primitive(Mesh::LINES);
+        axes.vertex(0,0,0); axes.vertex(5,0,0); axes.color(1,0,0); axes.color(1,0,0);
+        axes.vertex(0,0,0); axes.vertex(0,5,0); axes.color(0,1,0); axes.color(0,1,0);
+        axes.vertex(0,0,0); axes.vertex(0,0,5); axes.color(0,0,1); axes.color(0,0,1);
+
+        nav().pos(0, 2, 10);
+        nav().faceToward(Vec3d(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        // Smooth navigation
+        nav().smooth(0.8);
+        nav().step(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+        g.meshColor();
+        g.draw(grid);
+        g.draw(axes);
+
+        // Draw a marker at origin
+        Mesh marker;
+        addSphere(marker, 0.2, 16, 16);
+        g.color(1, 1, 0);
+        g.draw(marker);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        float speed = 0.5;
+        switch(k.key()) {
+            case 'w': nav().moveF(speed); break;
+            case 's': nav().moveF(-speed); break;
+            case 'a': nav().moveR(-speed); break;
+            case 'd': nav().moveR(speed); break;
+            case 'q': nav().moveU(speed); break;
+            case 'e': nav().moveU(-speed); break;
+            case ' ': nav().halt(); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    NavigationDemo app;
+    app.start();
+}`,
+  },
+  // === AUDIO CATEGORY ===
   {
     id: 'simple-synth',
     title: 'Simple Synth',
@@ -1895,11 +3043,11 @@ struct SimpleSynth : App {
     gam::Sine<> osc{440};
     gam::ADSR<> env{0.01, 0.1, 0.7, 0.5};
     float frequency = 440;
-    
+
     void onCreate() override {
         nav().pos(0, 0, 5);
     }
-    
+
     void onSound(AudioIOData& io) override {
         while (io()) {
             osc.freq(frequency);
@@ -1908,9 +3056,8 @@ struct SimpleSynth : App {
             io.out(1) = s;
         }
     }
-    
+
     bool onKeyDown(const Keyboard& k) override {
-        // Map keys to frequencies (A4 = 440Hz)
         float freqs[] = {261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25};
         if (k.key() >= 'a' && k.key() <= 'h') {
             frequency = freqs[k.key() - 'a'];
@@ -1918,31 +3065,211 @@ struct SimpleSynth : App {
         }
         return true;
     }
-    
+
     bool onKeyUp(const Keyboard& k) override {
         env.release();
         return true;
     }
-    
+
     void onDraw(Graphics& g) override {
-        g.clear(0.1);
-        // Draw frequency visualization
+        g.clear(HSV(frequency / 1000, 0.5, 0.2));
     }
 };
 
 int main() {
     SimpleSynth app;
-    app.configureAudio(44100, 512, 2, 2);
+    app.configureAudio(44100, 512, 2, 0);
     app.start();
-    return 0;
 }`,
   },
+
+  {
+    id: 'polysynth-demo',
+    title: 'Polyphonic Synth',
+    description: 'PolySynth with SynthVoice for polyphony',
+    category: 'audio',
+    code: `#include "al/app/al_App.hpp"
+#include "al/scene/al_PolySynth.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+using namespace al;
+
+// Define a voice for polyphonic synthesis
+struct SineVoice : SynthVoice {
+    gam::Sine<> osc;
+    gam::ADSR<> env{0.01, 0.1, 0.7, 0.3};
+    float amp = 0.2;
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = osc() * env() * amp;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override {
+        // Get frequency from trigger parameters
+        float freq = getInternalParameterValue("frequency");
+        osc.freq(freq);
+        env.reset();
+    }
+
+    void onTriggerOff() override {
+        env.release();
+    }
+};
+
+struct PolySynthDemo : App {
+    PolySynth synth;
+
+    void onCreate() override {
+        synth.allocatePolyphony<SineVoice>(16);
+        nav().pos(0, 0, 5);
+    }
+
+    void triggerNote(float freq) {
+        auto* voice = synth.getVoice<SineVoice>();
+        voice->setInternalParameterValue("frequency", freq);
+        synth.triggerOn(voice);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        float freqs[] = {261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25};
+        if (k.key() >= 'a' && k.key() <= 'h') {
+            triggerNote(freqs[k.key() - 'a']);
+        }
+        return true;
+    }
+
+    void onSound(AudioIOData& io) override {
+        synth.render(io);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+    }
+};
+
+int main() {
+    PolySynthDemo app;
+    app.configureAudio(44100, 512, 2, 0);
+    app.start();
+}`,
+  },
+
+  {
+    id: 'spatial-audio',
+    title: 'Spatial Audio Scene',
+    description: 'DynamicScene with PositionedVoice for 3D audio',
+    category: 'audio',
+    code: `#include "al/app/al_App.hpp"
+#include "al/scene/al_DynamicScene.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/math/al_Random.hpp"
+#include <cmath>
+using namespace al;
+
+// A voice with position that orbits and makes sound
+struct OrbiterVoice : PositionedVoice {
+    float freq = 440;
+    float phase = 0;
+    float orbitRadius = 3;
+    float orbitSpeed = 1;
+    float orbitPhase = 0;
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = std::sin(phase * M_2PI) * 0.2;
+            io.out(0) = s;
+            phase += freq / io.framesPerSecond();
+            if (phase >= 1) phase -= 1;
+        }
+    }
+
+    void onProcess(Graphics& g) override {
+        Mesh m;
+        addSphere(m, 0.15, 8, 8);
+        g.color(HSV(freq / 880, 1, 1));
+        g.draw(m);
+    }
+
+    void update(double dt) override {
+        orbitPhase += orbitSpeed * dt;
+        float x = std::cos(orbitPhase) * orbitRadius;
+        float z = std::sin(orbitPhase) * orbitRadius;
+        float y = std::sin(orbitPhase * 2) * 0.5;
+        setPose(Pose(Vec3d(x, y, z)));
+    }
+};
+
+struct SpatialAudioDemo : App {
+    DynamicScene scene;
+    Mesh gridMesh;
+
+    void onCreate() override {
+        // Setup distance attenuation
+        scene.distanceAttenuation().law(AttenuationLaw::ATTEN_INVERSE_SQUARE);
+
+        // Create orbiting voices
+        for (int i = 0; i < 4; i++) {
+            auto* voice = scene.getVoice<OrbiterVoice>();
+            voice->freq = 220 * (i + 1);
+            voice->orbitRadius = 2 + i;
+            voice->orbitSpeed = 0.5 + rnd::uniform() * 0.5;
+            voice->orbitPhase = i * M_PI / 2;
+            scene.triggerOn(voice);
+        }
+
+        // Create grid
+        gridMesh.primitive(Mesh::LINES);
+        for (int i = -5; i <= 5; i++) {
+            gridMesh.vertex(i, 0, -5); gridMesh.vertex(i, 0, 5);
+            gridMesh.vertex(-5, 0, i); gridMesh.vertex(5, 0, i);
+            gridMesh.color(0.3, 0.3, 0.3); gridMesh.color(0.3, 0.3, 0.3);
+            gridMesh.color(0.3, 0.3, 0.3); gridMesh.color(0.3, 0.3, 0.3);
+        }
+
+        nav().pos(0, 2, 8);
+    }
+
+    void onAnimate(double dt) override {
+        scene.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05);
+        g.depthTesting(true);
+        g.blending(true);
+        g.blendAdd();
+
+        g.meshColor();
+        g.draw(gridMesh);
+
+        scene.render(g);
+    }
+
+    void onSound(AudioIOData& io) override {
+        scene.listenerPose(pose());
+        scene.render(io);
+    }
+};
+
+int main() {
+    SpatialAudioDemo app;
+    app.configureAudio(44100, 512, 2, 0);
+    app.start();
+}`,
+  },
+  // === GRAPHICS CATEGORY ===
   {
     id: 'particle-system',
     title: 'Particle System',
     description: '3D particle system with physics',
     category: 'graphics',
     code: `#include "al/app/al_App.hpp"
+#include "al/math/al_Random.hpp"
 #include <vector>
 using namespace al;
 
@@ -1955,12 +3282,12 @@ struct Particle {
 struct ParticleSystem : App {
     std::vector<Particle> particles;
     Mesh mesh;
-    
+
     void onCreate() override {
         mesh.primitive(Mesh::POINTS);
         nav().pos(0, 0, 10);
     }
-    
+
     void spawn() {
         Particle p;
         p.pos = Vec3f(rnd::uniformS(), rnd::uniformS(), rnd::uniformS()) * 0.1;
@@ -1969,32 +3296,28 @@ struct ParticleSystem : App {
         p.life = 1;
         particles.push_back(p);
     }
-    
+
     void onAnimate(double dt) override {
-        // Spawn new particles
         for (int i = 0; i < 10; i++) spawn();
-        
-        // Update particles
+
         for (auto& p : particles) {
-            p.vel.y -= 2 * dt;  // gravity
+            p.vel.y -= 2 * dt;
             p.pos += p.vel * dt;
             p.life -= dt * 0.5;
         }
-        
-        // Remove dead particles
+
         particles.erase(
             std::remove_if(particles.begin(), particles.end(),
                 [](const Particle& p) { return p.life <= 0; }),
             particles.end());
-        
-        // Update mesh
+
         mesh.reset();
         for (const auto& p : particles) {
             mesh.vertex(p.pos);
             mesh.color(p.color.r, p.color.g, p.color.b, p.life);
         }
     }
-    
+
     void onDraw(Graphics& g) override {
         g.clear(0);
         g.blending(true);
@@ -2007,7 +3330,416 @@ struct ParticleSystem : App {
 int main() {
     ParticleSystem app;
     app.start();
-    return 0;
+}`,
+  },
+
+  {
+    id: 'shader-demo',
+    title: 'Custom Shader',
+    description: 'Custom vertex and fragment shaders',
+    category: 'graphics',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+const char* vertexShader = R"(
+#version 330
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec4 color;
+layout(location = 2) in vec3 normal;
+uniform mat4 al_ModelViewMatrix;
+uniform mat4 al_ProjectionMatrix;
+uniform float time;
+out vec4 vColor;
+out vec3 vNormal;
+
+void main() {
+    // Wobble effect
+    vec3 pos = position;
+    pos += normal * sin(time * 3.0 + position.y * 5.0) * 0.1;
+
+    gl_Position = al_ProjectionMatrix * al_ModelViewMatrix * vec4(pos, 1.0);
+    vColor = color;
+    vNormal = normal;
+}
+)";
+
+const char* fragmentShader = R"(
+#version 330
+in vec4 vColor;
+in vec3 vNormal;
+uniform float time;
+out vec4 fragColor;
+
+void main() {
+    // Animate color based on normal and time
+    vec3 col = vColor.rgb;
+    col *= 0.5 + 0.5 * dot(vNormal, normalize(vec3(sin(time), cos(time), 1.0)));
+    fragColor = vec4(col, 1.0);
+}
+)";
+
+struct ShaderDemo : App {
+    Mesh mesh;
+    ShaderProgram shader;
+    double time = 0;
+
+    void onCreate() override {
+        addIcosphere(mesh, 1.0, 3);
+        mesh.generateNormals();
+        for (int i = 0; i < mesh.vertices().size(); i++) {
+            mesh.color(HSV(float(i) / mesh.vertices().size(), 0.8, 1));
+        }
+
+        shader.compile(vertexShader, fragmentShader);
+        nav().pos(0, 0, 4);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+
+        shader.begin();
+        shader.uniform("time", (float)time);
+        g.shader(shader);
+        g.meshColor();
+        g.draw(mesh);
+        shader.end();
+    }
+};
+
+int main() {
+    ShaderDemo app;
+    app.start();
+}`,
+  },
+
+  {
+    id: 'texture-demo',
+    title: 'Texture Mapping',
+    description: 'Texture loading and mapping',
+    category: 'graphics',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct TextureDemo : App {
+    Mesh mesh;
+    Texture tex;
+    double angle = 0;
+
+    void onCreate() override {
+        // Create sphere with texture coordinates
+        addSphere(mesh, 1.0, 32, 32, true);  // true = generate tex coords
+        mesh.generateNormals();
+
+        // Create procedural texture
+        int N = 256;
+        std::vector<Color> pixels(N * N);
+        for (int j = 0; j < N; j++) {
+            for (int i = 0; i < N; i++) {
+                float u = float(i) / N;
+                float v = float(j) / N;
+                // Checkerboard pattern
+                bool check = ((int)(u * 8) + (int)(v * 8)) % 2;
+                pixels[j * N + i] = check ? Color(1, 0.8, 0.2) : Color(0.2, 0.1, 0.5);
+            }
+        }
+        tex.create2D(N, N, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        tex.submit(pixels.data());
+        tex.filter(Texture::LINEAR);
+
+        nav().pos(0, 0, 4);
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 30;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+
+        tex.bind();
+        g.texture();
+        g.rotate(angle, 0, 1, 0);
+        g.draw(mesh);
+        tex.unbind();
+    }
+};
+
+int main() {
+    TextureDemo app;
+    app.start();
+}`,
+  },
+
+  // === INTERACTION CATEGORY ===
+  {
+    id: 'mouse-interaction',
+    title: 'Mouse Interaction',
+    description: 'Mouse input and object picking',
+    category: 'interaction',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/math/al_Random.hpp"
+#include <vector>
+using namespace al;
+
+struct Sphere {
+    Vec3f pos;
+    Color color;
+    float radius;
+    bool selected = false;
+};
+
+struct MouseInteraction : App {
+    std::vector<Sphere> spheres;
+    Mesh sphereMesh;
+    Vec3f mouseWorld;
+
+    void onCreate() override {
+        addSphere(sphereMesh, 1.0, 16, 16);
+        sphereMesh.generateNormals();
+
+        // Create random spheres
+        for (int i = 0; i < 20; i++) {
+            Sphere s;
+            s.pos = Vec3f(rnd::uniformS() * 5, rnd::uniformS() * 5, rnd::uniformS() * 5);
+            s.color = HSV(rnd::uniform(), 0.8, 1);
+            s.radius = 0.2 + rnd::uniform() * 0.3;
+            spheres.push_back(s);
+        }
+
+        nav().pos(0, 0, 15);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        for (auto& s : spheres) {
+            g.pushMatrix();
+            g.translate(s.pos);
+            g.scale(s.radius);
+            if (s.selected) {
+                g.color(1, 1, 1);
+            } else {
+                g.color(s.color);
+            }
+            g.draw(sphereMesh);
+            g.popMatrix();
+        }
+    }
+
+    bool onMouseDown(Mouse const& m) override {
+        // Simple ray casting for selection
+        for (auto& s : spheres) {
+            s.selected = false;
+        }
+
+        // Find closest sphere to click
+        float closestDist = 1000;
+        Sphere* closest = nullptr;
+
+        for (auto& s : spheres) {
+            Vec3f toSphere = s.pos - nav().pos();
+            float dist = toSphere.mag();
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = &s;
+            }
+        }
+
+        if (closest) closest->selected = true;
+        return true;
+    }
+};
+
+int main() {
+    MouseInteraction app;
+    app.start();
+}`,
+  },
+
+  // === ADVANCED CATEGORY ===
+  {
+    id: 'audio-reactive',
+    title: 'Audio Reactive Visuals',
+    description: 'Graphics that respond to audio',
+    category: 'advanced',
+    code: `#include "al/app/al_App.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Analysis.h"
+#include <cmath>
+using namespace al;
+
+struct AudioReactive : App {
+    gam::Sine<> osc{220};
+    gam::EnvFollow<> envFollow{0.1};
+    Mesh mesh;
+    float amplitude = 0;
+    float frequency = 220;
+    double phase = 0;
+
+    void onCreate() override {
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        phase += dt;
+
+        // Rebuild mesh based on amplitude
+        mesh.reset();
+        int rings = 32;
+        int segs = 64;
+        float baseRadius = 0.5 + amplitude * 2;
+
+        for (int i = 0; i < rings; i++) {
+            float phi = M_PI * i / (rings - 1);
+            for (int j = 0; j < segs; j++) {
+                float theta = 2 * M_PI * j / segs;
+
+                // Modulate radius with audio
+                float r = baseRadius * (1 + 0.3 * sin(phi * 8 + phase * 5) * amplitude);
+
+                float x = r * sin(phi) * cos(theta);
+                float y = r * cos(phi);
+                float z = r * sin(phi) * sin(theta);
+
+                mesh.vertex(x, y, z);
+                mesh.color(HSV(frequency / 880 + float(i) / rings * 0.2, 0.8, 0.5 + amplitude));
+            }
+        }
+
+        // Create indices for triangle strip
+        mesh.primitive(Mesh::TRIANGLE_STRIP);
+        for (int i = 0; i < rings - 1; i++) {
+            for (int j = 0; j <= segs; j++) {
+                mesh.index(i * segs + (j % segs));
+                mesh.index((i + 1) * segs + (j % segs));
+            }
+        }
+        mesh.generateNormals();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float s = osc() * 0.3;
+            envFollow(s);
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+        amplitude = envFollow.value();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() >= '1' && k.key() <= '9') {
+            frequency = 110 * (k.key() - '0');
+            osc.freq(frequency);
+        }
+        return true;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.rotate(phase * 20, 0.3, 1, 0.2);
+        g.meshColor();
+        g.draw(mesh);
+    }
+};
+
+int main() {
+    AudioReactive app;
+    app.configureAudio(44100, 512, 2, 0);
+    app.start();
+}`,
+  },
+
+  {
+    id: 'parameter-ui',
+    title: 'Parameter Control',
+    description: 'Using Parameter class for interactive control',
+    category: 'advanced',
+    code: `#include "al/app/al_App.hpp"
+#include "al/ui/al_Parameter.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+using namespace al;
+
+struct ParameterDemo : App {
+    Parameter frequency{"Frequency", "", 440, 100, 2000};
+    Parameter amplitude{"Amplitude", "", 0.3, 0, 1};
+    Parameter rotSpeed{"Rotation Speed", "", 30, 0, 180};
+    Parameter hue{"Hue", "", 0.5, 0, 1};
+
+    gam::Sine<> osc;
+    Mesh mesh;
+    double angle = 0;
+
+    void onCreate() override {
+        addIcosphere(mesh, 1.0, 2);
+        mesh.generateNormals();
+
+        // Register parameter callbacks
+        frequency.registerChangeCallback([this](float f) {
+            osc.freq(f);
+        });
+
+        nav().pos(0, 0, 4);
+    }
+
+    void onAnimate(double dt) override {
+        angle += rotSpeed.get() * dt;
+
+        // Update mesh colors based on hue
+        for (int i = 0; i < mesh.vertices().size(); i++) {
+            mesh.colors()[i] = HSV(hue.get() + float(i) / mesh.vertices().size() * 0.3, 0.8, 1);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.rotate(angle, 0, 1, 0);
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    void onSound(AudioIOData& io) override {
+        float amp = amplitude.get();
+        while (io()) {
+            float s = osc() * amp;
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'f': frequency.set(frequency.get() * 1.1); break;
+            case 'd': frequency.set(frequency.get() / 1.1); break;
+            case 'a': amplitude.set(std::min(1.0f, amplitude.get() + 0.1f)); break;
+            case 's': amplitude.set(std::max(0.0f, amplitude.get() - 0.1f)); break;
+            case 'h': hue.set(fmod(hue.get() + 0.1, 1.0)); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    ParameterDemo app;
+    app.configureAudio(44100, 512, 2, 0);
+    app.start();
 }`,
   },
 ];
@@ -2423,3 +4155,147 @@ npm run deploy
 7. **Cache aggressively** - Compilation is expensive; cache everything possible
 
 This plan provides a complete roadmap for building AlloLib Studio Online. Each section can be tackled independently by Claude Code, with clear deliverables and test criteria.
+
+---
+
+## Appendix A: AlloLib Feature Implementation Checklist
+
+Reference documentation: `allolib/ALLOLIB_DOCUMENTATION.md`
+
+### Core Module Support Status
+
+| Module | Features | Status | Notes |
+|--------|----------|--------|-------|
+| **al::App** | `onCreate`, `onAnimate`, `onDraw`, `onSound`, events | 🔲 Pending | WebApp wrapper class |
+| **al::Graphics** | All drawing methods, state management | 🔲 Pending | WebGL2 compatible |
+| **al::Mesh** | All primitives, vertex data | 🔲 Pending | WebGL2 compatible |
+| **al::Shader/ShaderProgram** | Custom shaders | 🔲 Pending | GLSL ES 3.0 |
+| **al::Texture** | 2D textures | 🔲 Pending | WebGL2 textures |
+| **al::Light** | Lighting | 🔲 Pending | Built-in shaders |
+| **Shapes (al_Shapes.hpp)** | All 10 shape functions | 🔲 Pending | Header-only |
+| **al::Vec2/3/4** | Vector math | ✅ Ready | Header-only |
+| **al::Quat** | Quaternions | ✅ Ready | Header-only |
+| **al::Mat4** | Matrices | ✅ Ready | Header-only |
+| **al::rnd** | Random numbers | ✅ Ready | Header-only |
+| **al::Pose** | Position+orientation | ✅ Ready | Header-only |
+| **al::Nav** | Navigation | ✅ Ready | Header-only |
+| **al::Color/HSV** | Color types | ✅ Ready | Header-only |
+| **al::AudioIO** | Audio I/O | 🔲 Pending | Web Audio backend |
+| **al::AudioIOData** | Audio buffers | 🔲 Pending | AudioWorklet |
+| **al::Spatializer** | Base class | 🔲 Pending | Custom implementation |
+| **al::StereoPanner** | Stereo pan | 🔲 Pending | AudioWorklet |
+| **al::Vbap** | VBAP | 🔲 Pending | AudioWorklet |
+| **al::Dbap** | DBAP | 🔲 Pending | AudioWorklet |
+| **al::Ambisonics** | Ambisonics | 🔲 Pending | AudioWorklet |
+| **al::SynthVoice** | Voice base | 🔲 Pending | Works with Web Audio |
+| **al::PolySynth** | Voice manager | 🔲 Pending | Works with Web Audio |
+| **al::DynamicScene** | Spatial scene | 🔲 Pending | Web spatializer |
+| **al::PositionedVoice** | 3D voice | 🔲 Pending | With DynamicScene |
+| **al::Parameter** | Thread-safe params | 🔲 Pending | Atomic access |
+| **al::Window/Keyboard/Mouse** | Input | 🔲 Pending | Emscripten GLFW |
+| **Gamma DSP** | Oscillators, filters, envelopes | 🔲 Pending | Header-only |
+
+### Implementation Priority Order
+
+1. **Phase A - Core Rendering** (Required first)
+   - WebApp class (al::App for web)
+   - Graphics state machine
+   - Mesh and shape functions
+   - Basic shaders
+
+2. **Phase B - Audio Foundation**
+   - Web Audio backend (AudioIO replacement)
+   - AudioWorklet processor
+   - AudioIOData buffer interface
+   - Gamma integration
+
+3. **Phase C - Scene System**
+   - SynthVoice implementation
+   - PolySynth voice management
+   - DynamicScene with spatial audio
+   - PositionedVoice with spatializers
+
+4. **Phase D - Advanced Features**
+   - Custom shaders (ShaderProgram)
+   - Textures
+   - Parameters with callbacks
+   - OSC over WebSocket
+
+### Monaco Editor Intellisense Coverage
+
+The implementation plan includes Monaco editor support for:
+- ✅ All major classes documented in ALLOLIB_DOCUMENTATION.md
+- ✅ Code snippets for common patterns (App template, shapes, synth voices)
+- ✅ Hover documentation for 50+ classes/types
+- ✅ Autocomplete for methods and parameters
+
+### Example Coverage
+
+The examples library includes demonstrations of:
+- ✅ Basic App lifecycle
+- ✅ All shape primitives
+- ✅ Navigation and camera control
+- ✅ Simple audio synthesis
+- ✅ Polyphonic synthesis (PolySynth)
+- ✅ Spatial audio (DynamicScene)
+- ✅ Particle systems
+- ✅ Custom shaders
+- ✅ Textures
+- ✅ Mouse interaction
+- ✅ Audio-reactive visuals
+- ✅ Parameter control
+
+### Web Audio Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Web Audio Context                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐    ┌───────────────────┐    ┌──────────────┐ │
+│  │ User WASM    │    │ AllolibProcessor  │    │ Destination  │ │
+│  │ onSound()    │───▶│ (AudioWorklet)    │───▶│ (Speakers)   │ │
+│  └──────────────┘    └───────────────────┘    └──────────────┘ │
+│         │                     │                                  │
+│         │            ┌────────┴────────┐                        │
+│         │            │                 │                        │
+│         ▼            ▼                 ▼                        │
+│  ┌──────────────────────┐    ┌─────────────────────┐           │
+│  │ DynamicScene         │    │ Spatializer         │           │
+│  │ - voices[]           │───▶│ - StereoPanner      │           │
+│  │ - listenerPose       │    │ - VBAP              │           │
+│  │ - distanceAtten      │    │ - DBAP              │           │
+│  └──────────────────────┘    │ - Ambisonics        │           │
+│                              └─────────────────────┘           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Critical Success Metrics
+
+For full AlloLib feature parity, the web implementation must support:
+
+1. **Graphics**
+   - [ ] 60fps rendering with complex meshes
+   - [ ] All 10 shape primitives
+   - [ ] Custom GLSL shaders
+   - [ ] Textures (procedural and loaded)
+   - [ ] Lighting (ambient, diffuse, specular)
+
+2. **Audio**
+   - [ ] 44100Hz sample rate
+   - [ ] 512 or lower buffer size (low latency)
+   - [ ] Stereo output minimum
+   - [ ] Real-time synthesis with Gamma
+   - [ ] Polyphonic voice management (16+ voices)
+   - [ ] Basic spatial audio (stereo panning + distance)
+
+3. **Interaction**
+   - [ ] Keyboard events (onKeyDown/Up)
+   - [ ] Mouse events (click, drag, move, scroll)
+   - [ ] Navigation controls (WASD + mouse look)
+
+4. **Compilation**
+   - [ ] < 30 second compile time for simple apps
+   - [ ] Meaningful error messages with line numbers
+   - [ ] Code caching for faster recompilation

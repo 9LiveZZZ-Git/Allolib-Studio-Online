@@ -1,5 +1,6 @@
 #!/bin/bash
 # AlloLib WASM Compilation Script
+# Compiles user C++ code and links against pre-built AlloLib
 
 set -e
 
@@ -8,14 +9,23 @@ OUTPUT_DIR="${2:-/app/output}"
 JOB_ID="${3:-default}"
 
 ALLOLIB_DIR="${ALLOLIB_DIR:-/app/allolib}"
+ALLOLIB_WASM_DIR="${ALLOLIB_WASM_DIR:-/app/allolib-wasm}"
 GAMMA_DIR="${GAMMA_DIR:-/app/allolib/external/Gamma}"
 AL_EXT_DIR="${AL_EXT_DIR:-/app/al_ext}"
+LIB_DIR="/app/lib"
 
-echo "[INFO] Starting compilation for job: $JOB_ID"
+echo "[INFO] ================================================"
+echo "[INFO] AlloLib WASM Compilation"
+echo "[INFO] ================================================"
+echo "[INFO] Job ID: $JOB_ID"
 echo "[INFO] Source: $SOURCE_FILE"
 echo "[INFO] Output: $OUTPUT_DIR"
-echo "[INFO] AlloLib: $ALLOLIB_DIR"
-echo "[INFO] AlloLib Extensions: $AL_EXT_DIR"
+
+# Build AlloLib if not already built
+if [ ! -f "$LIB_DIR/libal_web.a" ]; then
+    echo "[INFO] AlloLib not built yet, building..."
+    /app/build-allolib.sh
+fi
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -24,38 +34,60 @@ mkdir -p "$OUTPUT_DIR"
 EMCC_FLAGS=(
     -O2
     -std=c++17
-    -s USE_WEBGL2=1
-    -s FULL_ES3=1
-    -s USE_GLFW=3
-    -s ALLOW_MEMORY_GROWTH=1
-    -s "EXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
-    -s MODULARIZE=1
-    -s EXPORT_ES6=1
-    -s "ENVIRONMENT='web'"
-    -s ASYNCIFY=1
-    -s ASSERTIONS=1
-    -s GL_DEBUG=1
+    -sUSE_WEBGL2=1
+    -sFULL_ES3=1
+    -sUSE_GLFW=3
+    -sALLOW_MEMORY_GROWTH=1
+    -sEXPORTED_RUNTIME_METHODS="['ccall','cwrap','UTF8ToString','stringToUTF8']"
+    -sEXPORTED_FUNCTIONS="['_main','_malloc','_free','_allolib_create','_allolib_start','_allolib_stop','_allolib_destroy','_allolib_process_audio','_allolib_configure_audio']"
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sENVIRONMENT='web'
+    -sASYNCIFY=1
+    -sASYNCIFY_STACK_SIZE=65536
+    -sASSERTIONS=1
     --bind
 )
 
-# Include paths for AlloLib and dependencies
+# Include paths - ALLOLIB_WASM_DIR must come FIRST to override AlloLib headers with WebGL2 patches
 INCLUDE_FLAGS=(
+    -I"$ALLOLIB_WASM_DIR/include"
     -I"$ALLOLIB_DIR/include"
     -I"$ALLOLIB_DIR/external/glfw/include"
-    -I"$ALLOLIB_DIR/external/json/single_include"
-    -I"$ALLOLIB_DIR/external/imgui"
+    -I"$ALLOLIB_DIR/external/glad/include"
+    -I"$ALLOLIB_DIR/external/json/include"
     -I"$GAMMA_DIR"
-    -I"$AL_EXT_DIR/soundfile"
-    -I"$AL_EXT_DIR/spatialaudio"
-    -I"$AL_EXT_DIR/assets3d"
 )
 
+# Library flags
+LIB_FLAGS=(
+    -L"$LIB_DIR"
+    -lal_web
+    -lGamma
+)
+
+# Definitions
+DEFS=(
+    -DAL_AUDIO_DUMMY
+    -DAL_EMSCRIPTEN
+    -DGLFW_INCLUDE_ES3
+)
+
+echo "[INFO] Compiling with em++..."
+echo "[INFO] Command: em++ ${EMCC_FLAGS[*]} ${INCLUDE_FLAGS[*]} ${DEFS[*]} $SOURCE_FILE ${LIB_FLAGS[*]} -o $OUTPUT_DIR/app.js"
+
 # Compile
-echo "[INFO] Running emcc..."
-em++ "${EMCC_FLAGS[@]}" "${INCLUDE_FLAGS[@]}" \
+em++ "${EMCC_FLAGS[@]}" "${INCLUDE_FLAGS[@]}" "${DEFS[@]}" \
     "$SOURCE_FILE" \
+    "${LIB_FLAGS[@]}" \
     -o "$OUTPUT_DIR/app.js"
 
-echo "[SUCCESS] Compilation complete"
+# Copy audio worklet processor
+if [ -f "$ALLOLIB_WASM_DIR/src/allolib-audio-processor.js" ]; then
+    cp "$ALLOLIB_WASM_DIR/src/allolib-audio-processor.js" "$OUTPUT_DIR/"
+    echo "[INFO] Copied audio worklet processor"
+fi
+
+echo "[SUCCESS] Compilation complete!"
 echo "[INFO] Output files:"
 ls -la "$OUTPUT_DIR"
