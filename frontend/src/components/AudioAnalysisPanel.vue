@@ -424,8 +424,8 @@ onBeforeUnmount(() => {
     :style="panelHeight ? { height: `${panelHeight}px`, minHeight: `${panelHeight}px` } : {}"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between px-3 py-1 border-b border-editor-border">
-      <span class="text-xs text-gray-400 font-medium">Audio Analysis</span>
+    <div class="h-8 flex items-center justify-between px-3 border-b border-editor-border">
+      <span class="text-sm text-gray-400">Audio Analysis</span>
       <div class="flex gap-1">
         <button
           @click="activeView = 'waveform'"
