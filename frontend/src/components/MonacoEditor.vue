@@ -121,6 +121,14 @@ defineExpose({
   setValue: (value: string) => editor?.setValue(value),
   focus: () => editor?.focus(),
   layout: () => editor?.layout(),
+  // Editor actions
+  undo: () => editor?.trigger('keyboard', 'undo', null),
+  redo: () => editor?.trigger('keyboard', 'redo', null),
+  format: () => editor?.getAction('editor.action.formatDocument')?.run(),
+  openFind: () => editor?.getAction('actions.find')?.run(),
+  openReplace: () => editor?.getAction('editor.action.startFindReplaceAction')?.run(),
+  openGoToLine: () => editor?.getAction('editor.action.gotoLine')?.run(),
+  openCommandPalette: () => editor?.getAction('editor.action.quickCommand')?.run(),
 })
 </script>
 

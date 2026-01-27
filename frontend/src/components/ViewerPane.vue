@@ -2,13 +2,13 @@
 import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { AllolibRuntime } from '@/services/runtime'
 import type { AppStatus } from '@/stores/app'
-import AudioAnalysisPanel from './AudioAnalysisPanel.vue'
+import AnalysisPanel from './AnalysisPanel.vue'
 
 const props = defineProps<{
   status: AppStatus
   jsUrl: string | null
-  showAudioPanel?: boolean
-  audioPanelHeight?: number
+  showAnalysisPanel?: boolean
+  panelHeight?: number
 }>()
 
 // Computed property for audio panel
@@ -140,11 +140,11 @@ function handleResize() {
       </div>
       </div>
 
-      <!-- Audio Analysis Panel -->
-      <AudioAnalysisPanel
-        v-show="showAudioPanel !== false"
+      <!-- Analysis Panel -->
+      <AnalysisPanel
+        v-show="showAnalysisPanel !== false"
         :is-running="isAudioRunning"
-        :panel-height="audioPanelHeight"
+        :panel-height="panelHeight"
       />
     </div>
   </div>

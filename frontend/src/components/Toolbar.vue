@@ -15,7 +15,32 @@ const emit = defineEmits<{
   stop: []
   loadExample: [code: string]
   settingsChanged: []
+  fileNew: []
+  fileSave: []
+  fileSaveAs: []
+  fileOpen: []
+  fileOpenFromDisk: []
+  fileExport: []
 }>()
+
+// File menu state
+const showFileMenu = ref(false)
+
+function closeFileMenu() {
+  showFileMenu.value = false
+}
+
+function handleFileAction(action: string) {
+  closeFileMenu()
+  switch (action) {
+    case 'new': emit('fileNew'); break
+    case 'save': emit('fileSave'); break
+    case 'saveAs': emit('fileSaveAs'); break
+    case 'open': emit('fileOpen'); break
+    case 'openFromDisk': emit('fileOpenFromDisk'); break
+    case 'export': emit('fileExport'); break
+  }
+}
 
 // Settings dropdown state
 const showSettings = ref(false)
@@ -92,6 +117,106 @@ function closeDropdown() {
     <div class="flex items-center gap-2">
       <span class="text-allolib-blue font-semibold">AlloLib Studio</span>
       <span class="text-gray-500 text-sm">Online</span>
+    </div>
+
+    <!-- File Menu -->
+    <div class="relative">
+      <button
+        class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors flex items-center gap-1"
+        @click="showFileMenu = !showFileMenu"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        File
+        <svg class="w-3 h-3" :class="{ 'rotate-180': showFileMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- File Menu Dropdown -->
+      <div
+        v-if="showFileMenu"
+        class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1"
+        @click.stop
+      >
+        <button
+          @click="handleFileAction('new')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
+          <span>New</span>
+          <span class="ml-auto text-xs text-gray-500">Ctrl+N</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
+        <button
+          @click="handleFileAction('open')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+          </svg>
+          <span>Open from Browser</span>
+          <span class="ml-auto text-xs text-gray-500">Ctrl+O</span>
+        </button>
+
+        <button
+          @click="handleFileAction('openFromDisk')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <span>Open from File...</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
+        <button
+          @click="handleFileAction('save')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+          <span>Save</span>
+          <span class="ml-auto text-xs text-gray-500">Ctrl+S</span>
+        </button>
+
+        <button
+          @click="handleFileAction('saveAs')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+          <span>Save As...</span>
+          <span class="ml-auto text-xs text-gray-500">Ctrl+Shift+S</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
+        <button
+          @click="handleFileAction('export')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span>Export as .cpp</span>
+        </button>
+      </div>
+
+      <!-- Click outside to close -->
+      <div
+        v-if="showFileMenu"
+        class="fixed inset-0 z-40"
+        @click="closeFileMenu"
+      ></div>
     </div>
 
     <!-- Run/Stop Button -->
@@ -483,36 +608,18 @@ function closeDropdown() {
         <!-- Display Settings -->
         <div v-if="activeSettingsTab === 'display'" class="p-4 space-y-4">
           <div class="flex items-center justify-between">
-            <label class="text-sm text-gray-300">Show Audio Panel</label>
+            <label class="text-sm text-gray-300">Show Analysis Panel</label>
             <button
-              @click="settings.display.showAudioPanel = !settings.display.showAudioPanel; handleSettingChange()"
+              @click="settings.display.showAnalysisPanel = !settings.display.showAnalysisPanel; handleSettingChange()"
               :class="[
                 'w-12 h-6 rounded-full transition-colors relative',
-                settings.display.showAudioPanel ? 'bg-allolib-blue' : 'bg-gray-600'
+                settings.display.showAnalysisPanel ? 'bg-allolib-blue' : 'bg-gray-600'
               ]"
             >
               <span
                 :class="[
                   'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
-                  settings.display.showAudioPanel ? 'left-7' : 'left-1'
-                ]"
-              />
-            </button>
-          </div>
-
-          <div class="flex items-center justify-between">
-            <label class="text-sm text-gray-300">Show Console</label>
-            <button
-              @click="settings.display.showConsole = !settings.display.showConsole; handleSettingChange()"
-              :class="[
-                'w-12 h-6 rounded-full transition-colors relative',
-                settings.display.showConsole ? 'bg-allolib-blue' : 'bg-gray-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
-                  settings.display.showConsole ? 'left-7' : 'left-1'
+                  settings.display.showAnalysisPanel ? 'left-7' : 'left-1'
                 ]"
               />
             </button>
@@ -522,14 +629,14 @@ function closeDropdown() {
             <label class="text-sm text-gray-300">Panel Height</label>
             <input
               type="range"
-              v-model.number="settings.display.consoleHeight"
-              @input="settings.display.audioPanelHeight = settings.display.consoleHeight; handleSettingChange()"
+              v-model.number="settings.display.panelHeight"
+              @input="handleSettingChange()"
               min="100"
               max="400"
               step="10"
               class="w-32 accent-allolib-blue"
             />
-            <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.consoleHeight }}px</span>
+            <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.panelHeight }}px</span>
           </div>
 
           <button
