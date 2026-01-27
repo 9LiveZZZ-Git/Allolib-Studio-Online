@@ -174,6 +174,7 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_DefaultShaders_Web.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_Demangle_Web.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_OSC_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGL2Extensions.cpp
 )
 
 add_library(al_web STATIC ${ALLOLIB_SOURCES} ${WEB_SOURCES})

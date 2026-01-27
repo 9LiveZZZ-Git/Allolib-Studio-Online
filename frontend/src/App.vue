@@ -13,10 +13,10 @@ const settingsStore = useSettingsStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const currentFileName = ref('main.cpp')
 
-// Computed panel height style
-const panelHeightStyle = computed(() => ({
-  height: `${settingsStore.display.panelHeight}px`,
-  minHeight: `${settingsStore.display.panelHeight}px`,
+// Computed console height style
+const consoleHeightStyle = computed(() => ({
+  height: `${settingsStore.display.consoleHeight}px`,
+  minHeight: `${settingsStore.display.consoleHeight}px`,
 }))
 
 const handleRun = async () => {
@@ -96,6 +96,14 @@ const handleFileExport = () => {
   URL.revokeObjectURL(url)
   appStore.log(`[INFO] Exported: ${currentFileName.value}`)
 }
+
+const handleConsoleResize = (height: number) => {
+  settingsStore.display.consoleHeight = height
+}
+
+const handleAnalysisResize = (height: number) => {
+  settingsStore.display.analysisPanelHeight = height
+}
 </script>
 
 <template>
@@ -121,8 +129,9 @@ const handleFileExport = () => {
         <EditorPane ref="editorRef" class="flex-1" />
         <Console
           :output="appStore.consoleOutput"
-          :style="panelHeightStyle"
+          :style="consoleHeightStyle"
           class="shrink-0"
+          @resize="handleConsoleResize"
         />
       </div>
 
@@ -132,10 +141,11 @@ const handleFileExport = () => {
           :status="appStore.status"
           :js-url="appStore.jsUrl"
           :show-analysis-panel="settingsStore.display.showAnalysisPanel"
-          :panel-height="settingsStore.display.panelHeight"
+          :panel-height="settingsStore.display.analysisPanelHeight"
           @started="appStore.setRunning"
           @error="appStore.setError"
           @log="appStore.log"
+          @analysis-resize="handleAnalysisResize"
         />
       </div>
     </div>

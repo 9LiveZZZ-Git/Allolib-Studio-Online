@@ -24,7 +24,8 @@ export interface CompilerSettings {
 
 export interface DisplaySettings {
   showAnalysisPanel: boolean
-  panelHeight: number
+  consoleHeight: number
+  analysisPanelHeight: number
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -55,7 +56,8 @@ export const useSettingsStore = defineStore('settings', () => {
   // Display settings
   const display = ref<DisplaySettings>({
     showAnalysisPanel: true,
-    panelHeight: 200,
+    consoleHeight: 200,
+    analysisPanelHeight: 200,
   })
 
   // Load settings from localStorage
@@ -122,7 +124,8 @@ export const useSettingsStore = defineStore('settings', () => {
   function resetDisplay() {
     display.value = {
       showAnalysisPanel: true,
-      panelHeight: 200,
+      consoleHeight: 200,
+      analysisPanelHeight: 200,
     }
     saveSettings()
   }

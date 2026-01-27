@@ -281,6 +281,15 @@ export function configureMonaco() {
 export const defaultCode = `/**
  * AlloLib Web - Audio Visual Demo
  * Rotating sphere with sine wave audio
+ *
+ * Camera Controls:
+ *   WASD  - Move forward/left/back/right
+ *   Q/E   - Move up/down
+ *   I/J/K/L - Look around
+ *   Mouse Drag - Rotate view
+ *
+ * Audio Controls:
+ *   1-8 - Change frequency
  */
 
 #include "al_WebApp.hpp"
@@ -299,6 +308,20 @@ public:
   gam::Sine<> osc{440.0};
   float amplitude = 0.3f;
 
+  // Camera control
+  float moveSpeed = 5.0f;
+  float turnSpeed = 90.0f;  // degrees per second
+
+  // Key states (only for printable ASCII keys)
+  bool keyW = false, keyA = false, keyS = false, keyD = false;
+  bool keyQ = false, keyE = false;
+  bool keyI = false, keyJ = false, keyK = false, keyL = false;
+
+  // Mouse state
+  bool mouseDown = false;
+  int lastMouseX = 0;
+  int lastMouseY = 0;
+
   void onCreate() override {
     // Create a sphere mesh
     al::addSphere(mesh, 1.0, 32, 32);
@@ -306,14 +329,57 @@ public:
 
     // Set up camera
     nav().pos(0, 0, 5);
+    nav().faceToward(Vec3f(0, 0, 0));
 
     // Configure audio (44100 Hz, 128 frames, stereo)
     configureWebAudio(44100, 128, 2, 0);
+
+    std::cout << "[INFO] Camera: WASD move, Q/E up/down, IJKL or mouse drag to look" << std::endl;
   }
 
   void onAnimate(double dt) override {
     // Rotate the sphere
-    angle += dt * 30.0;  // degrees per second
+    angle += dt * 30.0;
+
+    // Camera movement based on held keys
+    Vec3f move(0, 0, 0);
+
+    // Forward/backward (W/S)
+    if (keyW) move.z -= 1;
+    if (keyS) move.z += 1;
+
+    // Left/right strafe (A/D)
+    if (keyA) move.x -= 1;
+    if (keyD) move.x += 1;
+
+    // Up/down (Q/E)
+    if (keyQ) move.y -= 1;
+    if (keyE) move.y += 1;
+
+    // Apply movement in camera's local space
+    if (move.mag() > 0) {
+      move = move.normalize() * moveSpeed * dt;
+      // Transform movement to world space using camera orientation
+      Vec3f forward = nav().uf();  // forward vector
+      Vec3f right = nav().ur();    // right vector
+      Vec3f up = nav().uu();       // up vector
+
+      nav().pos() += forward * (-move.z) + right * move.x + up * move.y;
+    }
+
+    // Camera rotation with IJKL keys
+    float yaw = 0, pitch = 0;
+    if (keyJ) yaw += 1;
+    if (keyL) yaw -= 1;
+    if (keyI) pitch += 1;
+    if (keyK) pitch -= 1;
+
+    if (yaw != 0 || pitch != 0) {
+      float yawRad = yaw * turnSpeed * dt * M_PI / 180.0;
+      float pitchRad = pitch * turnSpeed * dt * M_PI / 180.0;
+      Quatd rot = Quatd().fromEuler(yawRad, pitchRad, 0);
+      nav().quat() = rot * nav().quat();
+    }
   }
 
   void onDraw(Graphics& g) override {
@@ -326,24 +392,97 @@ public:
     g.color(HSV(fmod(angle * 0.01, 1.0), 0.8, 1.0));
     g.draw(mesh);
     g.popMatrix();
+
+    // Draw a ground grid for reference
+    g.lighting(false);
+    g.color(0.3f, 0.3f, 0.3f);
+    Mesh grid;
+    grid.primitive(Mesh::LINES);
+    for (int i = -5; i <= 5; i++) {
+      grid.vertex(i, -1, -5); grid.vertex(i, -1, 5);
+      grid.vertex(-5, -1, i); grid.vertex(5, -1, i);
+    }
+    g.draw(grid);
   }
 
   void onSound(AudioIOData& io) override {
     while (io()) {
-      // Generate sine wave
       float sample = osc() * amplitude;
-
-      // Output to both channels
       io.out(0) = sample;
       io.out(1) = sample;
     }
   }
 
   bool onKeyDown(const Keyboard& k) override {
+    int key = k.key();
+
+    // Movement keys
+    if (key == 'w' || key == 'W') keyW = true;
+    if (key == 'a' || key == 'A') keyA = true;
+    if (key == 's' || key == 'S') keyS = true;
+    if (key == 'd' || key == 'D') keyD = true;
+    if (key == 'q' || key == 'Q') keyQ = true;
+    if (key == 'e' || key == 'E') keyE = true;
+
+    // Look keys
+    if (key == 'i' || key == 'I') keyI = true;
+    if (key == 'j' || key == 'J') keyJ = true;
+    if (key == 'k' || key == 'K') keyK = true;
+    if (key == 'l' || key == 'L') keyL = true;
+
     // Change frequency with number keys 1-8
-    if (k.key() >= '1' && k.key() <= '8') {
-      float freq = 220.0f * (k.key() - '0');  // 220Hz to 1760Hz
+    if (key >= '1' && key <= '8') {
+      float freq = 220.0f * (key - '0');
       osc.freq(freq);
+      std::cout << "[INFO] Frequency: " << freq << " Hz" << std::endl;
+    }
+    return true;
+  }
+
+  bool onKeyUp(const Keyboard& k) override {
+    int key = k.key();
+
+    if (key == 'w' || key == 'W') keyW = false;
+    if (key == 'a' || key == 'A') keyA = false;
+    if (key == 's' || key == 'S') keyS = false;
+    if (key == 'd' || key == 'D') keyD = false;
+    if (key == 'q' || key == 'Q') keyQ = false;
+    if (key == 'e' || key == 'E') keyE = false;
+
+    if (key == 'i' || key == 'I') keyI = false;
+    if (key == 'j' || key == 'J') keyJ = false;
+    if (key == 'k' || key == 'K') keyK = false;
+    if (key == 'l' || key == 'L') keyL = false;
+
+    return true;
+  }
+
+  bool onMouseDown(const Mouse& m) override {
+    mouseDown = true;
+    lastMouseX = m.x();
+    lastMouseY = m.y();
+    return true;
+  }
+
+  bool onMouseUp(const Mouse& m) override {
+    mouseDown = false;
+    return true;
+  }
+
+  bool onMouseDrag(const Mouse& m) override {
+    if (mouseDown) {
+      int dx = m.x() - lastMouseX;
+      int dy = m.y() - lastMouseY;
+
+      // Rotate camera based on mouse movement
+      float sensitivity = 0.2f;
+      float yawRad = -dx * sensitivity * M_PI / 180.0;
+      float pitchRad = -dy * sensitivity * M_PI / 180.0;
+      Quatd rot = Quatd().fromEuler(yawRad, pitchRad, 0);
+      nav().quat() = rot * nav().quat();
+
+      lastMouseX = m.x();
+      lastMouseY = m.y();
     }
     return true;
   }

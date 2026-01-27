@@ -77,6 +77,14 @@ export const categories: ExampleCategory[] = [
       { id: 'generative', title: 'Generative' },
     ],
   },
+  {
+    id: 'feature-tests',
+    title: 'Feature Tests',
+    subcategories: [
+      { id: 'graphics', title: 'Graphics Tests' },
+      { id: 'audio', title: 'Audio Tests' },
+    ],
+  },
 ]
 
 export const examples: Example[] = [
@@ -2561,6 +2569,944 @@ public:
 };
 
 ALLOLIB_WEB_MAIN(FractalTree)
+`,
+  },
+
+  // ==========================================================================
+  // FEATURE TESTS - Graphics Tests
+  // ==========================================================================
+  {
+    id: 'mesh-primitives-test',
+    title: 'Mesh Primitives Test',
+    description: 'Tests all OpenGL primitive types: POINTS, LINES, LINE_STRIP, LINE_LOOP, TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: Mesh Primitives
+ * Tests all OpenGL primitive types supported by WebGL2
+ * Press SPACE to cycle through primitives
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class MeshPrimitivesTest : public WebApp {
+public:
+    Mesh pointsMesh, linesMesh, lineStripMesh, lineLoopMesh;
+    Mesh trianglesMesh, triangleStripMesh, triangleFanMesh;
+
+    double time = 0;
+    int currentPrimitive = 0;
+    const int numPrimitives = 7;
+
+    void onCreate() override {
+        // POINTS
+        pointsMesh.primitive(Mesh::POINTS);
+        for (int i = 0; i < 50; i++) {
+            float angle = i * 0.125664f;
+            float r = 0.5f + 0.5f * sin(i * 0.3f);
+            pointsMesh.vertex(r * cos(angle), r * sin(angle), 0);
+            pointsMesh.color(HSV(i / 50.0f, 1, 1));
+        }
+
+        // LINES
+        linesMesh.primitive(Mesh::LINES);
+        for (int i = 0; i < 10; i++) {
+            float y = -0.8f + i * 0.16f;
+            linesMesh.vertex(-0.8f, y, 0);
+            linesMesh.color(HSV(i / 10.0f, 1, 1));
+            linesMesh.vertex(0.8f, y, 0);
+            linesMesh.color(HSV(i / 10.0f, 1, 1));
+        }
+
+        // LINE_STRIP
+        lineStripMesh.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 50; i++) {
+            float t = i / 49.0f;
+            lineStripMesh.vertex(-0.8f + t * 1.6f, 0.5f * sin(t * 6.28f * 3), 0);
+            lineStripMesh.color(HSV(t, 1, 1));
+        }
+
+        // LINE_LOOP
+        lineLoopMesh.primitive(Mesh::LINE_LOOP);
+        for (int i = 0; i < 6; i++) {
+            float angle = i * M_PI / 3.0f;
+            lineLoopMesh.vertex(0.7f * cos(angle), 0.7f * sin(angle), 0);
+            lineLoopMesh.color(HSV(i / 6.0f, 1, 1));
+        }
+
+        // TRIANGLES
+        trianglesMesh.primitive(Mesh::TRIANGLES);
+        for (int i = 0; i < 4; i++) {
+            float cx = -0.5f + (i % 2) * 1.0f;
+            float cy = -0.3f + (i / 2) * 0.6f;
+            HSV col(i / 4.0f, 1, 1);
+            trianglesMesh.vertex(cx, cy + 0.3f, 0); trianglesMesh.color(col);
+            trianglesMesh.vertex(cx - 0.26f, cy - 0.15f, 0); trianglesMesh.color(col);
+            trianglesMesh.vertex(cx + 0.26f, cy - 0.15f, 0); trianglesMesh.color(col);
+        }
+
+        // TRIANGLE_STRIP
+        triangleStripMesh.primitive(Mesh::TRIANGLE_STRIP);
+        for (int i = 0; i < 10; i++) {
+            float x = -0.8f + i * 0.18f;
+            float y = (i % 2 == 0) ? 0.3f : -0.3f;
+            triangleStripMesh.vertex(x, y, 0);
+            triangleStripMesh.color(HSV(i / 10.0f, 1, 1));
+        }
+
+        // TRIANGLE_FAN
+        triangleFanMesh.primitive(Mesh::TRIANGLE_FAN);
+        triangleFanMesh.vertex(0, 0, 0);
+        triangleFanMesh.color(1, 1, 1);
+        for (int i = 0; i <= 12; i++) {
+            float angle = i * M_PI / 6.0f;
+            triangleFanMesh.vertex(0.7f * cos(angle), 0.7f * sin(angle), 0);
+            triangleFanMesh.color(HSV(i / 12.0f, 1, 1));
+        }
+
+        nav().pos(0, 0, 3);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        currentPrimitive = (int(time / 2.0) % numPrimitives);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.blending(true);
+        g.blendAdd();
+        g.pointSize(8);
+
+        switch (currentPrimitive) {
+            case 0: g.draw(pointsMesh); break;
+            case 1: g.draw(linesMesh); break;
+            case 2: g.draw(lineStripMesh); break;
+            case 3: g.draw(lineLoopMesh); break;
+            case 4: g.draw(trianglesMesh); break;
+            case 5: g.draw(triangleStripMesh); break;
+            case 6: g.draw(triangleFanMesh); break;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            currentPrimitive = (currentPrimitive + 1) % numPrimitives;
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(MeshPrimitivesTest)
+`,
+  },
+  {
+    id: 'shape-gallery-test',
+    title: 'Shape Gallery Test',
+    description: 'Tests all addShape() functions: sphere, cube, cone, cylinder, torus, icosphere, dodecahedron, octahedron, tetrahedron',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: Shape Gallery
+ * Tests all addShape() functions from al_Shapes.hpp
+ * Press SPACE to cycle, M for display mode
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class ShapeGalleryTest : public WebApp {
+public:
+    Mesh shapes[12];
+    const char* names[12] = {
+        "Sphere", "Cube", "Cone", "Cylinder", "Torus",
+        "Icosphere", "Dodecahedron", "Octahedron", "Tetrahedron",
+        "Rect", "Surface Loop", "Wire Box"
+    };
+    Color colors[12];
+    double time = 0;
+    int currentShape = 0;
+    int displayMode = 0;
+
+    void onCreate() override {
+        addSphere(shapes[0], 1.0, 32, 32);
+        addCube(shapes[1], 1.5);
+        addCone(shapes[2], 0.8, Vec3f(0, -1, 0), Vec3f(0, 1.5, 0), 32);
+        addCylinder(shapes[3], 0.6, 2.0, 32, 1, true, true);
+        addTorus(shapes[4], 0.3, 1.0, 32, 32);
+        addIcosphere(shapes[5], 1.0, 3);
+        addDodecahedron(shapes[6], 1.0);
+        addOctahedron(shapes[7], 1.2);
+        addTetrahedron(shapes[8], 1.2);
+        addRect(shapes[9], -1.0f, -0.75f, 2.0f, 1.5f);
+
+        // Surface of revolution
+        std::vector<Vec3f> profile;
+        for (int i = 0; i <= 16; i++) {
+            float t = i / 16.0f;
+            float y = t * 2.0f - 1.0f;
+            float r = 0.3f + 0.3f * sin(t * M_PI * 2);
+            profile.push_back(Vec3f(r, y, 0));
+        }
+        addSurfaceLoop(shapes[10], profile.data(), profile.size(), 32, 0);
+
+        addWireBox(shapes[11], 1.5, 1.0, 1.2);
+
+        for (int i = 0; i < 12; i++) {
+            shapes[i].generateNormals();
+            colors[i] = HSV(i / 12.0f, 0.7f, 1.0f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override { time += dt; }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        g.pushMatrix();
+        g.rotate(time * 30, 0, 1, 0);
+        g.rotate(time * 15, 1, 0, 0);
+
+        if (displayMode != 1) {
+            g.polygonFill();
+            g.color(colors[currentShape]);
+            g.draw(shapes[currentShape]);
+        }
+        if (displayMode >= 1) {
+            g.polygonLine();
+            g.color(1, 1, 1, 0.5f);
+            g.draw(shapes[currentShape]);
+        }
+
+        g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') currentShape = (currentShape + 1) % 12;
+        if (k.key() == 'm') displayMode = (displayMode + 1) % 3;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ShapeGalleryTest)
+`,
+  },
+  {
+    id: 'transform-stack-test',
+    title: 'Transform Stack Test',
+    description: 'Tests matrix operations: pushMatrix/popMatrix, translate, rotate, scale with nested hierarchies',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: Transform Stack
+ * Tests nested matrix transformations
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class TransformStackTest : public WebApp {
+public:
+    Mesh cube, sphere;
+    double time = 0;
+
+    void onCreate() override {
+        addCube(cube, 0.5);
+        cube.generateNormals();
+        addSphere(sphere, 0.15, 16, 16);
+        sphere.generateNormals();
+
+        nav().pos(0, 2, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override { time += dt; }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Solar system demo
+        g.pushMatrix();
+        g.color(1.0f, 0.8f, 0.2f);
+        g.scale(1.5);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Earth orbit
+        g.pushMatrix();
+        g.rotate(time * 30, 0, 1, 0);
+        g.translate(3, 0, 0);
+
+        g.pushMatrix();
+        g.scale(0.5);
+        g.color(0.2f, 0.5f, 1.0f);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Moon
+        g.pushMatrix();
+        g.rotate(time * 120, 0, 1, 0);
+        g.translate(0.8, 0, 0);
+        g.scale(0.2);
+        g.color(0.7f, 0.7f, 0.7f);
+        g.draw(sphere);
+        g.popMatrix();
+
+        g.popMatrix();
+
+        // Rotating cubes
+        g.pushMatrix();
+        g.translate(-3, 0, 0);
+        for (int i = 0; i < 5; i++) {
+            g.pushMatrix();
+            g.rotate(i * 72 + time * 50, 0, 1, 0);
+            g.translate(1.5, 0, 0);
+            g.scale(0.3f + 0.1f * sin(time * 2 + i));
+            g.color(HSV(i / 5.0f, 0.8f, 1.0f));
+            g.draw(cube);
+            g.popMatrix();
+        }
+        g.popMatrix();
+
+        // Robotic arm
+        g.pushMatrix();
+        g.translate(4, -1, 0);
+        g.rotate(sin(time) * 45, 0, 0, 1);
+        g.translate(0, 0.8, 0);
+        g.color(1.0f, 0.3f, 0.3f);
+        g.pushMatrix();
+        g.scale(0.3f, 0.8f, 0.3f);
+        g.draw(cube);
+        g.popMatrix();
+
+        g.translate(0, 0.8, 0);
+        g.rotate(sin(time * 1.5) * 60, 0, 0, 1);
+        g.translate(0, 0.6, 0);
+        g.color(0.3f, 1.0f, 0.3f);
+        g.pushMatrix();
+        g.scale(0.25f, 0.6f, 0.25f);
+        g.draw(cube);
+        g.popMatrix();
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(TransformStackTest)
+`,
+  },
+  {
+    id: 'multilight-test',
+    title: 'Multi-Light Test',
+    description: 'Tests multiple colored lights, materials, and distance attenuation',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: Multi-Light System
+ * Press 1-4 to toggle lights
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Light.hpp"
+#include <cmath>
+
+using namespace al;
+
+class MultiLightTest : public WebApp {
+public:
+    Mesh sphere, plane, lightMarker;
+    Light lights[4];
+    Material material;
+    double time = 0;
+
+    void onCreate() override {
+        addSphere(sphere, 1.0, 64, 64);
+        sphere.generateNormals();
+
+        plane.primitive(Mesh::TRIANGLES);
+        float size = 8.0f;
+        for (int i = 0; i < 2; i++) {
+            plane.vertex(-size, -2, -size + i * 2 * size);
+            plane.vertex(size, -2, -size);
+            plane.vertex(size - i * 2 * size, -2, size);
+            for (int j = 0; j < 3; j++) {
+                plane.normal(0, 1, 0);
+                plane.color(0.4f, 0.4f, 0.4f);
+            }
+        }
+
+        addSphere(lightMarker, 0.1, 8, 8);
+
+        // RGB point lights + white directional
+        Color lc[] = {Color(1,0.2,0.2), Color(0.2,1,0.2), Color(0.2,0.2,1), Color(0.5,0.5,0.5)};
+        for (int i = 0; i < 4; i++) {
+            lights[i].diffuse(lc[i]);
+            lights[i].attenuation(1.0f, 0.1f, 0.01f);
+        }
+        lights[3].dir(0, -1, -0.5);
+
+        material.shininess(50.0f);
+
+        nav().pos(0, 2, 8);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        float r = 3.0f, h = 1.5f;
+        for (int i = 0; i < 3; i++) {
+            float angle = time + i * 2.094f;
+            lights[i].pos(r * cos(angle), h, r * sin(angle));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.08f);
+        g.depthTesting(true);
+        g.material(material);
+        g.lighting(true);
+        for (int i = 0; i < 4; i++) g.light(lights[i], i);
+
+        g.draw(plane);
+        g.color(1, 1, 1);
+        g.draw(sphere);
+
+        g.lighting(false);
+        for (int i = 0; i < 3; i++) {
+            g.pushMatrix();
+            g.translate(lights[i].pos());
+            g.color(lights[i].diffuse());
+            g.draw(lightMarker);
+            g.popMatrix();
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '4') {
+            int i = k.key() - '1';
+            Color d = lights[i].diffuse();
+            Color orig[] = {Color(1,0.2,0.2), Color(0.2,1,0.2), Color(0.2,0.2,1), Color(0.5,0.5,0.5)};
+            lights[i].diffuse(d.r > 0.1f ? Color(0,0,0) : orig[i]);
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(MultiLightTest)
+`,
+  },
+  {
+    id: 'easyfbo-test',
+    title: 'EasyFBO Test',
+    description: 'Tests render-to-texture with post-processing effects',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: EasyFBO - Render to Texture
+ * Press SPACE to cycle effects: Normal, Invert, Grayscale, Pixelate
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_EasyFBO.hpp"
+#include <cmath>
+
+using namespace al;
+
+class EasyFBOTest : public WebApp {
+public:
+    EasyFBO fbo;
+    Mesh sphere, cube, screenQuad;
+    ShaderProgram postShader;
+    double time = 0;
+    int effectMode = 0;
+
+    const char* vertSrc = R"(#version 300 es
+        precision highp float;
+        layout(location = 0) in vec3 position;
+        layout(location = 2) in vec2 texcoord;
+        out vec2 vUV;
+        void main() { gl_Position = vec4(position, 1.0); vUV = texcoord; }
+    )";
+
+    const char* fragSrc = R"(#version 300 es
+        precision highp float;
+        uniform sampler2D tex0;
+        uniform int effect;
+        in vec2 vUV;
+        out vec4 fragColor;
+        void main() {
+            vec2 uv = vUV;
+            if (effect == 3) uv = floor(uv * 100.0) / 100.0;
+            vec4 c = texture(tex0, uv);
+            if (effect == 1) c.rgb = 1.0 - c.rgb;
+            if (effect == 2) c.rgb = vec3(dot(c.rgb, vec3(0.299, 0.587, 0.114)));
+            fragColor = c;
+        }
+    )";
+
+    void onCreate() override {
+        fbo.init(800, 600);
+        addSphere(sphere, 1.0, 32, 32); sphere.generateNormals();
+        addCube(cube, 0.8); cube.generateNormals();
+
+        screenQuad.primitive(Mesh::TRIANGLES);
+        screenQuad.vertex(-1,-1,0); screenQuad.texCoord(0,0);
+        screenQuad.vertex(1,-1,0); screenQuad.texCoord(1,0);
+        screenQuad.vertex(1,1,0); screenQuad.texCoord(1,1);
+        screenQuad.vertex(-1,-1,0); screenQuad.texCoord(0,0);
+        screenQuad.vertex(1,1,0); screenQuad.texCoord(1,1);
+        screenQuad.vertex(-1,1,0); screenQuad.texCoord(0,1);
+
+        postShader.compile(vertSrc, fragSrc);
+        nav().pos(0, 0, 6);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override { time += dt; }
+
+    void onDraw(Graphics& g) override {
+        // Pass 1: Render to FBO
+        g.pushFramebuffer(fbo);
+        g.pushViewport(fbo.width(), fbo.height());
+        g.pushCamera(nav().view());
+        g.clear(0.1f, 0.1f, 0.2f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        g.pushMatrix();
+        g.rotate(time * 30, 0, 1, 0);
+        g.color(0.8f, 0.2f, 0.2f);
+        g.draw(sphere);
+        g.popMatrix();
+
+        for (int i = 0; i < 6; i++) {
+            g.pushMatrix();
+            float a = i * M_PI / 3.0f + time * 0.5f;
+            g.translate(3 * cos(a), sin(time + i) * 0.5f, 3 * sin(a));
+            g.rotate(time * 60 + i * 30, 1, 1, 0);
+            g.color(HSV(i / 6.0f, 0.8f, 1.0f));
+            g.draw(cube);
+            g.popMatrix();
+        }
+
+        g.popCamera();
+        g.popViewport();
+        g.popFramebuffer();
+
+        // Pass 2: Post-process
+        g.clear(0, 0, 0);
+        g.depthTesting(false);
+        g.shader(postShader);
+        postShader.uniform("effect", effectMode);
+        fbo.colorTexture().bind(0);
+        g.texture();
+        g.draw(screenQuad);
+        fbo.colorTexture().unbind(0);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') effectMode = (effectMode + 1) % 4;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(EasyFBOTest)
+`,
+  },
+  {
+    id: 'blend-modes-test',
+    title: 'Blend Modes Test',
+    description: 'Tests alpha, additive, multiply, screen blending and render states',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Phase 5 Test: Blending Modes
+ * SPACE=cycle blend, D=depth test, C=culling
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class BlendModesTest : public WebApp {
+public:
+    Mesh sphere;
+    double time = 0;
+    int blendMode = 0;
+    bool depthTest = true, cullFace = false;
+
+    void onCreate() override {
+        addSphere(sphere, 1.0, 32, 32);
+        sphere.generateNormals();
+        nav().pos(0, 0, 8);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override { time += dt; }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.2f, 0.2f, 0.25f);
+        g.depthTesting(depthTest);
+        g.cullFace(cullFace);
+
+        // Background spheres (opaque)
+        g.blending(false);
+        g.lighting(true);
+        for (int x = -3; x <= 3; x++) {
+            for (int y = -2; y <= 2; y++) {
+                g.pushMatrix();
+                g.translate(x * 1.5f, y * 1.5f, -5);
+                g.scale(0.3f);
+                g.color(0.5f, 0.5f, 0.5f);
+                g.draw(sphere);
+                g.popMatrix();
+            }
+        }
+
+        // Set blend mode
+        g.blending(blendMode > 0);
+        if (blendMode == 1) g.blendTrans();
+        if (blendMode == 2) g.blendAdd();
+        if (blendMode == 3) g.blendMult();
+        if (blendMode == 4) g.blendScreen();
+        g.lighting(false);
+
+        // Colored spheres
+        float cols[][4] = {{1,0.2,0.2,0.5},{0.2,1,0.2,0.5},{0.2,0.2,1,0.5},
+                          {1,1,0.2,0.5},{1,0.2,1,0.5},{0.2,1,1,0.5}};
+        for (int i = 0; i < 6; i++) {
+            g.pushMatrix();
+            float a = i * M_PI / 3.0f + time * 0.3f;
+            g.translate(2 * cos(a), 2 * sin(a), 0);
+            g.scale(1.2f);
+            g.color(cols[i][0], cols[i][1], cols[i][2], cols[i][3]);
+            g.draw(sphere);
+            g.popMatrix();
+        }
+
+        g.pushMatrix();
+        g.scale(1.5f);
+        g.color(1, 1, 1, 0.7f);
+        g.draw(sphere);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') blendMode = (blendMode + 1) % 5;
+        if (k.key() == 'd') depthTest = !depthTest;
+        if (k.key() == 'c') cullFace = !cullFace;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(BlendModesTest)
+`,
+  },
+
+  // ==========================================================================
+  // FEATURE TESTS - Audio Tests
+  // ==========================================================================
+  {
+    id: 'gamma-dsp-test',
+    title: 'Gamma DSP Test',
+    description: 'Tests oscillators, envelopes, filters, delay, and reverb',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Phase 5 Test: Gamma DSP Comprehensive
+ * 1-6=oscillators, SPACE=trigger, UP/DOWN=freq, F=filter, D=delay
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Filter.h"
+#include "Gamma/Delay.h"
+#include "Gamma/Effects.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaDSPTest : public WebApp {
+public:
+    Sine<> sine; Saw<> saw; Square<> square; Tri<> tri; Pulse<> pulse;
+    NoisePink<> pink;
+    ADSR<> adsr;
+    Biquad<> lowpass, highpass;
+    Delay<float, ipl::Linear> delay;
+    Comb<> comb1, comb2;
+
+    int oscType = 0;
+    float baseFreq = 220.0f;
+    bool filterOn = true, delayOn = true;
+
+    Mesh oscWave;
+    float waveBuffer[256];
+    int waveIdx = 0;
+    double time = 0;
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+        sine.freq(baseFreq); saw.freq(baseFreq); square.freq(baseFreq);
+        tri.freq(baseFreq); pulse.freq(baseFreq); pulse.width(0.3f);
+
+        adsr.attack(0.01f); adsr.decay(0.1f); adsr.sustain(0.7f); adsr.release(0.3f);
+
+        lowpass.type(Biquad<>::LOW_PASS); lowpass.freq(2000); lowpass.res(2);
+        highpass.type(Biquad<>::HIGH_PASS); highpass.freq(100);
+
+        delay.maxDelay(1.0f); delay.delay(0.3f);
+        comb1.delay(0.035f); comb1.decay(0.5f);
+        comb2.delay(0.042f); comb2.decay(0.5f);
+
+        oscWave.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 256; i++) {
+            waveBuffer[i] = 0;
+            oscWave.vertex((i / 255.0f) * 4.0f - 2.0f, 0, 0);
+            oscWave.color(0.3f, 0.8f, 1.0f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+        adsr.reset();
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        for (int i = 0; i < 256; i++)
+            oscWave.vertices()[i].y = waveBuffer[i] * 1.5f;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.lineWidth(2);
+        g.pushMatrix();
+        g.translate(0, 0.5f, 0);
+        g.color(0.3f, 0.8f, 1.0f);
+        g.draw(oscWave);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float env = adsr();
+            float osc = 0;
+            switch (oscType) {
+                case 0: osc = sine(); break;
+                case 1: osc = saw(); break;
+                case 2: osc = square(); break;
+                case 3: osc = tri(); break;
+                case 4: osc = pulse(); break;
+                case 5: osc = pink(); break;
+            }
+            float s = osc * env * 0.5f;
+            if (filterOn) { s = lowpass(s); s = highpass(s); }
+            waveBuffer[waveIdx] = s;
+            waveIdx = (waveIdx + 1) % 256;
+            if (delayOn) {
+                float d = delay(s);
+                float r = (comb1(s) + comb2(s)) * 0.3f;
+                s = s * 0.7f + d * 0.3f + r * 0.2f;
+            }
+            s = tanh(s);
+            io.out(0) = s; io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '6') oscType = k.key() - '1';
+        if (k.key() == ' ') adsr.reset();
+        if (k.key() == Keyboard::UP) { baseFreq = std::min(baseFreq * 1.1f, 2000.0f); updateFreq(); }
+        if (k.key() == Keyboard::DOWN) { baseFreq = std::max(baseFreq / 1.1f, 55.0f); updateFreq(); }
+        if (k.key() == 'f') filterOn = !filterOn;
+        if (k.key() == 'd') delayOn = !delayOn;
+        return true;
+    }
+
+    void updateFreq() {
+        sine.freq(baseFreq); saw.freq(baseFreq); square.freq(baseFreq);
+        tri.freq(baseFreq); pulse.freq(baseFreq);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaDSPTest)
+`,
+  },
+  {
+    id: 'spatial-audio-test',
+    title: 'Spatial Audio Test',
+    description: 'Tests StereoPanner, DynamicScene, PositionedVoice, distance attenuation',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Phase 5 Test: Spatial Audio
+ * 1-5=trigger sounds, LEFT/RIGHT=rotate listener, WASD=move source
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/sound/al_StereoPanner.hpp"
+#include "al/scene/al_DynamicScene.hpp"
+#include "al/scene/al_PositionedVoice.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class SpatialVoice : public PositionedVoice {
+public:
+    Sine<> osc;
+    AD<> env;
+    float freq = 440.0f;
+    Color color;
+
+    void init() override { env.attack(0.01f); env.decay(2.0f); }
+    void onTriggerOn() override { osc.freq(freq); env.reset(); }
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = osc() * env() * 0.3f;
+            io.out(0) = s; io.out(1) = s;
+        }
+        if (env.done()) free();
+    }
+    void onProcess(Graphics& g) override {
+        Mesh m; addSphere(m, 0.2f, 16, 16);
+        g.pushMatrix();
+        g.translate(pose().pos());
+        g.color(color);
+        g.draw(m);
+        g.popMatrix();
+    }
+};
+
+class SpatialAudioTest : public WebApp {
+public:
+    DynamicScene scene;
+    Mesh listenerMesh, groundPlane;
+    double time = 0;
+    float listenerAngle = 0;
+    StereoPanner panner;
+    Sine<> continuousOsc;
+    float srcX = 0, srcZ = -3;
+
+    void onCreate() override {
+        scene.distanceAttenuation(true);
+        scene.allocatePolyphony<SpatialVoice>(16);
+        scene.prepare(audioIO());
+
+        addCone(listenerMesh, 0.2f, Vec3f(0,0,0.5f), Vec3f(0,0,-0.3f), 12);
+        listenerMesh.generateNormals();
+
+        groundPlane.primitive(Mesh::TRIANGLES);
+        float sz = 10.0f;
+        groundPlane.vertex(-sz,-0.5f,-sz); groundPlane.vertex(sz,-0.5f,-sz); groundPlane.vertex(sz,-0.5f,sz);
+        groundPlane.vertex(-sz,-0.5f,-sz); groundPlane.vertex(sz,-0.5f,sz); groundPlane.vertex(-sz,-0.5f,sz);
+        for (int i = 0; i < 6; i++) groundPlane.color(0.2f, 0.3f, 0.2f);
+
+        panner.numSpeakers(2);
+        std::vector<float> az = {-45.0f, 45.0f};
+        panner.setSpeakerAngles(az);
+        continuousOsc.freq(330.0f);
+
+        nav().pos(0, 2, 8);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        Pose lp; lp.pos(0,0,0);
+        lp.faceToward(Vec3f(sin(listenerAngle), 0, -cos(listenerAngle)));
+        scene.listenerPose(lp);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.draw(groundPlane);
+
+        g.pushMatrix();
+        g.rotate(listenerAngle * 180.0f / M_PI, 0, 1, 0);
+        g.color(1.0f, 0.8f, 0.2f);
+        g.draw(listenerMesh);
+        g.popMatrix();
+
+        g.pushMatrix();
+        g.translate(srcX, 0, srcZ);
+        Mesh s; addSphere(s, 0.15f, 12, 12);
+        g.color(0.2f, 0.8f, 1.0f);
+        g.draw(s);
+        g.popMatrix();
+
+        scene.render(g);
+    }
+
+    void onSound(AudioIOData& io) override {
+        scene.render(io);
+        while (io()) {
+            float s = continuousOsc() * 0.1f;
+            float dx = srcX, dz = srcZ;
+            float rotX = dx * cos(-listenerAngle) - dz * sin(-listenerAngle);
+            float rotZ = dx * sin(-listenerAngle) + dz * cos(-listenerAngle);
+            float azimuth = atan2(rotX, -rotZ) * 180.0f / M_PI;
+            float dist = sqrt(dx*dx + dz*dz);
+            float atten = 1.0f / (1.0f + dist * 0.5f);
+            float gains[2];
+            panner.renderSample(io, azimuth, 0, gains);
+            io.out(0) += s * gains[0] * atten;
+            io.out(1) += s * gains[1] * atten;
+        }
+    }
+
+    void trigger(float x, float y, float z, float f, Color c) {
+        auto* v = scene.getVoice<SpatialVoice>();
+        if (v) { v->freq = f; v->color = c; v->pose().pos(x,y,z); scene.triggerOn(v); }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == '1') trigger(-3, 0, 0, 440, Color(1,0,0));
+        if (k.key() == '2') trigger(3, 0, 0, 550, Color(0,1,0));
+        if (k.key() == '3') trigger(0, 0, -5, 660, Color(0,0,1));
+        if (k.key() == '4') trigger(0, 0, 5, 330, Color(1,1,0));
+        if (k.key() == '5') { trigger(-2,0,-2,262,Color(1,0.5,0)); trigger(0,0,-3,330,Color(0.5,1,0)); trigger(2,0,-2,392,Color(0,0.5,1)); }
+        if (k.key() == Keyboard::LEFT) listenerAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) listenerAngle += 0.2f;
+        if (k.key() == 'a') srcX -= 0.5f;
+        if (k.key() == 'd') srcX += 0.5f;
+        if (k.key() == 'w') srcZ -= 0.5f;
+        if (k.key() == 's') srcZ += 0.5f;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SpatialAudioTest)
 `,
   },
 ]

@@ -149,6 +149,113 @@ The editor includes AlloLib-specific snippets:
 - `color-hsv` - HSV color creation
 - `shader-basic` - Basic shader program
 
+## WebGL2 Technical Notes
+
+AlloLib Studio Online uses WebGL2 (OpenGL ES 3.0), which has some differences from desktop OpenGL. Here's how we handle them:
+
+### Graphics Limitations & Solutions
+
+| Limitation | Desktop OpenGL | WebGL2 Solution |
+|------------|----------------|-----------------|
+| **No Geometry Shaders** | Geometry shader stage | CPU-side vertex generation, instancing |
+| **No Tessellation** | Tessellation shaders | Pre-tessellated meshes, adaptive LOD |
+| **Limited Extensions** | Wide extension support | Runtime extension detection |
+| **GLSL Version** | GLSL 3.30+ | GLSL ES 3.0 compatibility layer |
+| **Memory Limits** | System RAM | Reasonable defaults, streaming |
+
+### Float Textures (EXT_color_buffer_float)
+
+Float textures can always be *read* in WebGL2, but rendering to them (as FBO targets) requires the `EXT_color_buffer_float` extension:
+
+```cpp
+#include "al/graphics/al_WebGL2Extensions.hpp"
+
+// Check if float render targets are available
+if (al::WebGL2Extensions::canRenderToFloatTexture()) {
+    // Use RGBA32F for HDR rendering
+    texture.create2D(width, height, GL_RGBA32F, GL_RGBA, GL_FLOAT);
+} else {
+    // Fall back to 8-bit
+    texture.create2D(width, height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+}
+```
+
+### Cubemap Textures
+
+Cubemap textures are fully supported in WebGL2 core (no extension needed):
+
+```cpp
+al::Texture cubemap;
+cubemap.createCubemap(512, GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE);
+// Submit faces with glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, ...)
+```
+
+### Extension Detection
+
+Use the `WebGL2Extensions` helper to check runtime capabilities:
+
+```cpp
+auto& caps = al::WebGL2Extensions::capabilities();
+
+if (caps.anisotropicFiltering) {
+    // Use up to caps.maxAnisotropy levels
+}
+
+if (caps.s3tcCompression) {
+    // DXT/S3TC compressed textures available
+}
+```
+
+## Web Audio Technical Notes
+
+### Audio Architecture
+
+Audio runs in an AudioWorklet for low-latency processing:
+- 128 samples per buffer (Web Audio standard)
+- Configurable sample rate (typically 44.1kHz or 48kHz)
+- Stereo output (expandable to multichannel)
+
+### Buffer Underrun Detection
+
+The audio processor monitors for buffer underruns and reports statistics:
+
+```javascript
+// The worklet sends 'underrun' messages when audio glitches occur
+workletNode.port.onmessage = (event) => {
+    if (event.data.type === 'underrun') {
+        console.warn('Audio underrun:', event.data.count);
+    }
+};
+```
+
+### Sample-Accurate Scheduling
+
+Events can be scheduled with sample accuracy using `AudioContext.currentTime`:
+
+```javascript
+// Schedule an event 100ms in the future
+workletNode.port.postMessage({
+    type: 'scheduleEvent',
+    time: audioContext.currentTime + 0.1,
+    event: { type: 'noteOn', note: 60 }
+});
+```
+
+### Spatializer Support
+
+AlloLib's spatializers work via stereo panning:
+- **StereoPanner** - Simple left/right panning (full support)
+- **VBAP/DBAP** - Downmixed to stereo for web (2 speakers)
+- **Ambisonics** - First-order decode to stereo
+
+```cpp
+// Use StereoPanner for web audio
+al::StereoPanner panner;
+panner.numSpeakers(2);
+std::vector<float> azimuths = {-45.0f, 45.0f};
+panner.setSpeakerAngles(azimuths);
+```
+
 ## License
 
 MIT

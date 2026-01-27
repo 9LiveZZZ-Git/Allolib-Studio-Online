@@ -13,6 +13,46 @@ const props = defineProps<{
   panelHeight?: number
 }>()
 
+const emit = defineEmits<{
+  resize: [height: number]
+}>()
+
+// Resize state
+const containerRef = ref<HTMLDivElement>()
+const isResizing = ref(false)
+const startY = ref(0)
+const startHeight = ref(0)
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  isResizing.value = true
+  startY.value = e.clientY
+  startHeight.value = containerRef.value?.offsetHeight || 200
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', stopResize)
+  document.body.style.cursor = 'ns-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function onMouseMove(e: MouseEvent) {
+  if (!isResizing.value) return
+
+  // Calculate new height (dragging up increases height)
+  const delta = startY.value - e.clientY
+  const newHeight = Math.max(100, Math.min(400, startHeight.value + delta))
+
+  emit('resize', newHeight)
+}
+
+function stopResize() {
+  isResizing.value = false
+  document.removeEventListener('mousemove', onMouseMove)
+  document.removeEventListener('mouseup', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
 // Main tab state
 const activeTab = ref<'audio' | 'video'>('audio')
 
@@ -50,8 +90,12 @@ const peakHoldDuration = 1500
 const fps = ref(0)
 const frameTime = ref(0)
 const resolution = ref({ width: 0, height: 0 })
+const gpuInfo = ref('')
+const drawCalls = ref(0)
+const triangles = ref(0)
 let lastFrameTime = 0
 let frameCount = 0
+let lastFpsUpdate = 0
 let fpsHistory: number[] = []
 let frameTimeHistory: number[] = []
 const historyLength = 60
@@ -130,23 +174,36 @@ function animate() {
   const delta = now - lastFrameTime
   lastFrameTime = now
 
-  // Update FPS
+  // Update frame time
   frameCount++
   frameTime.value = delta
   frameTimeHistory.push(delta)
   if (frameTimeHistory.length > historyLength) frameTimeHistory.shift()
 
-  // Calculate FPS every 500ms
-  if (frameCount % 30 === 0) {
-    fps.value = Math.round(1000 / (frameTimeHistory.reduce((a, b) => a + b, 0) / frameTimeHistory.length))
+  // Calculate FPS every 500ms for stability
+  if (now - lastFpsUpdate > 500) {
+    const avgFrameTime = frameTimeHistory.reduce((a, b) => a + b, 0) / frameTimeHistory.length
+    fps.value = Math.round(1000 / avgFrameTime)
     fpsHistory.push(fps.value)
     if (fpsHistory.length > historyLength) fpsHistory.shift()
+    lastFpsUpdate = now
   }
 
   // Update resolution from canvas
   const canvas = document.getElementById('canvas') as HTMLCanvasElement
   if (canvas) {
     resolution.value = { width: canvas.width, height: canvas.height }
+
+    // Try to get WebGL stats
+    const gl = canvas.getContext('webgl2')
+    if (gl && !gpuInfo.value) {
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
+      if (debugInfo) {
+        gpuInfo.value = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || 'WebGL2'
+      } else {
+        gpuInfo.value = 'WebGL2'
+      }
+    }
   }
 
   // Get audio data
@@ -513,20 +570,32 @@ function drawFrameTimeGraph() {
 }
 
 function setupCanvases() {
-  const canvases = [
+  // Audio canvases
+  const audioCanvases = [
     stereoMeterRef.value,
     stereoScopeRef.value,
     waveformCanvasRef.value,
     spectrumCanvasRef.value,
+  ]
+
+  // Video canvases
+  const videoCanvases = [
     fpsGraphRef.value,
     frameTimeGraphRef.value,
   ]
 
+  // Only setup visible canvases to get correct dimensions
+  const canvases = activeTab.value === 'audio' ? audioCanvases : videoCanvases
+
   canvases.forEach(canvas => {
     if (canvas) {
       const rect = canvas.getBoundingClientRect()
-      canvas.width = rect.width
-      canvas.height = rect.height
+      // Only update if we have valid dimensions
+      if (rect.width > 0 && rect.height > 0) {
+        // Use CSS dimensions for drawing, not HiDPI scaled
+        canvas.width = rect.width
+        canvas.height = rect.height
+      }
     }
   })
 }
@@ -545,7 +614,19 @@ watch(() => props.isRunning, (running) => {
     peakR.value = 0
     fps.value = 0
     frameTime.value = 0
+    gpuInfo.value = ''
+    fpsHistory = []
+    frameTimeHistory = []
   }
+})
+
+// Re-setup canvases when tab changes (v-show elements need resize)
+watch(activeTab, () => {
+  setTimeout(setupCanvases, 50)
+})
+
+watch(audioView, () => {
+  setTimeout(setupCanvases, 50)
 })
 
 onMounted(() => {
@@ -556,14 +637,26 @@ onMounted(() => {
 onBeforeUnmount(() => {
   teardownAnalyser()
   window.removeEventListener('resize', setupCanvases)
+  document.removeEventListener('mousemove', onMouseMove)
+  document.removeEventListener('mouseup', stopResize)
 })
 </script>
 
 <template>
   <div
+    ref="containerRef"
     class="analysis-panel bg-editor-sidebar border-t border-editor-border shrink-0 flex flex-col"
     :style="panelHeight ? { height: `${panelHeight}px`, minHeight: `${panelHeight}px` } : {}"
   >
+    <!-- Resize Handle -->
+    <div
+      class="h-1 bg-editor-border hover:bg-allolib-blue cursor-ns-resize transition-colors group flex items-center justify-center"
+      @mousedown="startResize"
+      :class="{ 'bg-allolib-blue': isResizing }"
+    >
+      <div class="w-12 h-0.5 bg-gray-600 group-hover:bg-white rounded-full transition-colors" :class="{ 'bg-white': isResizing }"></div>
+    </div>
+
     <!-- Header with main tabs -->
     <div class="h-8 flex items-center justify-between px-3 border-b border-editor-border shrink-0">
       <div class="flex items-center gap-2">
@@ -634,6 +727,8 @@ onBeforeUnmount(() => {
       <!-- Video stats -->
       <div v-if="activeTab === 'video'" class="flex items-center gap-3 text-xs">
         <span class="text-gray-500">{{ resolution.width }}x{{ resolution.height }}</span>
+        <span class="text-gray-600">|</span>
+        <span class="text-gray-500 truncate max-w-[200px]" :title="gpuInfo">{{ gpuInfo || 'Detecting...' }}</span>
       </div>
     </div>
 

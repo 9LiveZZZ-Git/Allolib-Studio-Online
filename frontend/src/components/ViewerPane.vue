@@ -18,22 +18,59 @@ const emit = defineEmits<{
   started: []
   error: [message: string]
   log: [message: string]
+  'analysis-resize': [height: number]
 }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
 const containerRef = ref<HTMLDivElement>()
+const viewerRef = ref<HTMLDivElement>()
+const isFullscreen = ref(false)
 let runtime: AllolibRuntime | null = null
 
 onMounted(() => {
   // Handle resize
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
   handleResize()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
   runtime?.destroy()
 })
+
+function handleKeydown(e: KeyboardEvent) {
+  // F11 to toggle fullscreen (only when viewer is focused or running)
+  if (e.key === 'F11' && props.status === 'running') {
+    e.preventDefault()
+    toggleFullscreen()
+  }
+}
+
+function handleFullscreenChange() {
+  isFullscreen.value = !!document.fullscreenElement
+  // Resize after fullscreen change
+  setTimeout(handleResize, 100)
+}
+
+async function toggleFullscreen() {
+  if (!viewerRef.value) return
+
+  try {
+    if (!document.fullscreenElement) {
+      await viewerRef.value.requestFullscreen()
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch (err) {
+    console.error('Fullscreen error:', err)
+  }
+}
 
 // Watch for JS URL changes to load new modules
 watch(() => props.jsUrl, async (newUrl) => {
@@ -79,7 +116,7 @@ function handleResize() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col bg-black">
+  <div ref="viewerRef" class="h-full flex flex-col bg-black">
     <div class="h-8 bg-editor-sidebar border-b border-editor-border flex items-center px-3 justify-between">
       <span class="text-sm text-gray-400">Output</span>
       <div class="flex items-center gap-3">
@@ -91,6 +128,21 @@ function handleResize() {
           <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
           Audio
         </span>
+        <!-- Fullscreen button -->
+        <button
+          @click="toggleFullscreen"
+          class="p-1 hover:bg-gray-700 rounded transition-colors"
+          :title="isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen (F11)'"
+        >
+          <!-- Expand icon when not fullscreen -->
+          <svg v-if="!isFullscreen" class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+          </svg>
+          <!-- Compress icon when fullscreen -->
+          <svg v-else class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4H4m0 0l5 5M9 20v-5H4m0 0l5-5m11 10h-5v5m0 0l5-5m-5-10h5V4m0 0l-5 5" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -101,7 +153,8 @@ function handleResize() {
       <canvas
         id="canvas"
         ref="canvasRef"
-        class="absolute inset-0 w-full h-full"
+        class="absolute inset-0 w-full h-full cursor-pointer"
+        @dblclick="toggleFullscreen"
       />
 
       <!-- Idle state overlay -->
@@ -145,6 +198,7 @@ function handleResize() {
         v-show="showAnalysisPanel !== false"
         :is-running="isAudioRunning"
         :panel-height="panelHeight"
+        @resize="(h) => emit('analysis-resize', h)"
       />
     </div>
   </div>
