@@ -528,9 +528,83 @@ function closeDropdown() {
             </select>
           </div>
 
-          <div class="text-xs text-gray-500 bg-editor-sidebar p-2 rounded">
-            Audio settings will apply on next compilation. Lower buffer sizes reduce latency but may cause audio glitches on slower systems.
+          <!-- Safety Limiter Section -->
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="text-xs text-gray-400 mb-2 font-medium">Safety Limiter</div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Enable Limiter</label>
+              <button
+                @click="settings.audio.limiterEnabled = !settings.audio.limiterEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.audio.limiterEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.audio.limiterEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Threshold</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.audio.limiterThreshold"
+                  @input="handleSettingChange()"
+                  min="-12"
+                  max="0"
+                  step="0.5"
+                  class="w-20 accent-allolib-blue"
+                  :disabled="!settings.audio.limiterEnabled"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.audio.limiterThreshold }} dB</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Soft Clip</label>
+              <button
+                @click="settings.audio.softClipEnabled = !settings.audio.softClipEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.audio.softClipEnabled ? 'bg-orange-500' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.audio.softClipEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Drive</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.audio.softClipDrive"
+                  @input="handleSettingChange()"
+                  min="1"
+                  max="4"
+                  step="0.1"
+                  class="w-20 accent-orange-500"
+                  :disabled="!settings.audio.softClipEnabled"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.audio.softClipDrive.toFixed(1) }}x</span>
+              </div>
+            </div>
           </div>
+
+          <div class="text-xs text-gray-500 bg-editor-sidebar p-2 rounded">
+            The safety limiter prevents clipping and protects your speakers. Soft clip adds gentle saturation before hard limiting.</div>
 
           <button
             @click="settings.resetAudio(); handleSettingChange()"

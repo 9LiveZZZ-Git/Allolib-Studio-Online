@@ -4,17 +4,25 @@ Browser-based creative coding environment for AlloLib C++ applications.
 
 ## Status
 
-**Phase 4: Feature Verification - COMPLETE**
+**Phase 6: Editor Enhancement - COMPLETE**
 
+### Core Features
 - ✅ Monaco Editor with C++ syntax and AlloLib snippets
 - ✅ Server-side compilation with Emscripten (~5 second compile time)
 - ✅ WebGL2 graphics rendering (3D meshes, colors, transforms, lighting)
 - ✅ Web Audio playback (Gamma oscillators, AudioWorklet output)
-- ✅ Audio analysis panel (level meters, waveform, spectrum analyzer)
-- ✅ Keyboard/mouse input (Emscripten HTML5 event handlers)
 - ✅ Scene System (PolySynth, SynthVoice, DynamicScene, PositionedVoice)
 - ✅ Custom GLSL ES 3.0 shaders
 - ✅ Procedural texture generation
+
+### Phase 6 Features (NEW)
+- ✅ **Enhanced Monaco Intellisense** - Class member completion, signature help
+- ✅ **Compiler Diagnostics** - Error line highlighting with red squiggles
+- ✅ **IndexedDB Project Storage** - Multiple projects, version history
+- ✅ **Parameter System** - JavaScript-side parameter management with UI
+- ✅ **Safety Limiter** - Soft clipper + brick-wall limiter for audio protection
+- ✅ **22 Example Projects** - Covering graphics, audio, interaction, and more
+- ✅ **Audio Analysis Panel** - Level meters, waveform, spectrum, Lissajous
 
 ## Overview
 
@@ -148,6 +156,35 @@ The editor includes AlloLib-specific snippets:
 - `nav3d` - 3D camera setup
 - `color-hsv` - HSV color creation
 - `shader-basic` - Basic shader program
+- `synthvoice` - Polyphonic voice template
+- `polysynth` - PolySynth setup
+- `stereopanner` - Stereo panning
+
+### Intellisense Features
+
+The Monaco editor provides intelligent code completion:
+
+- **Class Member Completion** - Type `mesh.` to see methods like `vertex()`, `color()`, `normal()`
+- **Signature Help** - See parameter hints when typing function calls
+- **Hover Documentation** - Hover over AlloLib types for documentation
+- **Namespace Completion** - Type `al::` or `gam::` for namespace-aware suggestions
+
+### Error Highlighting
+
+Compilation errors are displayed directly in the editor:
+- Red squiggles under error locations
+- Error messages on hover
+- Auto-jump to first error
+- Supports GCC/Clang/Emscripten error formats
+
+### Audio Safety
+
+The audio output includes a safety limiter to protect your speakers:
+
+- **Soft Clipper** - Gentle tanh-based saturation before hard clipping
+- **Brick-Wall Limiter** - Prevents audio exceeding -1dB threshold
+- **Visual Indicator** - "LIM" badge shows gain reduction in real-time
+- **Configurable** - Adjust threshold and drive in Settings → Audio
 
 ## WebGL2 Technical Notes
 

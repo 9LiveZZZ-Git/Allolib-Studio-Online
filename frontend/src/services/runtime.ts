@@ -37,7 +37,28 @@ declare global {
     Module: WasmModule
     alloAudioContext: AudioContext | null
     alloWorkletNode: AudioWorkletNode | null
+    alloSoftClipper: WaveShaperNode | null
+    alloLimiter: DynamicsCompressorNode | null
+    alloLimiterGain: GainNode | null // For monitoring gain reduction
   }
+}
+
+// Generate a soft clipping curve using tanh-based saturation
+function createSoftClipCurve(drive: number = 1.5, samples: number = 8192): Float32Array {
+  const curve = new Float32Array(samples)
+  const deg = Math.PI / 180
+
+  for (let i = 0; i < samples; i++) {
+    // Map to -1 to 1 range
+    const x = (i * 2) / samples - 1
+
+    // Apply drive and soft clipping using tanh
+    // tanh provides smooth saturation that approaches ±1 asymptotically
+    const driven = x * drive
+    curve[i] = Math.tanh(driven)
+  }
+
+  return curve
 }
 
 export class AllolibRuntime {
@@ -47,6 +68,13 @@ export class AllolibRuntime {
   private onPrint: (text: string) => void
   private onError: (text: string) => void
   private onExit: (code: number) => void
+  private limiterSettings = {
+    enabled: true,
+    threshold: -1,
+    softClipEnabled: true,
+    softClipDrive: 1.5,
+  }
+
   constructor(config: RuntimeConfig) {
     this.canvas = config.canvas
     this.onPrint = config.onPrint || console.log
@@ -163,12 +191,86 @@ export class AllolibRuntime {
         }
       }
 
-      // Connect to audio output
-      window.alloWorkletNode.connect(window.alloAudioContext.destination)
+      // Create safety limiter chain: worklet → soft clipper → limiter → destination
+      this.setupSafetyLimiter()
+
       this.onPrint(`[INFO] Audio worklet connected (state: ${window.alloAudioContext.state})`)
     } catch (error) {
       console.warn('Audio worklet setup error:', error)
       this.onPrint(`[WARN] Audio worklet setup failed: ${error}`)
+    }
+  }
+
+  private setupSafetyLimiter(): void {
+    if (!window.alloAudioContext || !window.alloWorkletNode) return
+
+    const ctx = window.alloAudioContext
+
+    // Create soft clipper (WaveShaperNode with tanh curve)
+    window.alloSoftClipper = ctx.createWaveShaper()
+    if (this.limiterSettings.softClipEnabled) {
+      window.alloSoftClipper.curve = createSoftClipCurve(this.limiterSettings.softClipDrive)
+      window.alloSoftClipper.oversample = '2x' // Reduce aliasing from nonlinear distortion
+    }
+
+    // Create limiter (DynamicsCompressorNode with brick-wall settings)
+    window.alloLimiter = ctx.createDynamicsCompressor()
+    window.alloLimiter.threshold.setValueAtTime(this.limiterSettings.threshold, ctx.currentTime)
+    window.alloLimiter.knee.setValueAtTime(0, ctx.currentTime) // Hard knee for brick-wall limiting
+    window.alloLimiter.ratio.setValueAtTime(20, ctx.currentTime) // High ratio = limiting
+    window.alloLimiter.attack.setValueAtTime(0.001, ctx.currentTime) // 1ms attack - fast to catch transients
+    window.alloLimiter.release.setValueAtTime(0.05, ctx.currentTime) // 50ms release - smooth recovery
+
+    // Create a gain node for monitoring (placed after limiter)
+    window.alloLimiterGain = ctx.createGain()
+    window.alloLimiterGain.gain.setValueAtTime(1.0, ctx.currentTime)
+
+    // Connect the chain based on settings
+    if (this.limiterSettings.softClipEnabled && this.limiterSettings.enabled) {
+      // Full chain: worklet → soft clipper → limiter → gain → destination
+      window.alloWorkletNode.connect(window.alloSoftClipper)
+      window.alloSoftClipper.connect(window.alloLimiter)
+      window.alloLimiter.connect(window.alloLimiterGain)
+      window.alloLimiterGain.connect(ctx.destination)
+      this.onPrint('[INFO] Safety limiter enabled (soft clip + limiter)')
+    } else if (this.limiterSettings.enabled) {
+      // Limiter only: worklet → limiter → gain → destination
+      window.alloWorkletNode.connect(window.alloLimiter)
+      window.alloLimiter.connect(window.alloLimiterGain)
+      window.alloLimiterGain.connect(ctx.destination)
+      this.onPrint('[INFO] Safety limiter enabled')
+    } else if (this.limiterSettings.softClipEnabled) {
+      // Soft clip only: worklet → soft clipper → gain → destination
+      window.alloWorkletNode.connect(window.alloSoftClipper)
+      window.alloSoftClipper.connect(window.alloLimiterGain)
+      window.alloLimiterGain.connect(ctx.destination)
+      this.onPrint('[INFO] Soft clipper enabled')
+    } else {
+      // Bypass: worklet → destination
+      window.alloWorkletNode.connect(ctx.destination)
+      this.onPrint('[INFO] Safety limiter bypassed')
+    }
+  }
+
+  // Configure limiter settings (can be called to update settings at runtime)
+  configureLimiter(settings: {
+    enabled?: boolean
+    threshold?: number
+    softClipEnabled?: boolean
+    softClipDrive?: number
+  }): void {
+    if (settings.enabled !== undefined) this.limiterSettings.enabled = settings.enabled
+    if (settings.threshold !== undefined) this.limiterSettings.threshold = settings.threshold
+    if (settings.softClipEnabled !== undefined) this.limiterSettings.softClipEnabled = settings.softClipEnabled
+    if (settings.softClipDrive !== undefined) this.limiterSettings.softClipDrive = settings.softClipDrive
+
+    // Update nodes if they exist
+    if (window.alloLimiter && settings.threshold !== undefined) {
+      window.alloLimiter.threshold.setValueAtTime(settings.threshold, window.alloAudioContext?.currentTime || 0)
+    }
+
+    if (window.alloSoftClipper && settings.softClipDrive !== undefined) {
+      window.alloSoftClipper.curve = createSoftClipCurve(settings.softClipDrive)
     }
   }
 
@@ -332,7 +434,22 @@ export class AllolibRuntime {
       window.alloAudioContext.suspend()
     }
 
-    // Disconnect audio worklet
+    // Disconnect audio chain (in reverse order)
+    if (window.alloLimiterGain) {
+      window.alloLimiterGain.disconnect()
+      window.alloLimiterGain = null
+    }
+
+    if (window.alloLimiter) {
+      window.alloLimiter.disconnect()
+      window.alloLimiter = null
+    }
+
+    if (window.alloSoftClipper) {
+      window.alloSoftClipper.disconnect()
+      window.alloSoftClipper = null
+    }
+
     if (window.alloWorkletNode) {
       window.alloWorkletNode.disconnect()
       window.alloWorkletNode = null

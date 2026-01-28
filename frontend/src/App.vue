@@ -21,7 +21,15 @@ const consoleHeightStyle = computed(() => ({
 
 const handleRun = async () => {
   const code = editorRef.value?.getCode() || ''
+  // Clear previous errors before compiling
+  editorRef.value?.clearDiagnostics()
   await appStore.compile(code)
+
+  // If there are diagnostics (errors/warnings), show them in the editor
+  if (appStore.diagnostics.length > 0) {
+    editorRef.value?.setDiagnostics(appStore.diagnostics)
+    editorRef.value?.jumpToFirstError(appStore.diagnostics)
+  }
 }
 
 const handleStop = () => {

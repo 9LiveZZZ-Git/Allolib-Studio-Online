@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import MonacoEditor from './MonacoEditor.vue'
 import { defaultCode } from '@/utils/monaco-config'
+import type { CompilerDiagnostic } from '@/utils/error-parser'
 
 const code = ref(defaultCode)
 const editorRef = ref<InstanceType<typeof MonacoEditor>>()
@@ -52,6 +53,10 @@ defineExpose({
   find: handleFind,
   replace: handleReplace,
   goToLine: handleGoToLine,
+  // Diagnostics (error highlighting)
+  setDiagnostics: (diagnostics: CompilerDiagnostic[]) => editorRef.value?.setDiagnostics(diagnostics),
+  clearDiagnostics: () => editorRef.value?.clearDiagnostics(),
+  jumpToFirstError: (diagnostics: CompilerDiagnostic[]) => editorRef.value?.jumpToFirstError(diagnostics),
 })
 </script>
 

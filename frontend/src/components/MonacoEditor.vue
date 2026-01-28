@@ -3,6 +3,12 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import { configureMonaco, defaultCode } from '@/utils/monaco-config'
 import { useSettingsStore } from '@/stores/settings'
+import {
+  type CompilerDiagnostic,
+  setEditorDiagnostics,
+  clearEditorDiagnostics,
+  jumpToFirstError,
+} from '@/utils/error-parser'
 
 // Import Monaco workers using Vite's ?worker syntax
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -129,6 +135,11 @@ defineExpose({
   openReplace: () => editor?.getAction('editor.action.startFindReplaceAction')?.run(),
   openGoToLine: () => editor?.getAction('editor.action.gotoLine')?.run(),
   openCommandPalette: () => editor?.getAction('editor.action.quickCommand')?.run(),
+  // Diagnostics (error highlighting)
+  setDiagnostics: (diagnostics: CompilerDiagnostic[]) => setEditorDiagnostics(editor, diagnostics),
+  clearDiagnostics: () => clearEditorDiagnostics(editor),
+  jumpToFirstError: (diagnostics: CompilerDiagnostic[]) => jumpToFirstError(editor, diagnostics),
+  getEditor: () => editor,
 })
 </script>
 

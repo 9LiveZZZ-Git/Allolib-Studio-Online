@@ -14,6 +14,10 @@ export interface AudioSettings {
   sampleRate: 44100 | 48000 | 96000
   bufferSize: 128 | 256 | 512 | 1024 | 2048
   channels: 1 | 2
+  limiterEnabled: boolean
+  limiterThreshold: number // dB, typically -6 to 0
+  softClipEnabled: boolean
+  softClipDrive: number // 1.0 = no drive, higher = more saturation
 }
 
 export interface CompilerSettings {
@@ -44,6 +48,10 @@ export const useSettingsStore = defineStore('settings', () => {
     sampleRate: 44100,
     bufferSize: 128,
     channels: 2,
+    limiterEnabled: true,
+    limiterThreshold: -1, // dB - brick wall at -1dB
+    softClipEnabled: true,
+    softClipDrive: 1.5, // Gentle saturation
   })
 
   // Compiler settings
@@ -108,6 +116,10 @@ export const useSettingsStore = defineStore('settings', () => {
       sampleRate: 44100,
       bufferSize: 128,
       channels: 2,
+      limiterEnabled: true,
+      limiterThreshold: -1,
+      softClipEnabled: true,
+      softClipDrive: 1.5,
     }
     saveSettings()
   }

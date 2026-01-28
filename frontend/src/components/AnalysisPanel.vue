@@ -86,6 +86,10 @@ let peakHoldTimeL = 0
 let peakHoldTimeR = 0
 const peakHoldDuration = 1500
 
+// Limiter state
+const gainReduction = ref(0) // in dB (negative value when limiting)
+const isLimiting = ref(false)
+
 // Video stats
 const fps = ref(0)
 const frameTime = ref(0)
@@ -212,6 +216,12 @@ function animate() {
     analyserNodeR.getByteTimeDomainData(timeDataArrayR)
     analyserNodeL.getByteFrequencyData(freqDataArrayL)
     updateLevels()
+  }
+
+  // Get limiter gain reduction
+  if (window.alloLimiter) {
+    gainReduction.value = window.alloLimiter.reduction
+    isLimiting.value = gainReduction.value < -0.5 // Active if reducing by more than 0.5dB
   }
 
   // Draw based on active tab
@@ -612,6 +622,8 @@ watch(() => props.isRunning, (running) => {
     levelR.value = 0
     peakL.value = 0
     peakR.value = 0
+    gainReduction.value = 0
+    isLimiting.value = false
     fps.value = 0
     frameTime.value = 0
     gpuInfo.value = ''
@@ -734,9 +746,15 @@ onBeforeUnmount(() => {
 
     <!-- Audio Content -->
     <div v-show="activeTab === 'audio'" class="flex-1 flex flex-col overflow-hidden">
-      <!-- Stereo Meter -->
-      <div class="px-2 py-1 shrink-0">
-        <canvas ref="stereoMeterRef" class="w-full h-8 rounded" />
+      <!-- Stereo Meter with Limiter Indicator -->
+      <div class="px-2 py-1 shrink-0 flex items-center gap-2">
+        <canvas ref="stereoMeterRef" class="flex-1 h-8 rounded" />
+        <!-- Limiter Indicator -->
+        <div class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs"
+             :class="isLimiting ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400'">
+          <span class="font-bold text-[10px]">LIM</span>
+          <span class="text-[9px]">{{ gainReduction.toFixed(1) }}dB</span>
+        </div>
       </div>
 
       <!-- Audio Visualizer -->

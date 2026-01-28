@@ -1,4 +1,11 @@
 import * as monaco from 'monaco-editor'
+import {
+  allolibClasses,
+  getClassMemberCompletions,
+  getFunctionCompletions,
+  getClassCompletions,
+  getSignatureHelp,
+} from './allolib-types'
 
 // AlloLib-specific C++ snippets
 export const allolibSnippets: monaco.languages.CompletionItem[] = [
@@ -207,24 +214,122 @@ export function configureMonaco() {
   // Register AlloLib theme
   monaco.editor.defineTheme('allolib-dark', allolibTheme)
 
-  // Register completion provider for C++
+  // Track variable types for smart completion
+  const variableTypes: Map<string, string> = new Map()
+
+  // Register enhanced completion provider for C++
   monaco.languages.registerCompletionItemProvider('cpp', {
+    triggerCharacters: ['.', ':', '>', '('],
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position)
-      const range = {
+      const range: monaco.IRange = {
         startLineNumber: position.lineNumber,
         endLineNumber: position.lineNumber,
         startColumn: word.startColumn,
         endColumn: word.endColumn,
       }
 
-      // Add range to snippets
-      const suggestions = allolibSnippets.map((snippet) => ({
-        ...snippet,
-        range,
-      }))
+      // Get the text before cursor on this line
+      const lineContent = model.getLineContent(position.lineNumber)
+      const textBeforeCursor = lineContent.substring(0, position.column - 1)
+
+      // Check if we're completing after a dot (member access)
+      const memberAccessMatch = textBeforeCursor.match(/(\w+)\.\s*(\w*)$/)
+      if (memberAccessMatch) {
+        const varName = memberAccessMatch[1]
+        // Try to find the type of this variable
+        const varType = findVariableType(model, varName, position.lineNumber)
+        if (varType) {
+          const memberCompletions = getClassMemberCompletions(varType, range)
+          if (memberCompletions.length > 0) {
+            return { suggestions: memberCompletions }
+          }
+        }
+      }
+
+      // Check if we're completing after -> (pointer member access)
+      const pointerAccessMatch = textBeforeCursor.match(/(\w+)->\s*(\w*)$/)
+      if (pointerAccessMatch) {
+        const varName = pointerAccessMatch[1]
+        const varType = findVariableType(model, varName, position.lineNumber)
+        if (varType) {
+          // Remove pointer notation if present
+          const baseType = varType.replace(/\*$/, '').trim()
+          const memberCompletions = getClassMemberCompletions(baseType, range)
+          if (memberCompletions.length > 0) {
+            return { suggestions: memberCompletions }
+          }
+        }
+      }
+
+      // Check if completing after al:: namespace
+      if (textBeforeCursor.match(/al::\s*\w*$/)) {
+        return { suggestions: getFunctionCompletions(range) }
+      }
+
+      // Check if completing after gam:: namespace
+      if (textBeforeCursor.match(/gam::\s*\w*$/)) {
+        const gammaCompletions: monaco.languages.CompletionItem[] = [
+          { label: 'Sine', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Sine<>', detail: 'Sine wave oscillator', range },
+          { label: 'Saw', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Saw<>', detail: 'Sawtooth oscillator', range },
+          { label: 'Square', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Square<>', detail: 'Square wave oscillator', range },
+          { label: 'Tri', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Tri<>', detail: 'Triangle wave oscillator', range },
+          { label: 'ADSR', kind: monaco.languages.CompletionItemKind.Class, insertText: 'ADSR<>', detail: 'ADSR envelope', range },
+          { label: 'AD', kind: monaco.languages.CompletionItemKind.Class, insertText: 'AD<>', detail: 'AD envelope', range },
+          { label: 'Decay', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Decay<>', detail: 'Decay envelope', range },
+          { label: 'Biquad', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Biquad<>', detail: 'Biquad filter', range },
+          { label: 'OnePole', kind: monaco.languages.CompletionItemKind.Class, insertText: 'OnePole<>', detail: 'One-pole filter', range },
+          { label: 'Delay', kind: monaco.languages.CompletionItemKind.Class, insertText: 'Delay<>', detail: 'Delay line', range },
+          { label: 'NoiseWhite', kind: monaco.languages.CompletionItemKind.Class, insertText: 'NoiseWhite<>', detail: 'White noise', range },
+          { label: 'NoisePink', kind: monaco.languages.CompletionItemKind.Class, insertText: 'NoisePink<>', detail: 'Pink noise', range },
+        ]
+        return { suggestions: gammaCompletions }
+      }
+
+      // Default: provide snippets, class names, and function completions
+      const suggestions: monaco.languages.CompletionItem[] = [
+        ...allolibSnippets.map((snippet) => ({ ...snippet, range })),
+        ...getClassCompletions(range),
+        ...getFunctionCompletions(range),
+      ]
 
       return { suggestions }
+    },
+  })
+
+  // Register signature help provider (parameter hints)
+  monaco.languages.registerSignatureHelpProvider('cpp', {
+    signatureHelpTriggerCharacters: ['(', ','],
+    provideSignatureHelp: (model, position) => {
+      const lineContent = model.getLineContent(position.lineNumber)
+      const textBeforeCursor = lineContent.substring(0, position.column - 1)
+
+      // Find function call pattern: functionName( or object.methodName(
+      const funcCallMatch = textBeforeCursor.match(/(?:(\w+)\.)?(\w+)\s*\([^)]*$/)
+      if (funcCallMatch) {
+        const objectName = funcCallMatch[1]
+        const functionName = funcCallMatch[2]
+
+        let className: string | undefined
+        if (objectName) {
+          className = findVariableType(model, objectName, position.lineNumber)
+        }
+
+        const help = getSignatureHelp(functionName, className)
+        if (help) {
+          // Count commas to determine active parameter
+          const afterParen = textBeforeCursor.substring(textBeforeCursor.lastIndexOf('(') + 1)
+          const commaCount = (afterParen.match(/,/g) || []).length
+          help.activeParameter = commaCount
+
+          return {
+            value: help,
+            dispose: () => {},
+          }
+        }
+      }
+
+      return null
     },
   })
 
@@ -234,37 +339,34 @@ export function configureMonaco() {
       const word = model.getWordAtPosition(position)
       if (!word) return null
 
-      const docs: Record<string, string> = {
-        WebApp: 'Web application class for AlloLib. Inherit from this and override onCreate(), onAnimate(), onDraw(), onSound().',
-        App: 'Desktop AlloLib application (use WebApp for web builds).',
-        Mesh: 'Container for vertex data including positions, colors, normals, and texture coordinates.',
-        Graphics: 'Graphics context for rendering. Provides drawing methods and state management.',
-        Vec3f: '3D vector with float components (x, y, z).',
-        Vec3d: '3D vector with double components (x, y, z).',
-        Color: 'RGBA color value.',
-        HSV: 'Create a color from Hue, Saturation, and Value.',
-        Nav: '3D navigation/camera controller.',
-        Pose: '3D position and orientation.',
-        ShaderProgram: 'OpenGL shader program for custom rendering.',
-        Sine: 'Gamma sine wave oscillator.',
-        ADSR: 'Gamma ADSR envelope generator.',
-        AudioIOData: 'Audio buffer data passed to onSound(). Use io.out(channel) to write samples.',
-        addSphere: 'Add sphere geometry to a mesh. al::addSphere(mesh, radius, slices, stacks)',
-        addCube: 'Add cube geometry to a mesh. al::addCube(mesh, size)',
-        addCone: 'Add cone geometry to a mesh. al::addCone(mesh, radius, height)',
-        addCylinder: 'Add cylinder geometry to a mesh. al::addCylinder(mesh, radius, height)',
-        addTorus: 'Add torus geometry to a mesh. al::addTorus(mesh, minorRadius, majorRadius)',
+      // Check if it's an AlloLib class
+      const classInfo = allolibClasses[word.word]
+      if (classInfo) {
+        const methodList = classInfo.methods.slice(0, 5).map(m => `- \`${m.signature}\``).join('\n')
+        return {
+          range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
+          contents: [
+            { value: `**${classInfo.name}** (AlloLib)` },
+            { value: classInfo.description },
+            { value: `**Methods:**\n${methodList}${classInfo.methods.length > 5 ? '\n- ...' : ''}` },
+          ],
+        }
       }
 
-      const doc = docs[word.word]
+      // Basic docs for non-class types
+      const basicDocs: Record<string, string> = {
+        App: 'Desktop AlloLib application (use WebApp for web builds).',
+        Vec3d: '3D vector with double components (x, y, z).',
+        HSV: 'Create a color from Hue (0-1), Saturation (0-1), and Value (0-1).',
+        Pose: '3D position and orientation.',
+        Quatd: 'Quaternion with double components for 3D rotations.',
+        ShaderProgram: 'OpenGL shader program for custom rendering.',
+      }
+
+      const doc = basicDocs[word.word]
       if (doc) {
         return {
-          range: new monaco.Range(
-            position.lineNumber,
-            word.startColumn,
-            position.lineNumber,
-            word.endColumn
-          ),
+          range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
           contents: [
             { value: `**${word.word}**` },
             { value: doc },
@@ -275,6 +377,55 @@ export function configureMonaco() {
       return null
     },
   })
+}
+
+/**
+ * Find the type of a variable by searching declarations above the current line
+ */
+function findVariableType(
+  model: monaco.editor.ITextModel,
+  varName: string,
+  currentLine: number
+): string | undefined {
+  // Search backwards from current line to find variable declaration
+  for (let line = currentLine; line >= 1; line--) {
+    const lineContent = model.getLineContent(line)
+
+    // Match patterns like: Type varName; or Type varName = ...;
+    // Also handles templates like: gam::Sine<> varName;
+    const declPattern = new RegExp(
+      `(?:^|\\s)(\\w+(?:<[^>]*>)?(?:\\s*\\*)?|gam::\\w+<[^>]*>)\\s+${varName}\\s*[=;(]`
+    )
+    const match = lineContent.match(declPattern)
+    if (match) {
+      let typeName = match[1].trim()
+      // Normalize gam:: types to base name
+      if (typeName.startsWith('gam::')) {
+        typeName = typeName.replace(/^gam::/, '').replace(/<.*>/, '')
+      }
+      return typeName
+    }
+
+    // Match class member declarations like: Mesh mesh;
+    const memberPattern = new RegExp(`^\\s*(\\w+)\\s+${varName}\\s*;`)
+    const memberMatch = lineContent.match(memberPattern)
+    if (memberMatch) {
+      return memberMatch[1]
+    }
+  }
+
+  // Check for common parameter names
+  const paramTypes: Record<string, string> = {
+    g: 'Graphics',
+    io: 'AudioIOData',
+    k: 'Keyboard',
+    m: 'Mouse',
+  }
+  if (paramTypes[varName]) {
+    return paramTypes[varName]
+  }
+
+  return undefined
 }
 
 // Default code template for AlloLib Web (with audio)

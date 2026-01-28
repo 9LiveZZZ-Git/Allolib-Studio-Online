@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { submitCompilation, pollJobCompletion, cleanupJob } from '@/services/compiler'
+import { parseCompilerOutput, type CompilerDiagnostic } from '@/utils/error-parser'
 
 export type AppStatus = 'idle' | 'compiling' | 'loading' | 'running' | 'error'
 
@@ -12,6 +13,7 @@ export const useAppStore = defineStore('app', () => {
   const wasmUrl = ref<string | null>(null)
   const jsUrl = ref<string | null>(null)
   const errorMessage = ref<string | null>(null)
+  const diagnostics = ref<CompilerDiagnostic[]>([])
 
   // Getters
   const isCompiling = computed(() => status.value === 'compiling')
@@ -36,6 +38,7 @@ export const useAppStore = defineStore('app', () => {
 
     status.value = 'compiling'
     errorMessage.value = null
+    diagnostics.value = [] // Clear previous diagnostics
     log('[INFO] Starting compilation...')
 
     try {
@@ -58,8 +61,10 @@ export const useAppStore = defineStore('app', () => {
       )
 
       if (result.status === 'failed') {
-        const errors = result.result?.errors?.join('\n') || 'Unknown error'
-        throw new Error(errors)
+        const errors = result.result?.errors || ['Unknown error']
+        // Parse errors into diagnostics for editor highlighting
+        diagnostics.value = parseCompilerOutput(errors)
+        throw new Error(errors.join('\n'))
       }
 
       if (result.result?.wasmUrl && result.result?.jsUrl) {
@@ -114,6 +119,7 @@ export const useAppStore = defineStore('app', () => {
     wasmUrl,
     jsUrl,
     errorMessage,
+    diagnostics,
 
     // Getters
     isCompiling,
