@@ -428,11 +428,13 @@ function findVariableType(
   return undefined
 }
 
-// Default code template for AlloLib Web - Sine Envelope Synth
+// Default code template for AlloLib Web - AudioVisual Spheres
 export const defaultCode = `/**
- * AlloLib Studio Online - Sine Envelope Synth
+ * AlloLib Studio Online - AudioVisual Spheres
  *
- * A polyphonic sine synthesizer with envelope control.
+ * Each note creates a sphere that moves through 3D space.
+ * The sphere's size and color react to the audio envelope.
+ *
  * Play notes using your keyboard like a piano:
  *   - Bottom row (ZXCVBNM) = C3-B3
  *   - Middle row (ASDFGHJ) = C4-B4 (middle C)
@@ -444,6 +446,7 @@ export const defaultCode = `/**
 
 #include "al_playground_compat.hpp"
 #include "al/graphics/al_Shapes.hpp"
+#include "al/math/al_Random.hpp"
 
 #include "Gamma/Analysis.h"
 #include "Gamma/Effects.h"
@@ -460,17 +463,27 @@ public:
     gam::EnvFollow<> mEnvFollow;
     Mesh mMesh;
 
+    double rotation = 0;
+    double rotSpeed;
+    float timepose = 0;
+    Vec3f note_position;
+    Vec3f note_direction;
+
     void init() override {
         mAmpEnv.curve(0);
         mAmpEnv.levels(0, 1, 1, 0);
         mAmpEnv.sustainPoint(2);
 
-        addDisc(mMesh, 1.0, 30);
+        addSphere(mMesh, 0.3, 30, 30);
+        mMesh.decompress();
+        mMesh.generateNormals();
+
+        rotSpeed = al::rnd::uniformS() * 2;
 
         createInternalTriggerParameter("amplitude", 0.3, 0.0, 1.0);
         createInternalTriggerParameter("frequency", 60, 20, 5000);
         createInternalTriggerParameter("attackTime", 0.1, 0.01, 3.0);
-        createInternalTriggerParameter("releaseTime", 1.0, 0.1, 10.0);
+        createInternalTriggerParameter("releaseTime", 2.0, 0.1, 10.0);
         createInternalTriggerParameter("pan", 0.0, -1.0, 1.0);
     }
 
@@ -494,15 +507,30 @@ public:
     void onProcess(Graphics& g) override {
         float frequency = getInternalParameterValue("frequency");
         float amplitude = getInternalParameterValue("amplitude");
+        rotation += rotSpeed;
+        timepose += 0.02;
+
         g.pushMatrix();
-        g.translate(frequency / 200 - 3, amplitude, -8);
-        g.scale(1 - amplitude, amplitude, 1);
-        g.color(mEnvFollow.value(), frequency / 1000, mEnvFollow.value() * 10, 0.4);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.translate(note_position + note_direction * timepose);
+        g.rotate(rotation, Vec3f(0, 1, 0));
+        g.rotate(rotation * 0.7, Vec3f(1, 0, 0));
+        g.scale(0.3 + mAmpEnv() * 0.3, 0.3 + mAmpEnv() * 0.5, amplitude);
+        g.color(HSV(frequency / 1000, 0.5 + mAmpEnv() * 0.3, 0.3 + 0.6 * mAmpEnv()));
         g.draw(mMesh);
         g.popMatrix();
     }
 
-    void onTriggerOn() override { mAmpEnv.reset(); }
+    void onTriggerOn() override {
+        float angle = getInternalParameterValue("frequency") / 200;
+        mAmpEnv.reset();
+        rotation = al::rnd::uniform() * 360;
+        timepose = 0;
+        note_position = Vec3f(0, 0, -8);
+        note_direction = Vec3f(sin(angle), cos(angle) * 0.3, 0.1);
+    }
+
     void onTriggerOff() override { mAmpEnv.release(); }
 };
 
@@ -513,18 +541,19 @@ public:
     // GUI Parameters
     Parameter amplitude{"Amplitude", "", 0.3f, 0.0f, 1.0f};
     Parameter attackTime{"Attack", "", 0.1f, 0.01f, 3.0f};
-    Parameter releaseTime{"Release", "", 1.0f, 0.1f, 10.0f};
+    Parameter releaseTime{"Release", "", 2.0f, 0.1f, 10.0f};
     ControlGUI gui;
 
     void onCreate() override {
         gam::sampleRate(44100);
-        nav().pos(0, 0, 10);
+        nav().pos(0, 0, 0);
 
         // Register parameters with GUI
         gui << amplitude << attackTime << releaseTime;
         gui.init();
 
-        std::cout << "[Sine Envelope Synth]" << std::endl;
+        std::cout << "[AudioVisual Spheres]" << std::endl;
+        std::cout << "Spheres fly outward based on pitch!" << std::endl;
         std::cout << "Play with keyboard: ZXCVBNM (C3-B3), ASDFGHJ (C4-B4)" << std::endl;
     }
 
@@ -537,9 +566,7 @@ public:
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.1);
-        g.lighting(true);
-        g.depthTesting(true);
+        g.clear(0.05, 0.05, 0.1);
         synthManager.render(g);
     }
 
