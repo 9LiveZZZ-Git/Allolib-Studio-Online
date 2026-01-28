@@ -350,6 +350,13 @@ Ensure Web Audio implementation supports all AlloLib audio features:
   - [x] Brick-wall limiter (DynamicsCompressorNode)
   - [x] Configurable threshold and drive
   - [x] Limiter activity indicator in Analysis panel
+- [x] **Audio Buffer Fix** - Eliminated distortion from buffer underruns
+  - [x] Increased initial buffer count (2 → 8) for queue buildup
+  - [x] Increased minimum queue size (2 → 6) to prevent starvation
+  - [x] Aggressive buffer requests (2 at a time when queue low)
+  - [x] Reduced console logging overhead in audio processing path
+  - [x] Connected settings store to runtime for real-time limiter control
+  - [x] Disabled soft clipper by default for clean audio output
 
 ### 📋 Phase 7: Production - PENDING
 - [ ] **Production Docker Compose** - Optimized multi-stage builds
