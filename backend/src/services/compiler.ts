@@ -14,9 +14,15 @@ export interface CompilationResult {
   duration?: number
 }
 
+export interface ProjectFile {
+  name: string
+  content: string
+}
+
 export interface CompilationJob {
   id: string
-  source: string
+  files: ProjectFile[]
+  mainFile: string
   status: 'pending' | 'compiling' | 'completed' | 'failed'
   createdAt: Date
   completedAt?: Date
@@ -29,10 +35,14 @@ const SOURCE_DIR = process.env.SOURCE_DIR || './source'
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
 const COMPILER_CONTAINER = process.env.COMPILER_CONTAINER || 'allolib-compiler'
 
-export async function createCompilationJob(source: string): Promise<CompilationJob> {
+export async function createCompilationJob(
+  files: ProjectFile[],
+  mainFile: string = 'main.cpp'
+): Promise<CompilationJob> {
   const job: CompilationJob = {
     id: randomUUID(),
-    source,
+    files,
+    mainFile,
     status: 'pending',
     createdAt: new Date(),
   }
@@ -63,7 +73,6 @@ async function compileAsync(job: CompilationJob): Promise<void> {
 
   // Source files go to shared source volume, output to compiled volume
   const sourceJobDir = join(SOURCE_DIR, job.id)
-  const sourceFile = join(sourceJobDir, 'main.cpp')
   const outputDir = join(COMPILE_DIR, job.id)
 
   try {
@@ -71,13 +80,24 @@ async function compileAsync(job: CompilationJob): Promise<void> {
     await mkdir(sourceJobDir, { recursive: true })
     await mkdir(outputDir, { recursive: true })
 
-    // Write source file to shared volume
-    await writeFile(sourceFile, job.source)
+    // Write all source files to shared volume
+    for (const file of job.files) {
+      const filePath = join(sourceJobDir, file.name)
+      // Create subdirectories if file is in a folder (e.g., "src/synth.hpp")
+      if (file.name.includes('/')) {
+        const fileDir = filePath.substring(0, filePath.lastIndexOf('/'))
+        await mkdir(fileDir, { recursive: true })
+      }
+      await writeFile(filePath, file.content)
+      logger.info(`[${job.id}] Wrote file: ${file.name}`)
+    }
+
+    const mainSourceFile = join(sourceJobDir, job.mainFile)
 
     if (USE_DOCKER) {
-      await compileWithDocker(job, sourceFile, outputDir)
+      await compileWithDocker(job, mainSourceFile, outputDir)
     } else {
-      await compileLocal(job, sourceFile, outputDir)
+      await compileLocal(job, mainSourceFile, outputDir)
     }
 
     const duration = Date.now() - startTime
@@ -108,12 +128,12 @@ async function compileAsync(job: CompilationJob): Promise<void> {
 
 async function compileWithDocker(
   job: CompilationJob,
-  sourceFile: string,
-  outputDir: string
+  _sourceFile: string,
+  _outputDir: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Paths inside the compiler container
-    const containerSourceFile = `/app/source/${job.id}/main.cpp`
+    // Paths inside the compiler container (mounted volumes)
+    const containerSourceFile = `/app/source/${job.id}/${job.mainFile}`
     const containerOutputDir = `/app/output/${job.id}`
 
     logger.info(`[${job.id}] Starting Docker compilation...`)
@@ -162,11 +182,11 @@ async function compileWithDocker(
 
 async function compileLocal(
   job: CompilationJob,
-  sourceFile: string,
+  _sourceFile: string,
   outputDir: string
 ): Promise<void> {
   // For local development without Docker, create mock output
-  logger.info(`[${job.id}] Local compilation mode (mock)`)
+  logger.info(`[${job.id}] Local compilation mode (mock) - ${job.files.length} file(s)`)
 
   // Create a simple mock WASM module for testing
   const mockJs = `
@@ -196,9 +216,11 @@ export async function getCompiledFile(jobId: string, filename: string): Promise<
 }
 
 export async function cleanupJob(jobId: string): Promise<void> {
-  const jobDir = join(COMPILE_DIR, jobId)
+  const compileJobDir = join(COMPILE_DIR, jobId)
+  const sourceJobDir = join(SOURCE_DIR, jobId)
   try {
-    await rm(jobDir, { recursive: true, force: true })
+    await rm(compileJobDir, { recursive: true, force: true })
+    await rm(sourceJobDir, { recursive: true, force: true })
     jobs.delete(jobId)
   } catch (error) {
     logger.warn(`Failed to cleanup job ${jobId}:`, error)

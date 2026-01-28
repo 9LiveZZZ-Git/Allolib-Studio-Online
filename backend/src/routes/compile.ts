@@ -10,7 +10,24 @@ import {
 
 export const compileRouter = Router()
 
-const CompileRequestSchema = z.object({
+// File schema for multi-file projects
+// Allows paths with folders like "src/synth.hpp"
+// Security: prevents path traversal by requiring paths start with word char, no ".."
+const FileSchema = z.object({
+  name: z.string()
+    .regex(/^[a-zA-Z][\w./-]*\.(cpp|hpp|h)$/, 'Invalid filename or path')
+    .refine((val) => !val.includes('..'), 'Path traversal not allowed'),
+  content: z.string().max(100000),
+})
+
+// New multi-file request schema
+const MultiFileRequestSchema = z.object({
+  files: z.array(FileSchema).min(1).max(20),
+  mainFile: z.string().default('main.cpp'),
+})
+
+// Legacy single-file request schema (for backward compatibility)
+const LegacyRequestSchema = z.object({
   source: z.string().min(1).max(100000),
   filename: z.string().default('main.cpp'),
 })
@@ -18,11 +35,25 @@ const CompileRequestSchema = z.object({
 // Submit compilation request
 compileRouter.post('/', async (req: Request, res: Response) => {
   try {
-    const { source, filename } = CompileRequestSchema.parse(req.body)
+    let files: Array<{ name: string; content: string }>
+    let mainFile: string
 
-    logger.info(`Compilation requested for ${filename}`)
+    // Check if this is a multi-file or legacy request
+    if (req.body.files) {
+      // Multi-file request
+      const parsed = MultiFileRequestSchema.parse(req.body)
+      files = parsed.files
+      mainFile = parsed.mainFile
+      logger.info(`Multi-file compilation requested: ${files.length} files, main: ${mainFile}`)
+    } else {
+      // Legacy single-file request
+      const parsed = LegacyRequestSchema.parse(req.body)
+      files = [{ name: parsed.filename, content: parsed.source }]
+      mainFile = parsed.filename
+      logger.info(`Single-file compilation requested: ${mainFile}`)
+    }
 
-    const job = await createCompilationJob(source)
+    const job = await createCompilationJob(files, mainFile)
 
     res.json({
       success: true,
