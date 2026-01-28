@@ -119,8 +119,32 @@ let analyserNodeL: AnalyserNode | null = null
 let analyserNodeR: AnalyserNode | null = null
 let splitterNode: ChannelSplitterNode | null = null
 let animationId: number | null = null
-const fftSize = 2048
-const smoothingTimeConstant = 0.8
+
+// Spectrum analyzer settings - professional grade
+const spectrumSettings = ref({
+  fftSize: 8192,           // 4096 bins - good balance of resolution and performance
+  smoothing: 0.8,          // Temporal smoothing
+  minDb: -90,              // Minimum dB display
+  maxDb: -10,               // Maximum dB display
+  showPeaks: true,         // Show peak hold
+  logScale: true,          // Logarithmic frequency scale
+  fillSpectrum: true,      // Fill under the curve
+})
+
+// Available FFT sizes (must be power of 2, 32-32768)
+const fftSizeOptions = [
+  { label: '1K bins (2048)', value: 2048 },
+  { label: '2K bins (4096)', value: 4096 },
+  { label: '4K bins (8192)', value: 8192 },
+  { label: '8K bins (16384)', value: 16384 },
+  { label: '16K bins (32768)', value: 32768 },
+]
+
+// Spectrum state
+let peakData: Float32Array | null = null
+const peakDecayRate = 0.002  // dB per frame
+let spectrumHoverInfo = ref<{ freq: number; db: number; x: number; y: number } | null>(null)
+const showSpectrumSettings = ref(false)
 
 // Level meter state
 const levelL = ref(0)
@@ -152,7 +176,8 @@ const historyLength = 60
 // Data arrays
 let timeDataArrayL: Uint8Array
 let timeDataArrayR: Uint8Array
-let freqDataArrayL: Uint8Array
+let freqDataArrayL: Float32Array  // Use Float32 for dB precision
+let sampleRate = 44100  // Will be updated from AudioContext
 
 function setupAnalyser() {
   const audioContext = window.alloAudioContext
@@ -163,27 +188,34 @@ function setupAnalyser() {
     return
   }
 
+  // Get actual sample rate
+  sampleRate = audioContext.sampleRate
+
   // Create channel splitter for true stereo analysis
   splitterNode = audioContext.createChannelSplitter(2)
 
-  // Create separate analysers for L and R
+  // Create separate analysers for L and R with high-resolution FFT
   analyserNodeL = audioContext.createAnalyser()
-  analyserNodeL.fftSize = fftSize
-  analyserNodeL.smoothingTimeConstant = smoothingTimeConstant
+  analyserNodeL.fftSize = spectrumSettings.value.fftSize
+  analyserNodeL.smoothingTimeConstant = spectrumSettings.value.smoothing
 
   analyserNodeR = audioContext.createAnalyser()
-  analyserNodeR.fftSize = fftSize
-  analyserNodeR.smoothingTimeConstant = smoothingTimeConstant
+  analyserNodeR.fftSize = spectrumSettings.value.fftSize
+  analyserNodeR.smoothingTimeConstant = spectrumSettings.value.smoothing
 
   // Connect: worklet -> splitter -> analysers
   workletNode.connect(splitterNode)
   splitterNode.connect(analyserNodeL, 0)
   splitterNode.connect(analyserNodeR, 1)
 
-  // Initialize data arrays
+  // Initialize data arrays - use Float32 for frequency data (dB precision)
   timeDataArrayL = new Uint8Array(analyserNodeL.frequencyBinCount)
   timeDataArrayR = new Uint8Array(analyserNodeR.frequencyBinCount)
-  freqDataArrayL = new Uint8Array(analyserNodeL.frequencyBinCount)
+  freqDataArrayL = new Float32Array(analyserNodeL.frequencyBinCount)
+
+  // Initialize peak hold array
+  peakData = new Float32Array(analyserNodeL.frequencyBinCount)
+  peakData.fill(spectrumSettings.value.minDb)
 
   // Initialize video stats
   fpsHistory = new Array(historyLength).fill(0)
@@ -192,6 +224,23 @@ function setupAnalyser() {
   // Start animation loop
   lastFrameTime = performance.now()
   animate()
+}
+
+// Update analyser FFT size when settings change
+function updateAnalyserSettings() {
+  if (analyserNodeL && analyserNodeR) {
+    analyserNodeL.fftSize = spectrumSettings.value.fftSize
+    analyserNodeL.smoothingTimeConstant = spectrumSettings.value.smoothing
+    analyserNodeR.fftSize = spectrumSettings.value.fftSize
+    analyserNodeR.smoothingTimeConstant = spectrumSettings.value.smoothing
+
+    // Reinitialize arrays for new size
+    timeDataArrayL = new Uint8Array(analyserNodeL.frequencyBinCount)
+    timeDataArrayR = new Uint8Array(analyserNodeR.frequencyBinCount)
+    freqDataArrayL = new Float32Array(analyserNodeL.frequencyBinCount)
+    peakData = new Float32Array(analyserNodeL.frequencyBinCount)
+    peakData.fill(spectrumSettings.value.minDb)
+  }
 }
 
 function teardownAnalyser() {
@@ -259,8 +308,10 @@ function animate() {
   if (analyserNodeL && analyserNodeR) {
     analyserNodeL.getByteTimeDomainData(timeDataArrayL)
     analyserNodeR.getByteTimeDomainData(timeDataArrayR)
-    analyserNodeL.getByteFrequencyData(freqDataArrayL)
+    // Use Float for frequency data - returns dB values directly
+    analyserNodeL.getFloatFrequencyData(freqDataArrayL)
     updateLevels()
+    updatePeakHold()
   }
 
   // Get limiter gain reduction
@@ -320,6 +371,24 @@ function updateLevels() {
     peakHoldTimeR = now
   } else if (now - peakHoldTimeR > peakHoldDuration) {
     peakR.value = Math.max(levelR.value, peakR.value * 0.95)
+  }
+}
+
+// Update peak hold data for spectrum analyzer
+function updatePeakHold() {
+  if (!freqDataArrayL || !peakData || !spectrumSettings.value.showPeaks) return
+
+  for (let i = 0; i < freqDataArrayL.length; i++) {
+    const currentDb = freqDataArrayL[i]
+    if (currentDb > peakData[i]) {
+      peakData[i] = currentDb
+    } else {
+      // Decay peaks
+      peakData[i] -= peakDecayRate * 60  // Decay per frame (~60fps)
+      if (peakData[i] < spectrumSettings.value.minDb) {
+        peakData[i] = spectrumSettings.value.minDb
+      }
+    }
   }
 }
 
@@ -500,48 +569,297 @@ function drawSpectrum() {
 
   const width = canvas.width
   const height = canvas.height
+  const settings = spectrumSettings.value
 
+  // Margins for labels
+  const marginLeft = 35
+  const marginBottom = 20
+  const marginTop = 5
+  const marginRight = 10
+  const graphWidth = width - marginLeft - marginRight
+  const graphHeight = height - marginBottom - marginTop
+
+  // Clear background
   ctx.fillStyle = '#0d1117'
   ctx.fillRect(0, 0, width, height)
 
-  // Draw grid
+  // Calculate frequency range (20Hz to Nyquist)
+  const nyquist = sampleRate / 2
+  const minFreq = 20
+  const maxFreq = Math.min(20000, nyquist)
+  const binCount = freqDataArrayL.length
+  const freqPerBin = nyquist / binCount
+
+  // dB range
+  const dbRange = settings.maxDb - settings.minDb
+
+  // Helper functions
+  const freqToX = (freq: number): number => {
+    if (settings.logScale) {
+      const logMin = Math.log10(minFreq)
+      const logMax = Math.log10(maxFreq)
+      const logFreq = Math.log10(Math.max(minFreq, Math.min(maxFreq, freq)))
+      return marginLeft + ((logFreq - logMin) / (logMax - logMin)) * graphWidth
+    } else {
+      return marginLeft + ((freq - minFreq) / (maxFreq - minFreq)) * graphWidth
+    }
+  }
+
+  const xToFreq = (x: number): number => {
+    const normalizedX = (x - marginLeft) / graphWidth
+    if (settings.logScale) {
+      const logMin = Math.log10(minFreq)
+      const logMax = Math.log10(maxFreq)
+      return Math.pow(10, logMin + normalizedX * (logMax - logMin))
+    } else {
+      return minFreq + normalizedX * (maxFreq - minFreq)
+    }
+  }
+
+  const dbToY = (db: number): number => {
+    const clampedDb = Math.max(settings.minDb, Math.min(settings.maxDb, db))
+    return marginTop + (1 - (clampedDb - settings.minDb) / dbRange) * graphHeight
+  }
+
+  // Draw dB grid lines and labels
   ctx.strokeStyle = '#21262d'
   ctx.lineWidth = 1
-  ctx.beginPath()
-  for (let i = 1; i < 6; i++) {
-    const y = (height / 6) * i
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+  ctx.fillStyle = '#484f58'
+  ctx.font = '9px monospace'
+  ctx.textAlign = 'right'
+
+  const dbSteps = [-90, -80, -70, -60, -50, -40, -30, -20, -10, 0]
+  for (const db of dbSteps) {
+    if (db >= settings.minDb && db <= settings.maxDb) {
+      const y = dbToY(db)
+      ctx.beginPath()
+      ctx.moveTo(marginLeft, y)
+      ctx.lineTo(width - marginRight, y)
+      ctx.stroke()
+      ctx.fillText(`${db}`, marginLeft - 4, y + 3)
+    }
   }
+
+  // Draw frequency grid lines and labels
+  ctx.textAlign = 'center'
+  const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+  for (const freq of freqLabels) {
+    if (freq >= minFreq && freq <= maxFreq) {
+      const x = freqToX(freq)
+      if (x >= marginLeft && x <= width - marginRight) {
+        ctx.beginPath()
+        ctx.strokeStyle = '#21262d'
+        ctx.moveTo(x, marginTop)
+        ctx.lineTo(x, height - marginBottom)
+        ctx.stroke()
+
+        // Format frequency label
+        let label: string
+        if (freq >= 1000) {
+          label = `${freq / 1000}k`
+        } else {
+          label = `${freq}`
+        }
+        ctx.fillStyle = '#484f58'
+        ctx.fillText(label, x, height - 5)
+      }
+    }
+  }
+
+  // Build spectrum path
+  ctx.beginPath()
+  let firstPoint = true
+
+  for (let i = 0; i < binCount; i++) {
+    const freq = i * freqPerBin
+    if (freq < minFreq || freq > maxFreq) continue
+
+    const x = freqToX(freq)
+    if (x < marginLeft || x > width - marginRight) continue
+
+    const db = freqDataArrayL[i]
+    const y = dbToY(db)
+
+    if (firstPoint) {
+      ctx.moveTo(x, y)
+      firstPoint = false
+    } else {
+      ctx.lineTo(x, y)
+    }
+  }
+
+  // Draw filled spectrum
+  if (settings.fillSpectrum) {
+    // Create gradient for fill
+    const gradient = ctx.createLinearGradient(0, marginTop, 0, height - marginBottom)
+    gradient.addColorStop(0, 'rgba(168, 85, 247, 0.8)')   // Purple at top
+    gradient.addColorStop(0.3, 'rgba(88, 166, 255, 0.6)')  // Blue
+    gradient.addColorStop(0.7, 'rgba(34, 197, 94, 0.4)')   // Green
+    gradient.addColorStop(1, 'rgba(34, 197, 94, 0.1)')     // Faded green at bottom
+
+    // Complete the path for fill
+    ctx.lineTo(width - marginRight, height - marginBottom)
+    ctx.lineTo(marginLeft, height - marginBottom)
+    ctx.closePath()
+    ctx.fillStyle = gradient
+    ctx.fill()
+  }
+
+  // Draw spectrum line
+  ctx.beginPath()
+  firstPoint = true
+  for (let i = 0; i < binCount; i++) {
+    const freq = i * freqPerBin
+    if (freq < minFreq || freq > maxFreq) continue
+
+    const x = freqToX(freq)
+    if (x < marginLeft || x > width - marginRight) continue
+
+    const db = freqDataArrayL[i]
+    const y = dbToY(db)
+
+    if (firstPoint) {
+      ctx.moveTo(x, y)
+      firstPoint = false
+    } else {
+      ctx.lineTo(x, y)
+    }
+  }
+  ctx.strokeStyle = '#58a6ff'
+  ctx.lineWidth = 1.5
   ctx.stroke()
 
-  // Draw spectrum bars
-  const barCount = 64
-  const barWidth = width / barCount - 1
+  // Draw peak hold
+  if (settings.showPeaks && peakData) {
+    ctx.beginPath()
+    firstPoint = true
+    for (let i = 0; i < binCount; i++) {
+      const freq = i * freqPerBin
+      if (freq < minFreq || freq > maxFreq) continue
 
-  const gradient = ctx.createLinearGradient(0, height, 0, 0)
-  gradient.addColorStop(0, '#22c55e')
-  gradient.addColorStop(0.5, '#58a6ff')
-  gradient.addColorStop(1, '#a855f7')
+      const x = freqToX(freq)
+      if (x < marginLeft || x > width - marginRight) continue
 
-  ctx.fillStyle = gradient
+      const db = peakData[i]
+      const y = dbToY(db)
 
-  for (let i = 0; i < barCount; i++) {
-    const logIndex = Math.pow(i / barCount, 2) * freqDataArrayL.length
-    const dataIndex = Math.floor(logIndex)
-    const value = freqDataArrayL[dataIndex] / 255
-    const barHeight = value * height * 0.9
-
-    const x = i * (barWidth + 1)
-    ctx.fillRect(x, height - barHeight, barWidth, barHeight)
+      if (firstPoint) {
+        ctx.moveTo(x, y)
+        firstPoint = false
+      } else {
+        ctx.lineTo(x, y)
+      }
+    }
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)'  // Red peaks
+    ctx.lineWidth = 1
+    ctx.stroke()
   }
 
-  // Frequency labels
+  // Draw hover info
+  if (spectrumHoverInfo.value) {
+    const info = spectrumHoverInfo.value
+    const freq = info.freq
+    const db = info.db
+
+    // Draw crosshair
+    const hoverX = freqToX(freq)
+    const hoverY = dbToY(db)
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 3])
+    ctx.beginPath()
+    ctx.moveTo(hoverX, marginTop)
+    ctx.lineTo(hoverX, height - marginBottom)
+    ctx.moveTo(marginLeft, hoverY)
+    ctx.lineTo(width - marginRight, hoverY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Draw info box
+    const freqStr = freq >= 1000 ? `${(freq / 1000).toFixed(2)}kHz` : `${freq.toFixed(1)}Hz`
+    const dbStr = `${db.toFixed(1)}dB`
+    const text = `${freqStr}  ${dbStr}`
+
+    ctx.font = 'bold 11px monospace'
+    const textWidth = ctx.measureText(text).width + 10
+
+    let boxX = hoverX + 10
+    let boxY = hoverY - 25
+    if (boxX + textWidth > width - marginRight) boxX = hoverX - textWidth - 10
+    if (boxY < marginTop) boxY = hoverY + 10
+
+    ctx.fillStyle = 'rgba(30, 30, 40, 0.9)'
+    ctx.fillRect(boxX, boxY, textWidth, 20)
+    ctx.strokeStyle = '#58a6ff'
+    ctx.lineWidth = 1
+    ctx.strokeRect(boxX, boxY, textWidth, 20)
+
+    ctx.fillStyle = '#fff'
+    ctx.textAlign = 'left'
+    ctx.fillText(text, boxX + 5, boxY + 14)
+  }
+
+  // Draw bin count info
   ctx.fillStyle = '#484f58'
-  ctx.font = '10px monospace'
-  ctx.fillText('20Hz', 2, height - 4)
-  ctx.fillText('1kHz', width * 0.4, height - 4)
-  ctx.fillText('20kHz', width - 40, height - 4)
+  ctx.font = '9px monospace'
+  ctx.textAlign = 'right'
+  ctx.fillText(`${binCount} bins`, width - marginRight, marginTop + 10)
+}
+
+// Handle spectrum canvas mouse events
+function handleSpectrumMouseMove(event: MouseEvent) {
+  const canvas = spectrumCanvasRef.value
+  if (!canvas || !freqDataArrayL) return
+
+  const rect = canvas.getBoundingClientRect()
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
+
+  const width = canvas.width
+  const height = canvas.height
+  const settings = spectrumSettings.value
+
+  const marginLeft = 35
+  const marginBottom = 20
+  const marginTop = 5
+  const marginRight = 10
+  const graphWidth = width - marginLeft - marginRight
+  const graphHeight = height - marginBottom - marginTop
+
+  // Check if within graph area
+  if (x < marginLeft || x > width - marginRight || y < marginTop || y > height - marginBottom) {
+    spectrumHoverInfo.value = null
+    return
+  }
+
+  const nyquist = sampleRate / 2
+  const minFreq = 20
+  const maxFreq = Math.min(20000, nyquist)
+  const binCount = freqDataArrayL.length
+  const freqPerBin = nyquist / binCount
+
+  // Calculate frequency from X position
+  const normalizedX = (x - marginLeft) / graphWidth
+  let freq: number
+  if (settings.logScale) {
+    const logMin = Math.log10(minFreq)
+    const logMax = Math.log10(maxFreq)
+    freq = Math.pow(10, logMin + normalizedX * (logMax - logMin))
+  } else {
+    freq = minFreq + normalizedX * (maxFreq - minFreq)
+  }
+
+  // Find the closest bin
+  const binIndex = Math.round(freq / freqPerBin)
+  if (binIndex >= 0 && binIndex < binCount) {
+    const db = freqDataArrayL[binIndex]
+    spectrumHoverInfo.value = { freq, db, x, y }
+  }
+}
+
+function handleSpectrumMouseLeave() {
+  spectrumHoverInfo.value = null
 }
 
 function drawFpsGraph() {
@@ -1015,7 +1333,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Audio sub-view selector -->
-      <div v-if="activeTab === 'audio'" class="flex gap-1">
+      <div v-if="activeTab === 'audio'" class="flex items-center gap-1">
         <button
           @click="audioView = 'stereo'"
           :class="[
@@ -1049,6 +1367,139 @@ onBeforeUnmount(() => {
         >
           Spectrum
         </button>
+
+        <!-- Spectrum Settings Button -->
+        <div v-if="audioView === 'spectrum'" class="relative ml-2">
+          <button
+            @click="showSpectrumSettings = !showSpectrumSettings"
+            class="px-2 py-0.5 text-xs rounded transition-colors text-gray-400 hover:text-white hover:bg-gray-700"
+            title="Spectrum Settings"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+
+          <!-- Settings Dropdown -->
+          <div
+            v-if="showSpectrumSettings"
+            class="absolute top-7 right-0 w-56 bg-editor-sidebar border border-editor-border rounded shadow-lg z-50 p-2 space-y-2"
+          >
+            <div class="text-xs text-gray-400 font-semibold border-b border-editor-border pb-1 mb-2">Spectrum Settings</div>
+
+            <!-- FFT Size -->
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">FFT Size:</label>
+              <select
+                v-model.number="spectrumSettings.fftSize"
+                @change="updateAnalyserSettings"
+                class="w-28 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300"
+              >
+                <option v-for="opt in fftSizeOptions" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+
+            <!-- Smoothing -->
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Smoothing:</label>
+              <input
+                type="range"
+                v-model.number="spectrumSettings.smoothing"
+                @change="updateAnalyserSettings"
+                min="0"
+                max="0.99"
+                step="0.01"
+                class="w-20 h-3"
+              />
+              <span class="text-xs text-gray-500 w-8 text-right">{{ spectrumSettings.smoothing.toFixed(2) }}</span>
+            </div>
+
+            <!-- dB Range -->
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Min dB:</label>
+              <input
+                type="range"
+                v-model.number="spectrumSettings.minDb"
+                min="-120"
+                max="-30"
+                step="5"
+                class="w-20 h-3"
+              />
+              <span class="text-xs text-gray-500 w-10 text-right">{{ spectrumSettings.minDb }}dB</span>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Max dB:</label>
+              <input
+                type="range"
+                v-model.number="spectrumSettings.maxDb"
+                min="-30"
+                max="0"
+                step="5"
+                class="w-20 h-3"
+              />
+              <span class="text-xs text-gray-500 w-10 text-right">{{ spectrumSettings.maxDb }}dB</span>
+            </div>
+
+            <!-- Toggles -->
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Log Scale:</label>
+              <button
+                @click="spectrumSettings.logScale = !spectrumSettings.logScale"
+                :class="[
+                  'w-8 h-4 rounded-full transition-colors',
+                  spectrumSettings.logScale ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <div
+                  :class="[
+                    'w-3 h-3 rounded-full bg-white shadow transform transition-transform',
+                    spectrumSettings.logScale ? 'translate-x-4' : 'translate-x-0.5'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Peak Hold:</label>
+              <button
+                @click="spectrumSettings.showPeaks = !spectrumSettings.showPeaks"
+                :class="[
+                  'w-8 h-4 rounded-full transition-colors',
+                  spectrumSettings.showPeaks ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <div
+                  :class="[
+                    'w-3 h-3 rounded-full bg-white shadow transform transition-transform',
+                    spectrumSettings.showPeaks ? 'translate-x-4' : 'translate-x-0.5'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-gray-400">Fill Spectrum:</label>
+              <button
+                @click="spectrumSettings.fillSpectrum = !spectrumSettings.fillSpectrum"
+                :class="[
+                  'w-8 h-4 rounded-full transition-colors',
+                  spectrumSettings.fillSpectrum ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <div
+                  :class="[
+                    'w-3 h-3 rounded-full bg-white shadow transform transition-transform',
+                    spectrumSettings.fillSpectrum ? 'translate-x-4' : 'translate-x-0.5'
+                  ]"
+                />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Video stats -->
@@ -1248,7 +1699,9 @@ onBeforeUnmount(() => {
         <canvas
           v-show="audioView === 'spectrum'"
           ref="spectrumCanvasRef"
-          class="w-full h-full rounded"
+          class="w-full h-full rounded cursor-crosshair"
+          @mousemove="handleSpectrumMouseMove"
+          @mouseleave="handleSpectrumMouseLeave"
         />
       </div>
     </div>
