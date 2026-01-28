@@ -96,9 +96,10 @@ function handleConfirmDelete() {
   } else if (projectStore.folderToDelete) {
     projectStore.executeDeleteFolder()
   }
-  // Switch to main.cpp
-  const content = projectStore.getFileContent('main.cpp') || ''
-  editorRef.value?.switchToFile('main.cpp', content)
+  // Switch to main file
+  const mainPath = projectStore.mainFilePath
+  const content = projectStore.getFileContent(mainPath) || ''
+  editorRef.value?.switchToFile(mainPath, content)
 }
 
 function handleCancelDelete() {
@@ -153,12 +154,13 @@ defineExpose({
   getFilesForCompilation: () => projectStore.getFilesForCompilation(),
   loadFromCode: (code: string, filename?: string) => {
     projectStore.loadFromCode(code, filename)
-    editorRef.value?.switchToFile('main.cpp', code)
+    editorRef.value?.switchToFile(projectStore.mainFilePath, code)
   },
   newProject: () => {
     projectStore.newProject()
-    const content = projectStore.getFileContent('main.cpp') || ''
-    editorRef.value?.switchToFile('main.cpp', content)
+    const mainPath = projectStore.mainFilePath
+    const content = projectStore.getFileContent(mainPath) || ''
+    editorRef.value?.switchToFile(mainPath, content)
   },
   // Editor actions
   format: handleFormat,

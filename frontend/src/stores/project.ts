@@ -157,6 +157,8 @@ export const useProjectStore = defineStore('project', () => {
   const activeFile = computed(() =>
     project.value.files.find((f) => f.path === project.value.activeFile)
   )
+  const mainFile = computed(() => project.value.files.find((f) => f.isMain))
+  const mainFilePath = computed(() => mainFile.value?.path || 'main.cpp')
   const hasUnsavedChanges = computed(() => project.value.files.some((f) => f.isDirty))
   const fileNames = computed(() => project.value.files.map((f) => f.name))
   const filePaths = computed(() => project.value.files.map((f) => f.path))
@@ -219,7 +221,7 @@ export const useProjectStore = defineStore('project', () => {
         if (a.type !== b.type) {
           return a.type === 'folder' ? -1 : 1
         }
-        // Keep main.cpp at top of files
+        // Keep main file at top of files
         if (a.type === 'file' && b.type === 'file') {
           if (a.isMain) return -1
           if (b.isMain) return 1
@@ -263,8 +265,8 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function createFile(name: string, folderPath: string = ''): { success: boolean; error?: string } {
-    // Validate filename
-    const nameWithoutExt = name.replace(/\.(cpp|hpp|h)$/, '')
+    // Validate filename - strip known extensions first
+    const nameWithoutExt = name.replace(/\.(cpp|hpp|h|synthSequence|preset|obj)$/, '')
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(nameWithoutExt)) {
       return {
         success: false,
@@ -272,8 +274,8 @@ export const useProjectStore = defineStore('project', () => {
       }
     }
 
-    if (name.length > 50) {
-      return { success: false, error: 'Filename too long (max 50 characters)' }
+    if (name.length > 60) {
+      return { success: false, error: 'Filename too long (max 60 characters)' }
     }
 
     // Build full path
@@ -300,9 +302,35 @@ export const useProjectStore = defineStore('project', () => {
 
 #endif // ${guard}
 `
-    } else {
+    } else if (name.endsWith('.synthSequence')) {
+      content = `# ${nameWithoutExt}
+# @ <start> <dur> <SynthName> <param1> <param2> ...
+# Example:
+# @ 0 1.0 SineEnv 0.5 440 0.1 0.5 0
+`
+    } else if (name.endsWith('.preset')) {
+      content = `::${nameWithoutExt}
+/amplitude f 0.500000
+/freq f 440.000000
+/attackTime f 0.100000
+/releaseTime f 0.500000
+/pan f 0.000000
+::
+`
+    } else if (name.endsWith('.obj')) {
+      content = `# Wavefront OBJ - ${nameWithoutExt}
+# v x y z
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+# f v1 v2 v3
+f 1 2 3
+`
+    } else if (name.endsWith('.cpp') || name.endsWith('.c')) {
       content = `// Source file: ${name}
 `
+    } else {
+      content = ''
     }
 
     const newFile: ProjectFile = {
@@ -401,15 +429,15 @@ export const useProjectStore = defineStore('project', () => {
     }
 
     if (file.isMain) {
-      return { success: false, error: 'Cannot delete main.cpp' }
+      return { success: false, error: `Cannot delete the main entry file (${file.name})` }
     }
 
     const index = project.value.files.findIndex((f) => f.path === path)
     project.value.files.splice(index, 1)
 
-    // Switch to main.cpp if we deleted the active file
+    // Switch to main file if we deleted the active file
     if (project.value.activeFile === path) {
-      project.value.activeFile = 'main.cpp'
+      project.value.activeFile = mainFilePath.value
     }
 
     project.value.updatedAt = Date.now()
@@ -422,16 +450,12 @@ export const useProjectStore = defineStore('project', () => {
       return { success: false, error: 'File not found' }
     }
 
-    if (file.isMain) {
-      return { success: false, error: 'Cannot rename main.cpp' }
-    }
-
     // Build new path (keep same folder)
     const folderPath = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/')) : ''
     const newPath = folderPath ? `${folderPath}/${newName}` : newName
 
     // Check for duplicates
-    if (project.value.files.some((f) => f.path.toLowerCase() === newPath.toLowerCase())) {
+    if (project.value.files.some((f) => f.path !== oldPath && f.path.toLowerCase() === newPath.toLowerCase())) {
       return { success: false, error: 'A file with this name already exists' }
     }
 
@@ -613,6 +637,8 @@ export const useProjectStore = defineStore('project', () => {
     folders,
     activeFileName,
     activeFile,
+    mainFile,
+    mainFilePath,
     hasUnsavedChanges,
     fileNames,
     filePaths,

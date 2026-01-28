@@ -16,7 +16,25 @@ const filename = ref('')
 const extension = ref('.hpp')
 const inputRef = ref<HTMLInputElement>()
 
-const extensions = ['.cpp', '.hpp', '.h'] as const
+interface ExtOption {
+  ext: string
+  label: string
+  description: string
+  category: 'source' | 'data'
+}
+
+const extensionOptions: ExtOption[] = [
+  { ext: '.cpp', label: '.cpp', description: 'C++ source file', category: 'source' },
+  { ext: '.hpp', label: '.hpp', description: 'C++ header file (included by other files)', category: 'source' },
+  { ext: '.h', label: '.h', description: 'C header file', category: 'source' },
+  { ext: '.preset', label: '.preset', description: 'Synth preset — parameter values for a synthesizer voice', category: 'data' },
+  { ext: '.synthSequence', label: '.synthSequence', description: 'Synth sequence — timed sequence of synth note events', category: 'data' },
+  { ext: '.obj', label: '.obj', description: 'Wavefront OBJ — 3D mesh geometry (vertices, faces)', category: 'data' },
+]
+
+const currentOption = computed(() =>
+  extensionOptions.find(o => o.ext === extension.value) || extensionOptions[0]
+)
 
 const fullFilename = computed(() => {
   if (!filename.value.trim()) return ''
@@ -37,7 +55,7 @@ const validationError = computed(() => {
     return 'Name must start with a letter and contain only letters, numbers, underscores, or dashes'
   }
 
-  if (name.length > 46) { // 46 + .cpp = 50 max
+  if (name.length > 46) {
     return 'Filename too long'
   }
 
@@ -89,7 +107,7 @@ watch(() => props.isOpen, async (isOpen) => {
       @click.self="handleCancel"
       @keydown="handleKeydown"
     >
-      <div class="bg-editor-bg border border-editor-border rounded-lg shadow-2xl w-96 max-w-[90vw]">
+      <div class="bg-editor-bg border border-editor-border rounded-lg shadow-2xl w-[440px] max-w-[90vw]">
         <!-- Header -->
         <div class="px-4 py-3 border-b border-editor-border flex items-center justify-between">
           <h3 class="text-white font-medium">New File</h3>
@@ -123,7 +141,7 @@ watch(() => props.isOpen, async (isOpen) => {
                 placeholder="myfile"
                 @keyup.enter="handleCreate"
               />
-              <span class="px-3 py-2 bg-editor-sidebar border border-editor-border rounded text-gray-400">
+              <span class="px-3 py-2 bg-editor-sidebar border border-editor-border rounded text-gray-400 text-sm whitespace-nowrap">
                 {{ extension }}
               </span>
             </div>
@@ -132,23 +150,45 @@ watch(() => props.isOpen, async (isOpen) => {
           <!-- Extension Selector -->
           <div>
             <label class="block text-sm text-gray-400 mb-2">File Type</label>
-            <div class="flex gap-2">
+
+            <!-- Source files row -->
+            <div class="text-xs text-gray-500 mb-1">Source</div>
+            <div class="flex gap-1.5 mb-2">
               <button
-                v-for="ext in extensions"
-                :key="ext"
-                @click="extension = ext"
+                v-for="opt in extensionOptions.filter(o => o.category === 'source')"
+                :key="opt.ext"
+                @click="extension = opt.ext"
                 :class="[
-                  'flex-1 px-3 py-2 text-sm rounded transition-colors',
-                  extension === ext
+                  'px-3 py-1.5 text-sm rounded transition-colors',
+                  extension === opt.ext
                     ? 'bg-allolib-blue text-white'
                     : 'bg-editor-active text-gray-400 hover:text-white hover:bg-editor-border'
                 ]"
               >
-                {{ ext }}
+                {{ opt.label }}
               </button>
             </div>
+
+            <!-- Data files row -->
+            <div class="text-xs text-gray-500 mb-1">Data</div>
+            <div class="flex gap-1.5">
+              <button
+                v-for="opt in extensionOptions.filter(o => o.category === 'data')"
+                :key="opt.ext"
+                @click="extension = opt.ext"
+                :class="[
+                  'px-3 py-1.5 text-sm rounded transition-colors',
+                  extension === opt.ext
+                    ? 'bg-allolib-blue text-white'
+                    : 'bg-editor-active text-gray-400 hover:text-white hover:bg-editor-border'
+                ]"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+
             <p class="mt-2 text-xs text-gray-500">
-              {{ extension === '.cpp' ? 'C++ source file' : 'Header file (included by other files)' }}
+              {{ currentOption.description }}
             </p>
           </div>
 

@@ -58,6 +58,11 @@ dump.rdb
 
 # Compiled WASM artifacts (cached builds)
 compiled-cache/
+backend/compiled/
+backend/source/
+
+# AlloLib Playground (cloned separately)
+allolib_playground/
 
 # Temporary files
 tmp/

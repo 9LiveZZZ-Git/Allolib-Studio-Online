@@ -802,16 +802,54 @@ function getPlatformBadgeClass(platform: string) {
 
           <div class="flex items-center justify-between">
             <label class="text-sm text-gray-300">Panel Height</label>
-            <input
-              type="range"
-              v-model.number="settings.display.panelHeight"
-              @input="handleSettingChange()"
-              min="100"
-              max="400"
-              step="10"
-              class="w-32 accent-allolib-blue"
-            />
-            <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.panelHeight }}px</span>
+            <div class="flex items-center gap-2">
+              <input
+                type="range"
+                v-model.number="settings.display.analysisPanelHeight"
+                @input="handleSettingChange()"
+                min="100"
+                max="400"
+                step="10"
+                class="w-24 accent-allolib-blue"
+              />
+              <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.analysisPanelHeight }}px</span>
+            </div>
+          </div>
+
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Show Sequencer</label>
+              <button
+                @click="settings.display.showSequencer = !settings.display.showSequencer; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.display.showSequencer ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.display.showSequencer ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between" v-if="settings.display.showSequencer">
+            <label class="text-sm text-gray-300">Sequencer Height</label>
+            <div class="flex items-center gap-2">
+              <input
+                type="range"
+                v-model.number="settings.display.sequencerHeight"
+                @input="handleSettingChange()"
+                min="150"
+                max="600"
+                step="10"
+                class="w-24 accent-allolib-blue"
+              />
+              <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.sequencerHeight }}px</span>
+            </div>
           </div>
 
           <button

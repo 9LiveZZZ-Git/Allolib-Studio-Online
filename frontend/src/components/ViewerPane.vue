@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/stores/settings'
 import AnalysisPanel from './AnalysisPanel.vue'
 
 const settings = useSettingsStore()
+const isStudioFocus = computed(() => settings.display.studioFocus)
 
 const props = defineProps<{
   status: AppStatus
@@ -27,52 +28,36 @@ const emit = defineEmits<{
 const canvasRef = ref<HTMLCanvasElement>()
 const containerRef = ref<HTMLDivElement>()
 const viewerRef = ref<HTMLDivElement>()
-const isFullscreen = ref(false)
 let runtime: AllolibRuntime | null = null
 
 onMounted(() => {
-  // Handle resize
   window.addEventListener('resize', handleResize)
   window.addEventListener('keydown', handleKeydown)
-  document.addEventListener('fullscreenchange', handleFullscreenChange)
-  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
   handleResize()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
   runtime?.destroy()
 })
 
 function handleKeydown(e: KeyboardEvent) {
-  // F11 to toggle fullscreen (only when viewer is focused or running)
+  // F11 to toggle studio focus (only when running)
   if (e.key === 'F11' && props.status === 'running') {
     e.preventDefault()
-    toggleFullscreen()
+    toggleStudioFocus()
+  }
+  // Escape to exit studio focus
+  if (e.key === 'Escape' && settings.display.studioFocus) {
+    settings.display.studioFocus = false
   }
 }
 
-function handleFullscreenChange() {
-  isFullscreen.value = !!document.fullscreenElement
-  // Resize after fullscreen change
+function toggleStudioFocus() {
+  settings.display.studioFocus = !settings.display.studioFocus
+  // Resize after layout change
   setTimeout(handleResize, 100)
-}
-
-async function toggleFullscreen() {
-  if (!viewerRef.value) return
-
-  try {
-    if (!document.fullscreenElement) {
-      await viewerRef.value.requestFullscreen()
-    } else {
-      await document.exitFullscreen()
-    }
-  } catch (err) {
-    console.error('Fullscreen error:', err)
-  }
 }
 
 // Watch for JS URL changes to load new modules
@@ -155,19 +140,22 @@ function handleResize() {
           <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
           Audio
         </span>
-        <!-- Fullscreen button -->
+        <!-- Studio Focus button -->
         <button
-          @click="toggleFullscreen"
-          class="p-1 hover:bg-gray-700 rounded transition-colors"
-          :title="isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen (F11)'"
+          @click="toggleStudioFocus"
+          class="p-1 rounded transition-colors"
+          :class="isStudioFocus ? 'bg-allolib-blue/30 text-allolib-blue hover:bg-allolib-blue/40' : 'hover:bg-gray-700 text-gray-400'"
+          :title="isStudioFocus ? 'Exit Studio Focus (Esc)' : 'Studio Focus (F11)'"
         >
-          <!-- Expand icon when not fullscreen -->
-          <svg v-if="!isFullscreen" class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+          <!-- Studio focus icon: layout with expanded right pane -->
+          <svg v-if="!isStudioFocus" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
-          <!-- Compress icon when fullscreen -->
-          <svg v-else class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4H4m0 0l5 5M9 20v-5H4m0 0l5-5m11 10h-5v5m0 0l5-5m-5-10h5V4m0 0l-5 5" />
+          <!-- Exit studio focus: restore split layout -->
+          <svg v-else class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+            <line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" stroke-width="2" />
           </svg>
         </button>
       </div>
@@ -181,7 +169,6 @@ function handleResize() {
         id="canvas"
         ref="canvasRef"
         class="absolute inset-0 w-full h-full cursor-pointer"
-        @dblclick="toggleFullscreen"
       />
 
       <!-- Idle state overlay -->

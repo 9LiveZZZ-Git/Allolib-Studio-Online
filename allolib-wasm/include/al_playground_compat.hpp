@@ -49,6 +49,7 @@
 
 // Standard library
 #include <cmath>
+#include <memory>
 
 // ============================================================================
 // Platform-specific includes
@@ -247,7 +248,12 @@ namespace al {
  * SynthGUIManager - manages polyphonic synths with voice allocation
  *
  * In WASM builds, this is a simplified version that works without ImGui.
- * It still provides full voice management and triggering capabilities.
+ * It provides full voice management and triggering capabilities.
+ *
+ * Parameters registered via createInternalTriggerParameter() in the voice's
+ * init() are automatically exposed to the web UI through WebControlGUI.
+ * A dedicated "control voice" holds the template parameter values that are
+ * displayed in the browser's parameter panel and copied to each triggered voice.
  */
 template <class TSynthVoice>
 class SynthGUIManager {
@@ -263,9 +269,35 @@ public:
         // IMPORTANT: Set Gamma sample rate BEFORE allocating voices
         // This ensures oscillators are initialized with the correct sample rate
         gam::sampleRate(44100);
+
+        // Initialize the control voice — this runs init() which calls
+        // createInternalTriggerParameter(), populating mControlVoice's
+        // trigger parameter list
+        mControlVoice.init();
+
 #ifdef __EMSCRIPTEN__
-        EM_ASM({ console.log('[SynthGUIManager] Gamma sampleRate set to 44100'); });
+        EM_ASM({ console.log('[SynthGUIManager] Control voice initialized with %d trigger parameters'); },
+               (int)mControlVoice.triggerParameters().size());
+
+        // Ensure a WebControlGUI instance exists for parameter registration
+        if (!WebControlGUI::getActiveInstance()) {
+            mOwnedGui.reset(new WebControlGUI());
+        }
+
+        // Register all control voice trigger parameters with the web GUI
+        // This fires notifyParameterAdded() for each, sending them to JavaScript
+        auto* gui = WebControlGUI::getActiveInstance();
+        if (gui) {
+            for (auto* param : mControlVoice.triggerParameters()) {
+                gui->registerParameterMeta(*param);
+            }
+            EM_ASM({ console.log('[SynthGUIManager] Registered %d parameters with WebControlGUI'); },
+                   (int)mControlVoice.triggerParameters().size());
+        } else {
+            EM_ASM({ console.log('[SynthGUIManager] WARNING: No WebControlGUI available'); });
+        }
 #endif
+
         // Pre-allocate voices
         for (int i = 0; i < 16; ++i) {
             mPolySynth.allocateVoice<TSynthVoice>();
@@ -279,69 +311,52 @@ public:
     PolySynth& synth() { return mPolySynth; }
     SynthSequencer& synthSequencer() { return mSequencer; }
 
-    // Voice access for parameter setting
-    // Returns a voice that will be used by the next triggerOn() call
-    // If a pending voice already exists, return it (don't get a new one)
+    /**
+     * Get the control voice for parameter configuration.
+     *
+     * Returns the control voice (template voice) whose parameters are
+     * displayed in the web UI panel. Setting parameter values on this
+     * voice updates the UI sliders and determines the initial values
+     * for the next triggerOn() call.
+     *
+     * This matches native AlloLib behavior where voice() returns the
+     * control voice used for ImGui parameter display.
+     */
     TSynthVoice* voice() {
-        // Only get a new voice if we don't have a pending one
-        if (!mPendingVoice) {
-            mPendingVoice = mPolySynth.getVoice<TSynthVoice>();
-#ifdef __EMSCRIPTEN__
-            EM_ASM({ console.log('[SynthGUIManager] voice() called, got NEW voice: ' + ($0 ? 'yes' : 'null')); },
-                   mPendingVoice ? 1 : 0);
-#endif
-        }
-        return mPendingVoice;
+        return &mControlVoice;
     }
 
-    // Trigger notes - uses the voice from the last voice() call if available
+    /**
+     * Trigger a new voice with the current control voice parameters.
+     *
+     * Allocates a voice from the pool, copies all trigger parameter
+     * values from the control voice to it, and triggers it.
+     */
     void triggerOn(int id = 0) {
+        TSynthVoice* v = mPolySynth.getVoice<TSynthVoice>();
 #ifdef __EMSCRIPTEN__
-        EM_ASM({ console.log('[SynthGUIManager] triggerOn(' + $0 + ') called, pendingVoice: ' + ($1 ? 'yes' : 'null')); },
-               id, mPendingVoice ? 1 : 0);
+        EM_ASM({ console.log('[SynthGUIManager] triggerOn(%d), voice: %s'); },
+               id, v ? 1 : 0);
 #endif
-        TSynthVoice* v = mPendingVoice;
-        if (!v) {
-            // No pending voice, get a new one
-            v = mPolySynth.getVoice<TSynthVoice>();
-#ifdef __EMSCRIPTEN__
-            EM_ASM({ console.log('[SynthGUIManager] Got new voice: ' + ($0 ? 'yes' : 'null')); }, v ? 1 : 0);
-#endif
-        }
         if (v) {
+            // Copy trigger parameters from control voice to pool voice
+            configureVoiceFromGui(v);
             v->id(id);
             mPolySynth.triggerOn(v);
             mLastVoice = v;
-#ifdef __EMSCRIPTEN__
-            EM_ASM({ console.log('[SynthGUIManager] Voice triggered successfully'); });
-#endif
         } else {
 #ifdef __EMSCRIPTEN__
             EM_ASM({ console.log('[SynthGUIManager] ERROR: No voice available!'); });
 #endif
         }
-        mPendingVoice = nullptr; // Clear pending voice after use
     }
 
     void triggerOff(int id = 0) {
-#ifdef __EMSCRIPTEN__
-        EM_ASM({ console.log('[SynthGUIManager] triggerOff(' + $0 + ') called'); }, id);
-#endif
         mPolySynth.triggerOff(id);
     }
 
     // Render audio and graphics
     void render(AudioIOData& io) {
-#ifdef __EMSCRIPTEN__
-        static int renderCount = 0;
-        static int lastActiveCount = -1;
-
-        // Count active voices BEFORE render
-        int activeCountBefore = 0;
-        SynthVoice* v = mPolySynth.getActiveVoices();
-        while (v) { activeCountBefore++; v = v->next; }
-#endif
-
         // In TIME_MASTER_FREE mode, we must manually process voices
         // This moves voices from the insert queue to the active list
         mPolySynth.processVoices();
@@ -354,28 +369,11 @@ public:
         mPolySynth.processInactiveVoices();
 
 #ifdef __EMSCRIPTEN__
-        // Count active voices AFTER render
-        int activeCountAfter = 0;
-        v = mPolySynth.getActiveVoices();
-        while (v) { activeCountAfter++; v = v->next; }
-
-        // Log when active voice count changes or periodically
-        if (activeCountAfter != lastActiveCount) {
-            EM_ASM({ console.log('[SynthGUIManager] render: active voices changed: ' + $0 + ' -> ' + $1); },
-                   lastActiveCount, activeCountAfter);
-            lastActiveCount = activeCountAfter;
-        }
-
-        // Also check max sample output from AudioIOData
-        if (renderCount++ % 100 == 0 && activeCountAfter > 0) {
-            float maxSample = 0;
-            for (int i = 0; i < io.framesPerBuffer(); i++) {
-                for (int ch = 0; ch < io.channelsOut(); ch++) {
-                    float s = std::abs(io.out(ch, i));
-                    if (s > maxSample) maxSample = s;
-                }
-            }
-            EM_ASM({ console.log('[SynthGUIManager] render: max audio sample = ' + $0); }, maxSample);
+        // Sync control voice parameter values to WebControlGUI
+        // (handles UI slider changes reflected back to C++)
+        auto* gui = WebControlGUI::getActiveInstance();
+        if (gui) {
+            gui->draw(); // Calls syncParametersToJS()
         }
 #endif
     }
@@ -385,7 +383,7 @@ public:
         mPolySynth.render(g);
     }
 
-    // GUI functions - no-ops in WASM
+    // GUI functions - no-ops in WASM (Vue handles rendering)
     void drawSynthControlPanel() {}
     void drawSynthWidgets() {}
 
@@ -397,12 +395,32 @@ public:
     SynthRecorder& synthRecorder() { return mRecorder; }
 
 private:
+    /**
+     * Copy trigger parameter values from the control voice to a pool voice.
+     * Both voices have the same parameters (created by init()), so we
+     * iterate by index and copy float values.
+     */
+    void configureVoiceFromGui(TSynthVoice* voice) {
+        auto ctrlParams = mControlVoice.triggerParameters();
+        auto voiceParams = voice->triggerParameters();
+        for (size_t i = 0; i < ctrlParams.size() && i < voiceParams.size(); i++) {
+            auto* src = dynamic_cast<Parameter*>(ctrlParams[i]);
+            auto* dst = dynamic_cast<Parameter*>(voiceParams[i]);
+            if (src && dst) {
+                dst->set(src->get());
+            }
+        }
+    }
+
     std::string mName;
     PolySynth mPolySynth;
     SynthSequencer mSequencer;
     SynthRecorder mRecorder;
-    TSynthVoice* mPendingVoice = nullptr;  // Voice prepared by voice() for next triggerOn()
+    TSynthVoice mControlVoice;       // Template voice for UI parameter display
     SynthVoice* mLastVoice = nullptr;
+#ifdef __EMSCRIPTEN__
+    std::unique_ptr<WebControlGUI> mOwnedGui;  // Owned GUI if none existed
+#endif
 };
 
 } // namespace al

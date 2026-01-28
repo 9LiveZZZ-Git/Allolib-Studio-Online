@@ -33,7 +33,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['monaco-editor'],
+    include: ['monaco-editor', 'xterm', 'xterm-addon-fit'],
   },
   // Handle Monaco editor workers
   worker: {

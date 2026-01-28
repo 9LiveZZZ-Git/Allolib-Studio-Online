@@ -14,7 +14,7 @@ const emit = defineEmits<{
 }>()
 
 const sortedFiles = computed(() => {
-  // Keep main.cpp first, then sort alphabetically by path
+  // Keep main file first, then sort alphabetically by path
   return [...props.files].sort((a, b) => {
     if (a.isMain) return -1
     if (b.isMain) return 1
@@ -85,7 +85,7 @@ function getFileIconColor(filename: string): string {
         <!-- Dirty indicator -->
         <span v-if="file.isDirty" class="text-yellow-400 text-xs">●</span>
 
-        <!-- Close Button (not on main.cpp) -->
+        <!-- Close Button (not on main file) -->
         <button
           v-if="!file.isMain"
           @click.stop="emit('closeFile', file.path)"
@@ -97,7 +97,7 @@ function getFileIconColor(filename: string): string {
           </svg>
         </button>
 
-        <!-- Spacer for main.cpp to align with closeable tabs -->
+        <!-- Spacer for main file to align with closeable tabs -->
         <span v-if="file.isMain" class="w-4"></span>
       </button>
     </div>

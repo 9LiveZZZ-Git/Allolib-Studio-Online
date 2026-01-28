@@ -50,6 +50,7 @@ class ParameterSystem {
   private callbacks: Set<ParameterCallback> = new Set()
   private wasmModule: any = null
   private pollInterval: number | null = null
+  private retryTimeouts: number[] = []
 
   constructor() {
     // Set up global callbacks for C++ notifications
@@ -107,11 +108,21 @@ class ParameterSystem {
    * Connect to WASM module
    */
   connectWasm(module: any): void {
+    this.stopPolling()
+    this.cancelRetries()
     this.wasmModule = module
+    this.parameters.clear()
     console.log('[ParameterSystem] Connected to WASM module')
 
     // Load any existing parameters from WASM
     this.loadFromWasm()
+
+    // If no parameters found yet, retry with increasing delays.
+    // Parameters may be registered after main() returns (e.g., in onCreate)
+    // or the onParameterAdded callback may have fired before we were ready.
+    if (this.parameters.size === 0) {
+      this.scheduleRetries()
+    }
 
     // Start polling for parameter updates (for values changed from C++ side)
     this.startPolling()
@@ -121,10 +132,40 @@ class ParameterSystem {
    * Disconnect from WASM module
    */
   disconnectWasm(): void {
+    this.cancelRetries()
     this.wasmModule = null
     this.parameters.clear()
     this.stopPolling()
     this.notifyChange()
+  }
+
+  /**
+   * Schedule retry attempts to load parameters from WASM.
+   * Covers race conditions where parameters are registered after initial load.
+   */
+  private scheduleRetries(): void {
+    this.cancelRetries()
+
+    const delays = [100, 300, 600, 1000, 2000]
+    for (const delay of delays) {
+      const t = window.setTimeout(() => {
+        if (this.parameters.size === 0 && this.wasmModule) {
+          console.log(`[ParameterSystem] Retry loading parameters (${delay}ms)`)
+          this.loadFromWasm()
+        }
+      }, delay)
+      this.retryTimeouts.push(t)
+    }
+  }
+
+  /**
+   * Cancel any pending retry timeouts
+   */
+  private cancelRetries(): void {
+    for (const t of this.retryTimeouts) {
+      clearTimeout(t)
+    }
+    this.retryTimeouts = []
   }
 
   /**
@@ -195,14 +236,28 @@ class ParameterSystem {
   }
 
   /**
-   * Sync parameter values from WASM
+   * Sync parameter values from WASM.
+   * Also detects newly registered parameters by checking count changes.
    */
   private syncFromWasm(): void {
-    if (!this.wasmModule?._al_webgui_get_parameter_value) return
+    if (!this.wasmModule) return
 
+    const getCount = this.wasmModule._al_webgui_get_parameter_count
+    const getValue = this.wasmModule._al_webgui_get_parameter_value
+    if (!getCount || !getValue) return
+
+    // Check if new parameters were added since last load
+    const wasmCount = getCount()
+    if (wasmCount > this.parameters.size) {
+      console.log(`[ParameterSystem] New parameters detected (${this.parameters.size} → ${wasmCount}), reloading`)
+      this.loadFromWasm()
+      return
+    }
+
+    // Sync existing parameter values
     let changed = false
     for (const [index, param] of this.parameters) {
-      const newValue = this.wasmModule._al_webgui_get_parameter_value(index)
+      const newValue = getValue(index)
       if (Math.abs(param.value - newValue) > 0.0001) {
         param.value = newValue
         changed = true

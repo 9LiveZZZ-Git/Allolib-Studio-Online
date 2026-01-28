@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useAppStore } from './stores/app'
 import { useSettingsStore } from './stores/settings'
 import { useProjectStore } from './stores/project'
+import { useTerminalStore } from './stores/terminal'
+import { useSequencerStore } from './stores/sequencer'
 import Toolbar from './components/Toolbar.vue'
 import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
-import Console from './components/Console.vue'
+import ConsolePanel from './components/ConsolePanel.vue'
+import SequencerPanel from './components/SequencerPanel.vue'
 import { defaultCode } from '@/utils/monaco-config'
+import { wsService } from '@/services/websocket'
 import {
   transpileToWeb,
   transpileToNative,
@@ -21,6 +25,8 @@ import JSZip from 'jszip'
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const projectStore = useProjectStore()
+const terminalStore = useTerminalStore()
+const sequencerStore = useSequencerStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const currentFileName = ref('main.cpp')
 
@@ -46,7 +52,7 @@ const handleRun = async () => {
 
   // Clear previous errors before compiling
   editorRef.value?.clearDiagnostics()
-  await appStore.compile(files, 'main.cpp')
+  await appStore.compile(files, projectStore.mainFilePath)
 
   // If there are diagnostics (errors/warnings), show them in the editor
   if (appStore.diagnostics.length > 0) {
@@ -161,6 +167,15 @@ const handleAnalysisResize = (height: number) => {
   settingsStore.display.analysisPanelHeight = height
 }
 
+const handleSequencerResize = (height: number) => {
+  settingsStore.display.sequencerHeight = height
+}
+
+const sequencerHeightStyle = computed(() => ({
+  height: `${settingsStore.display.sequencerHeight}px`,
+  minHeight: `${settingsStore.display.sequencerHeight}px`,
+}))
+
 // Transpiler handlers
 const handleImportNative = () => {
   const input = document.createElement('input')
@@ -254,6 +269,54 @@ const cancelTranspile = () => {
   transpileResult.value = null
   pendingTranspiledCode.value = ''
 }
+
+const handleClearConsole = () => {
+  appStore.clearConsole()
+}
+
+// Auto-detect synth classes when compilation succeeds
+watch(() => appStore.status, (newStatus) => {
+  if (newStatus === 'running') {
+    const sourceFiles = projectStore.project.files
+      .filter(f => /\.(cpp|hpp|h)$/i.test(f.path))
+      .map(f => ({ name: f.path, content: f.content }))
+    sequencerStore.updateDetectedSynths(sourceFiles)
+  }
+})
+
+// WebSocket setup for real-time compile streaming
+function onCompileOutput(payload: Record<string, unknown>) {
+  const line = payload.line as string
+  if (line) {
+    terminalStore.writeCompilationOutput(line)
+  }
+}
+
+// Handle compile triggered from terminal
+function onTerminalCompile() {
+  handleRun()
+}
+
+onMounted(() => {
+  wsService.connect()
+  wsService.on('compile:output', onCompileOutput)
+  window.addEventListener('terminal:compile', onTerminalCompile)
+})
+
+onBeforeUnmount(() => {
+  wsService.off('compile:output', onCompileOutput)
+  wsService.disconnect()
+  window.removeEventListener('terminal:compile', onTerminalCompile)
+})
+
+// Mirror console output to the terminal
+let lastConsoleLength = 0
+watch(() => appStore.consoleOutput.length, (newLen) => {
+  for (let i = lastConsoleLength; i < newLen; i++) {
+    terminalStore.writeCompilationOutput(appStore.consoleOutput[i])
+  }
+  lastConsoleLength = newLen
+})
 </script>
 
 <template>
@@ -277,19 +340,23 @@ const cancelTranspile = () => {
 
     <!-- Main Content -->
     <div class="flex-1 flex overflow-hidden">
-      <!-- Left Pane: Editor + Console -->
-      <div class="w-1/2 flex flex-col border-r border-editor-border overflow-hidden">
+      <!-- Left Pane: Editor + Console (hidden in studio focus mode) -->
+      <div
+        v-show="!settingsStore.display.studioFocus"
+        class="w-1/2 flex flex-col border-r border-editor-border overflow-hidden"
+      >
         <EditorPane ref="editorRef" class="flex-1 min-h-0" />
-        <Console
+        <ConsolePanel
           :output="appStore.consoleOutput"
           :style="consoleHeightStyle"
           class="shrink-0"
           @resize="handleConsoleResize"
+          @clear="handleClearConsole"
         />
       </div>
 
-      <!-- Right Pane: Viewer -->
-      <div class="w-1/2">
+      <!-- Right Pane: Viewer (full width in studio focus mode) -->
+      <div :class="settingsStore.display.studioFocus ? 'w-full' : 'w-1/2'">
         <ViewerPane
           :status="appStore.status"
           :js-url="appStore.jsUrl"
@@ -302,6 +369,15 @@ const cancelTranspile = () => {
         />
       </div>
     </div>
+
+    <!-- Sequencer Panel -->
+    <SequencerPanel
+      v-if="settingsStore.display.showSequencer"
+      :height="settingsStore.display.sequencerHeight"
+      :style="sequencerHeightStyle"
+      class="shrink-0"
+      @resize="handleSequencerResize"
+    />
 
     <!-- Transpile Modal -->
     <div v-if="showTranspileModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

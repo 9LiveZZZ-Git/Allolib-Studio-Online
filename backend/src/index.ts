@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws'
 import { createServer } from 'http'
 import { compileRouter } from './routes/compile.js'
 import { logger } from './services/logger.js'
+import { initWsManager } from './services/ws-manager.js'
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -27,6 +28,9 @@ const server = createServer(app)
 
 // WebSocket server for real-time compilation updates
 const wss = new WebSocketServer({ server, path: '/ws' })
+
+// Initialize WebSocket manager for broadcast support
+initWsManager(wss)
 
 wss.on('connection', (ws) => {
   logger.info('WebSocket client connected')

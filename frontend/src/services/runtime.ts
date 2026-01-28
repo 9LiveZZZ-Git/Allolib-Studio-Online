@@ -45,6 +45,12 @@ export interface WasmModule {
   _al_webgui_get_parameter_default?: (index: number) => number
   _al_webgui_set_parameter_value?: (index: number, value: number) => void
   _al_webgui_trigger_parameter?: (index: number) => void
+
+  // WebSequencerBridge exports (voice triggering from sequencer)
+  _al_seq_trigger_on?: (id: number, freq: number, amp: number, dur: number) => void
+  _al_seq_trigger_off?: (id: number) => void
+  _al_seq_set_param?: (voiceId: number, paramIndex: number, value: number) => void
+  _al_seq_get_voice_count?: () => number
 }
 
 declare global {
@@ -516,6 +522,45 @@ export class AllolibRuntime {
         gl.viewport(0, 0, width, height)
       }
     }
+  }
+
+  // ── Sequencer Voice Bridge ─────────────────────────────────────────
+
+  /**
+   * Trigger a synth voice from the sequencer.
+   * Calls al_seq_trigger_on in the WASM module.
+   */
+  triggerVoice(id: number, freq: number, amp: number, dur: number): void {
+    if (!this.module?._al_seq_trigger_on) return
+    this.module._al_seq_trigger_on(id, freq, amp, dur)
+  }
+
+  /**
+   * Release (trigger off) a synth voice.
+   * Calls al_seq_trigger_off in the WASM module.
+   */
+  releaseVoice(id: number): void {
+    if (!this.module?._al_seq_trigger_off) return
+    this.module._al_seq_trigger_off(id)
+  }
+
+  /**
+   * Set a parameter on a voice by index.
+   */
+  setVoiceParam(voiceId: number, paramIndex: number, value: number): void {
+    if (!this.module?._al_seq_set_param) return
+    this.module._al_seq_set_param(voiceId, paramIndex, value)
+  }
+
+  /**
+   * Check if the sequencer bridge is available in the loaded WASM module.
+   */
+  get hasSequencerBridge(): boolean {
+    return !!this.module?._al_seq_trigger_on
+  }
+
+  getModule(): WasmModule | null {
+    return this.module
   }
 
   destroy(): void {

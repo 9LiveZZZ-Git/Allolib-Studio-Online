@@ -3,6 +3,7 @@ import { writeFile, mkdir, readFile, rm } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { logger } from './logger.js'
+import { broadcast } from './ws-manager.js'
 
 export interface CompilationResult {
   success: boolean
@@ -141,6 +142,8 @@ async function compileWithDocker(
     logger.info(`[${job.id}] Source: ${containerSourceFile}`)
     logger.info(`[${job.id}] Output: ${containerOutputDir}`)
 
+    broadcast('compile:status', { jobId: job.id, status: 'compiling' })
+
     const dockerProcess = spawn('docker', [
       'exec',
       COMPILER_CONTAINER,
@@ -154,21 +157,32 @@ async function compileWithDocker(
     let stderr = ''
 
     dockerProcess.stdout.on('data', (data) => {
-      stdout += data.toString()
-      logger.info(`[${job.id}] ${data.toString().trim()}`)
+      const text = data.toString()
+      stdout += text
+      // Broadcast each line to connected WebSocket clients
+      for (const line of text.split('\n').filter((l: string) => l.trim())) {
+        logger.info(`[${job.id}] ${line.trim()}`)
+        broadcast('compile:output', { jobId: job.id, stream: 'stdout', line: line.trim() })
+      }
     })
 
     dockerProcess.stderr.on('data', (data) => {
-      stderr += data.toString()
-      logger.warn(`[${job.id}] ${data.toString().trim()}`)
+      const text = data.toString()
+      stderr += text
+      for (const line of text.split('\n').filter((l: string) => l.trim())) {
+        logger.warn(`[${job.id}] ${line.trim()}`)
+        broadcast('compile:output', { jobId: job.id, stream: 'stderr', line: line.trim() })
+      }
     })
 
     dockerProcess.on('close', (code) => {
       if (code === 0) {
         logger.info(`[${job.id}] Compilation successful`)
+        broadcast('compile:complete', { jobId: job.id, success: true })
         resolve()
       } else {
         logger.error(`[${job.id}] Compilation failed with code ${code}`)
+        broadcast('compile:complete', { jobId: job.id, success: false, code })
         reject(new Error(`Compilation failed with code ${code}: ${stderr}`))
       }
     })

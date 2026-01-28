@@ -4,13 +4,14 @@
 
 AlloLib Studio Online is a browser-based creative coding environment for building interactive audio-visual applications using the [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) C++ framework. No local installation required.
 
-![Status](https://img.shields.io/badge/status-Phase%206%20Complete-brightgreen)
+![Status](https://img.shields.io/badge/status-Phase%207%20Complete-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Features
 
+### Core
 - **Code Editor** - Monaco Editor with C++ syntax highlighting, AlloLib snippets, and intelligent autocomplete
-- **Live Compilation** - Server-side Emscripten compilation (~5 seconds) to WebAssembly
+- **Live Compilation** - Server-side Emscripten compilation to WebAssembly with streaming output
 - **WebGL2 Graphics** - 3D rendering with meshes, lighting, shaders, and textures
 - **Web Audio** - Real-time audio synthesis with Gamma DSP library
 - **Parameter Panel** - Interactive GUI controls for synth parameters (like ImGui)
@@ -21,6 +22,22 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Glossary** - 330+ searchable terms covering AlloLib and Gamma DSP APIs
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
+
+### Sequencer
+- **Clip-Based Sequencer** - Create, edit, and arrange `.synthSequence` clips on a timeline
+- **Auto Synth Detection** - Detects `SynthVoice` subclasses from your C++ source on compile
+- **Frequency Roll** - Piano-roll-style view for editing note events by frequency and time
+- **Tone Lattice** - Interactive 5-limit just intonation lattice for composing with pure intervals
+  - **2D Mode** - Octave-reduced lattice of 3rds and 5ths
+  - **3D Mode** - Full lattice with octave (2), fifth (3), and major third (5) axes, isometric projection with mouse-drag rotation
+  - **Note Mode** - Click to toggle notes on/off
+  - **Path Mode** - Click or drag across nodes to create sequenced note paths with configurable time offsets
+  - **Chord Mode** - Select multiple nodes then finalize as a chord with duration and repeat count
+  - **Poly Paths** - Stack multiple paths through the same node with `^n` count markers
+  - **Context Menus** - Right-click notes or paths to edit duration, amplitude, and timing
+- **Clip File Organization** - `.synthSequence` files stored in `bin/<SynthName>-data/` directories
+- **Arrangement View** - Place clip instances on tracks, loop regions, per-track mute/solo
+- **Spectrum Analyzer** - Professional FFT visualization with configurable resolution
 
 ## Quick Start
 
@@ -109,16 +126,20 @@ The Examples dropdown includes demos organized by category:
 ## Architecture
 
 ```
-Browser                          Server
-┌─────────────────┐             ┌─────────────────┐
-│  Monaco Editor  │   HTTP      │   Express API   │
-│       ↓         │ ────────→   │       ↓         │
-│  C++ Source     │             │  Emscripten     │
-│       ↓         │   WASM      │       ↓         │
-│  WASM Runtime   │ ←────────   │  WebAssembly    │
-│       ↓         │             └─────────────────┘
-│  WebGL2 + Audio │
-└─────────────────┘
+Browser                                Server
+┌──────────────────────────┐          ┌─────────────────┐
+│  Monaco Editor           │  HTTP/WS │   Express API   │
+│       ↓                  │ ───────→ │       ↓         │
+│  C++ Source              │          │  Emscripten     │
+│       ↓                  │  WASM    │       ↓         │
+│  WASM Runtime            │ ←─────── │  WebAssembly    │
+│       ↓                  │          └─────────────────┘
+│  WebGL2 + Audio          │
+│       ↓                  │
+│  Sequencer / Tone Lattice│
+│       ↓                  │
+│  .synthSequence Files    │
+└──────────────────────────┘
 ```
 
 ## Tech Stack
@@ -134,16 +155,17 @@ Browser                          Server
 
 ```
 allolib-studio-online/
-├── frontend/           # Vue 3 web application
+├── frontend/                # Vue 3 web application
 │   └── src/
-│       ├── components/ # UI components
-│       ├── services/   # Compiler, Runtime
-│       ├── stores/     # Pinia state
-│       └── utils/      # Helpers, Monaco config
-├── backend/            # Node.js compilation server
-│   └── docker/         # Emscripten container
-├── allolib/            # AlloLib C++ library
-└── allolib-wasm/       # WASM build configuration
+│       ├── components/      # UI components
+│       │   └── sequencer/   # Sequencer panel, timeline, lattice, toolbar, sidebar
+│       ├── services/        # Compiler, Runtime, WebSocket
+│       ├── stores/          # Pinia state (project, sequencer, settings, terminal)
+│       └── utils/           # Tone lattice math, synth detection, .synthSequence parser
+├── backend/                 # Node.js compilation server
+│   └── docker/              # Emscripten container
+├── allolib/                 # AlloLib C++ library (cloned separately)
+└── allolib-wasm/            # WASM build configuration & compatibility headers
 ```
 
 ## Development

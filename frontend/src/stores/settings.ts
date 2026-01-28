@@ -28,8 +28,11 @@ export interface CompilerSettings {
 
 export interface DisplaySettings {
   showAnalysisPanel: boolean
+  showSequencer: boolean
+  studioFocus: boolean
   consoleHeight: number
   analysisPanelHeight: number
+  sequencerHeight: number
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -64,8 +67,11 @@ export const useSettingsStore = defineStore('settings', () => {
   // Display settings
   const display = ref<DisplaySettings>({
     showAnalysisPanel: true,
+    showSequencer: false,
+    studioFocus: false,
     consoleHeight: 200,
     analysisPanelHeight: 200,
+    sequencerHeight: 300,
   })
 
   // Load settings from localStorage
@@ -136,8 +142,11 @@ export const useSettingsStore = defineStore('settings', () => {
   function resetDisplay() {
     display.value = {
       showAnalysisPanel: true,
+      showSequencer: false,
+      studioFocus: false,
       consoleHeight: 200,
       analysisPanelHeight: 200,
+      sequencerHeight: 300,
     }
     saveSettings()
   }

@@ -38,6 +38,15 @@ function getFileIcon(filename: string): { letter: string; color: string } {
   if (filename.endsWith('.hpp') || filename.endsWith('.h')) {
     return { letter: 'H', color: 'text-purple-400' }
   }
+  if (filename.endsWith('.preset')) {
+    return { letter: 'P', color: 'text-green-400' }
+  }
+  if (filename.endsWith('.synthSequence')) {
+    return { letter: 'S', color: 'text-yellow-400' }
+  }
+  if (filename.endsWith('.obj')) {
+    return { letter: 'O', color: 'text-amber-400' }
+  }
   return { letter: 'C', color: 'text-blue-400' }
 }
 
@@ -240,7 +249,6 @@ function handleClickOutside(e: MouseEvent) {
           <div class="h-px bg-editor-border my-1"></div>
 
           <button
-            v-if="!contextMenu.isMain"
             @click="handleRename"
             class="w-full px-3 py-1.5 text-left text-sm text-gray-300 hover:bg-editor-active flex items-center gap-2"
           >
@@ -299,6 +307,15 @@ const TreeNode = defineComponent({
     const getFileIcon = (filename: string) => {
       if (filename.endsWith('.hpp') || filename.endsWith('.h')) {
         return { letter: 'H', color: 'text-purple-400' }
+      }
+      if (filename.endsWith('.preset')) {
+        return { letter: 'P', color: 'text-green-400' }
+      }
+      if (filename.endsWith('.synthSequence')) {
+        return { letter: 'S', color: 'text-yellow-400' }
+      }
+      if (filename.endsWith('.obj')) {
+        return { letter: 'O', color: 'text-amber-400' }
       }
       return { letter: 'C', color: 'text-blue-400' }
     }
@@ -378,6 +395,8 @@ const TreeNode = defineComponent({
         }
       }
 
+      const isSynthSequence = node.type === 'file' && node.name.endsWith('.synthSequence')
+
       const nodeEl = h('div', {
         class: [
           'flex items-center gap-1.5 py-0.5 px-1 cursor-pointer rounded-sm',
@@ -385,8 +404,15 @@ const TreeNode = defineComponent({
           isActive && node.type === 'file' ? 'bg-editor-active text-white' : 'text-gray-300',
         ],
         style: { paddingLeft },
+        draggable: isSynthSequence ? 'true' : undefined,
         onClick: () => emit('click', node),
         onContextmenu: (e: MouseEvent) => emit('contextmenu', e, node),
+        onDragstart: isSynthSequence
+          ? (e: DragEvent) => {
+              e.dataTransfer?.setData('application/x-synthsequence-path', node.path)
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove'
+            }
+          : undefined,
       }, content)
 
       // Children for folders
