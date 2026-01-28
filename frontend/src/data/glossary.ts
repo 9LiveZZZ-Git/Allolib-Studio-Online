@@ -3000,6 +3000,268 @@ float wet = reverb(input);`,
     platforms: ['native'],
     relatedTerms: ['Parameter'],
   },
+
+  // ============================================================================
+  // SYNTHGUIMANAGER & CONTROL GUI
+  // ============================================================================
+  {
+    term: 'SynthGUIManager',
+    category: 'scene',
+    definition: 'Template class that combines PolySynth with GUI controls and preset management. Simplifies creating polyphonic synthesizers with parameter control.',
+    syntax: 'SynthGUIManager<MySynthVoice> synthManager{"SynthName"};',
+    example: `SynthGUIManager<SineEnv> synthManager{"SineEnv"};
+
+// Get a voice and trigger
+synthManager.voice()->setInternalParameterValue("frequency", 440);
+synthManager.triggerOn(midiNote);
+synthManager.triggerOff(midiNote);
+
+// Render audio and graphics
+synthManager.render(io);
+synthManager.render(g);`,
+    platforms: ['both'],
+    relatedTerms: ['PolySynth', 'SynthVoice', 'ControlGUI', 'PresetHandler'],
+  },
+  {
+    term: 'ControlGUI',
+    category: 'types',
+    definition: 'GUI controller that displays and manages Parameter objects. In native builds uses ImGui, in web builds maps to Vue Parameter Panel.',
+    syntax: 'ControlGUI gui;',
+    example: `Parameter amplitude{"Amplitude", "", 0.5f, 0.0f, 1.0f};
+Parameter frequency{"Frequency", "", 440.0f, 20.0f, 20000.0f};
+ControlGUI gui;
+
+void onCreate() override {
+    gui << amplitude << frequency;
+    gui.init();
+}
+
+void onAnimate(double dt) override {
+    gui.draw();
+}`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterGUI', 'SynthGUIManager'],
+  },
+  {
+    term: 'PresetHandler',
+    category: 'types',
+    definition: 'Manages saving and loading parameter presets to/from files. Supports morphing between presets.',
+    syntax: 'PresetHandler presets{"presets"};',
+    example: `PresetHandler presets{"presets"};
+presets << amplitude << frequency;
+presets.storePreset("brass");
+presets.recallPreset("brass");
+presets.setMorphTime(2.0);  // 2 second morph`,
+    platforms: ['native'],
+    webAlternative: 'Quick Save button creates .preset files in bin/{synthName}-data/',
+    relatedTerms: ['Parameter', 'ControlGUI', 'SynthGUIManager'],
+  },
+  {
+    term: 'ParameterBundle',
+    category: 'types',
+    definition: 'Groups multiple parameters together for organization and bulk operations.',
+    syntax: 'ParameterBundle bundle{"group"};',
+    example: `ParameterBundle bundle{"oscillator"};
+bundle << frequency << amplitude << detune;
+presets << bundle;`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'PresetHandler'],
+  },
+
+  // ============================================================================
+  // SYNTHVOICE PARAMETER METHODS
+  // ============================================================================
+  {
+    term: 'createInternalTriggerParameter',
+    category: 'scene',
+    definition: 'Creates a parameter inside a SynthVoice that is set when the voice is triggered. Used for per-note parameters like frequency, amplitude, etc.',
+    syntax: 'createInternalTriggerParameter("name", default, min, max);',
+    example: `void init() override {
+    createInternalTriggerParameter("frequency", 440, 20, 20000);
+    createInternalTriggerParameter("amplitude", 0.5, 0.0, 1.0);
+    createInternalTriggerParameter("attackTime", 0.1, 0.01, 3.0);
+}`,
+    platforms: ['both'],
+    relatedTerms: ['SynthVoice', 'getInternalParameterValue', 'setInternalParameterValue'],
+  },
+  {
+    term: 'getInternalParameterValue',
+    category: 'scene',
+    definition: 'Retrieves the current value of an internal trigger parameter within a SynthVoice.',
+    syntax: 'float value = getInternalParameterValue("name");',
+    example: `void onProcess(AudioIOData& io) override {
+    float freq = getInternalParameterValue("frequency");
+    float amp = getInternalParameterValue("amplitude");
+    osc.freq(freq);
+    // ...
+}`,
+    platforms: ['both'],
+    relatedTerms: ['SynthVoice', 'createInternalTriggerParameter', 'setInternalParameterValue'],
+  },
+  {
+    term: 'setInternalParameterValue',
+    category: 'scene',
+    definition: 'Sets the value of an internal trigger parameter on a SynthVoice before triggering.',
+    syntax: 'voice->setInternalParameterValue("name", value);',
+    example: `int midiNote = asciiToMIDI(k.key());
+if (midiNote > 0) {
+    float freq = pow(2.f, (midiNote - 69.f) / 12.f) * 440.f;
+    synthManager.voice()->setInternalParameterValue("frequency", freq);
+    synthManager.voice()->setInternalParameterValue("amplitude", 0.5f);
+    synthManager.triggerOn(midiNote);
+}`,
+    platforms: ['both'],
+    relatedTerms: ['SynthVoice', 'createInternalTriggerParameter', 'getInternalParameterValue'],
+  },
+
+  // ============================================================================
+  // KEYBOARD TO MIDI
+  // ============================================================================
+  {
+    term: 'asciiToMIDI',
+    category: 'io',
+    definition: 'Converts ASCII keyboard keys to MIDI note numbers. Maps QWERTY keyboard rows to piano-like layout.',
+    syntax: 'int midiNote = asciiToMIDI(key);',
+    example: `bool onKeyDown(Keyboard const& k) override {
+    int midiNote = asciiToMIDI(k.key());
+    if (midiNote > 0) {
+        float freq = pow(2.f, (midiNote - 69.f) / 12.f) * 440.f;
+        synthManager.voice()->setInternalParameterValue("frequency", freq);
+        synthManager.triggerOn(midiNote);
+    }
+    return true;
+}
+// ZXCVBNM = C3-B3, ASDFGHJ = C4-B4, QWERTYU = C5-B5`,
+    platforms: ['both'],
+    relatedTerms: ['Keyboard', 'SynthVoice', 'triggerOn'],
+  },
+  {
+    term: 'asciiToIndex',
+    category: 'io',
+    definition: 'Converts number keys 0-9 to index values. Useful for preset selection.',
+    syntax: 'int index = asciiToIndex(key);',
+    example: `if (k.shift()) {
+    int presetNum = asciiToIndex(k.key());
+    if (presetNum >= 0) {
+        synthManager.recallPreset(presetNum);
+    }
+}`,
+    platforms: ['both'],
+    relatedTerms: ['asciiToMIDI', 'PresetHandler'],
+  },
+
+  // ============================================================================
+  // GAMMA DSP - ADDITIONAL
+  // ============================================================================
+  {
+    term: 'gam::EnvFollow',
+    category: 'gamma',
+    definition: 'Envelope follower that tracks the amplitude of a signal. Useful for graphics that react to audio.',
+    syntax: 'gam::EnvFollow<> envFollow;',
+    example: `gam::EnvFollow<> mEnvFollow;
+
+void onProcess(AudioIOData& io) override {
+    while (io()) {
+        float sample = osc() * env();
+        mEnvFollow(sample);  // Track amplitude
+        io.out(0) = sample;
+    }
+}
+
+void onProcess(Graphics& g) override {
+    float amp = mEnvFollow.value();  // Use for visuals
+    g.scale(1.0 + amp);
+}`,
+    platforms: ['both'],
+    relatedTerms: ['gam::Env', 'gam::ADSR', 'SynthVoice'],
+  },
+  {
+    term: 'gam::sampleRate',
+    category: 'gamma',
+    definition: 'Sets or gets the global sample rate for all Gamma objects. Must be called before creating oscillators/envelopes.',
+    syntax: 'gam::sampleRate(44100);',
+    example: `void onCreate() override {
+    gam::sampleRate(44100);  // Set before using Gamma objects
+    // Now oscillators will be correctly tuned
+}`,
+    platforms: ['both'],
+    relatedTerms: ['gam::Sine', 'gam::Env', 'AudioIOData'],
+  },
+
+  // ============================================================================
+  // ADDITIONAL PARAMETER TYPES
+  // ============================================================================
+  {
+    term: 'Trigger',
+    category: 'types',
+    definition: 'A parameter that triggers an action when activated. Has no persistent value, just fires an event.',
+    syntax: 'Trigger trigger{"name", "group"};',
+    example: `Trigger resetTrigger{"Reset", ""};
+
+// Connect callback
+resetTrigger.registerChangeCallback([&](float) {
+    resetAllParameters();
+});`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterBool'],
+  },
+  {
+    term: 'ParameterColor',
+    category: 'types',
+    definition: 'Parameter that stores an RGBA color value.',
+    syntax: 'ParameterColor color{"name", "group"};',
+    example: `ParameterColor bgColor{"Background", "", Color(0.1, 0.1, 0.1)};
+
+void onDraw(Graphics& g) override {
+    g.clear(bgColor.get());
+}`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterVec4', 'Color'],
+  },
+  {
+    term: 'ParameterVec4',
+    category: 'types',
+    definition: 'Parameter that stores a 4D vector value.',
+    syntax: 'ParameterVec4 vec{"name", "group"};',
+    example: `ParameterVec4 lightDir{"Light Direction", ""};`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterVec3', 'Vec4f'],
+  },
+  {
+    term: 'ParameterChoice',
+    category: 'types',
+    definition: 'Parameter that selects from named options. Similar to ParameterMenu but with string labels.',
+    syntax: 'ParameterChoice choice{"name", "group"};',
+    example: `ParameterChoice waveform{"Waveform", ""};
+waveform.setElements({"Sine", "Square", "Saw", "Triangle"});`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterMenu'],
+  },
+
+  // ============================================================================
+  // WEB PLATFORM - COMPATIBILITY
+  // ============================================================================
+  {
+    term: 'al_playground_compat.hpp',
+    category: 'web',
+    definition: 'Compatibility header that allows code to compile on both native and web platforms. Provides stubs for ImGui and maps ControlGUI to WebControlGUI.',
+    syntax: '#include "al_playground_compat.hpp"',
+    example: `#include "al_playground_compat.hpp"
+
+// Works on both platforms:
+SynthGUIManager<MySynth> synthManager{"MySynth"};
+ControlGUI gui;  // WebControlGUI on web, real ControlGUI on native`,
+    platforms: ['both'],
+    relatedTerms: ['al_compat.hpp', 'ControlGUI', 'SynthGUIManager'],
+  },
+  {
+    term: 'WebControlGUI',
+    category: 'web',
+    definition: 'Web implementation of ControlGUI that bridges C++ parameters to the Vue Parameter Panel via JavaScript callbacks.',
+    syntax: 'using ControlGUI = WebControlGUI;  // automatic in al_playground_compat.hpp',
+    platforms: ['web'],
+    relatedTerms: ['ControlGUI', 'Parameter', 'al_playground_compat.hpp'],
+  },
 ]
 
 // Helper function to get entries by category
