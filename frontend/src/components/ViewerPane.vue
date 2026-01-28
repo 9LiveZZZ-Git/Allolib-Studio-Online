@@ -2,7 +2,10 @@
 import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { AllolibRuntime } from '@/services/runtime'
 import type { AppStatus } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import AnalysisPanel from './AnalysisPanel.vue'
+
+const settings = useSettingsStore()
 
 const props = defineProps<{
   status: AppStatus
@@ -87,6 +90,14 @@ watch(() => props.jsUrl, async (newUrl) => {
         onExit: (code) => emit('log', `[INFO] Exit code: ${code}`),
       })
 
+      // Apply limiter settings before loading (will be used when audio chain is created)
+      runtime.configureLimiter({
+        enabled: settings.audio.limiterEnabled,
+        threshold: settings.audio.limiterThreshold,
+        softClipEnabled: settings.audio.softClipEnabled,
+        softClipDrive: settings.audio.softClipDrive,
+      })
+
       // Load and start
       await runtime.load(newUrl)
       runtime.start()
@@ -104,6 +115,22 @@ watch(() => props.status, (newStatus) => {
     runtime.stop()
   }
 })
+
+// Watch for audio settings changes and update runtime limiter
+watch(
+  () => settings.audio,
+  (audioSettings) => {
+    if (runtime) {
+      runtime.configureLimiter({
+        enabled: audioSettings.limiterEnabled,
+        threshold: audioSettings.limiterThreshold,
+        softClipEnabled: audioSettings.softClipEnabled,
+        softClipDrive: audioSettings.softClipDrive,
+      })
+    }
+  },
+  { deep: true }
+)
 
 function handleResize() {
   if (containerRef.value && canvasRef.value) {

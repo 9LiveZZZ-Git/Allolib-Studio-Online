@@ -50,8 +50,8 @@ export const useSettingsStore = defineStore('settings', () => {
     channels: 2,
     limiterEnabled: true,
     limiterThreshold: -1, // dB - brick wall at -1dB
-    softClipEnabled: true,
-    softClipDrive: 1.5, // Gentle saturation
+    softClipEnabled: false, // Disabled by default for clean audio
+    softClipDrive: 1.5, // Saturation amount when enabled
   })
 
   // Compiler settings
@@ -118,7 +118,7 @@ export const useSettingsStore = defineStore('settings', () => {
       channels: 2,
       limiterEnabled: true,
       limiterThreshold: -1,
-      softClipEnabled: true,
+      softClipEnabled: false,
       softClipDrive: 1.5,
     }
     saveSettings()

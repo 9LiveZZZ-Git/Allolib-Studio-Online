@@ -71,7 +71,7 @@ export class AllolibRuntime {
   private limiterSettings = {
     enabled: true,
     threshold: -1,
-    softClipEnabled: true,
+    softClipEnabled: false, // Disabled by default for clean audio
     softClipDrive: 1.5,
   }
 
@@ -144,7 +144,8 @@ export class AllolibRuntime {
           sampleRate: 44100,
           latencyHint: 'interactive',
         })
-        this.onPrint(`[INFO] Audio context created (state: ${window.alloAudioContext.state})`)
+        // Log actual sample rate - browser may use different rate
+        this.onPrint(`[INFO] Audio context created (state: ${window.alloAudioContext.state}, sampleRate: ${window.alloAudioContext.sampleRate})`)
       }
 
       // Load the audio worklet processor
@@ -264,13 +265,20 @@ export class AllolibRuntime {
     if (settings.softClipEnabled !== undefined) this.limiterSettings.softClipEnabled = settings.softClipEnabled
     if (settings.softClipDrive !== undefined) this.limiterSettings.softClipDrive = settings.softClipDrive
 
-    // Update nodes if they exist
+    // Update limiter threshold if it exists
     if (window.alloLimiter && settings.threshold !== undefined) {
       window.alloLimiter.threshold.setValueAtTime(settings.threshold, window.alloAudioContext?.currentTime || 0)
     }
 
-    if (window.alloSoftClipper && settings.softClipDrive !== undefined) {
-      window.alloSoftClipper.curve = createSoftClipCurve(settings.softClipDrive)
+    // Update soft clipper curve
+    // When disabled, use null curve (bypass), when enabled use tanh curve
+    if (window.alloSoftClipper) {
+      if (this.limiterSettings.softClipEnabled) {
+        window.alloSoftClipper.curve = createSoftClipCurve(this.limiterSettings.softClipDrive)
+      } else {
+        // Bypass: null curve means linear passthrough
+        window.alloSoftClipper.curve = null
+      }
     }
   }
 
@@ -280,12 +288,10 @@ export class AllolibRuntime {
     if (!this.module || !window.alloWorkletNode) return
 
     try {
-      // Log first few requests for debugging
-      if (this.audioRequestCount < 5) {
-        console.log(`[Audio] Request ${this.audioRequestCount}: ${frames} frames, ${channels} channels`)
-        console.log(`[Audio] HEAPF32: ${this.module.HEAPF32 ? 'exists' : 'missing'}`)
-        console.log(`[Audio] _malloc: ${this.module._malloc ? 'exists' : 'missing'}`)
-        console.log(`[Audio] _allolib_process_audio: ${this.module._allolib_process_audio ? 'exists' : 'missing'}`)
+      // Log only first request for debugging (logging causes latency)
+      if (this.audioRequestCount === 0) {
+        console.log(`[Audio] First request: ${frames} frames, ${channels} channels`)
+        console.log(`[Audio] WASM functions available: HEAPF32=${!!this.module.HEAPF32}, _malloc=${!!this.module._malloc}, _allolib_process_audio=${!!this.module._allolib_process_audio}`)
       }
       this.audioRequestCount++
 
@@ -303,27 +309,19 @@ export class AllolibRuntime {
         return
       }
 
-      if (this.audioRequestCount <= 5) {
-        console.log(`[Audio] Calling WASM with bufferPtr=${bufferPtr}`)
-      }
-
       // Call WASM to fill the buffer
       this.module._allolib_process_audio(bufferPtr, frames, channels)
-
-      if (this.audioRequestCount <= 5) {
-        console.log(`[Audio] WASM call returned`)
-      }
 
       // Copy data from WASM memory to JavaScript
       // HEAPF32 is a Float32Array view, so bufferPtr is an element offset (not byte offset)
       const elementOffset = bufferPtr / 4  // Convert byte offset to float32 element offset
       const audioData = this.module.HEAPF32!.subarray(elementOffset, elementOffset + frames * channels)
 
-      // Log sample values for first few requests
-      if (this.audioRequestCount <= 5) {
-        const maxSample = Math.max(...Array.from(audioData).map(Math.abs))
-        console.log(`[Audio] Max sample value: ${maxSample}`)
-      }
+      // Logging disabled to reduce latency - uncomment for debugging
+      // if (this.audioRequestCount <= 5) {
+      //   const maxSample = Math.max(...Array.from(audioData).map(Math.abs))
+      //   console.log(`[Audio] Max: ${maxSample.toFixed(3)}`)
+      // }
 
       // Send to worklet (make a copy since we'll free the memory)
       const bufferCopy = audioData.slice()

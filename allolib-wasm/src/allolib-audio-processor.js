@@ -27,10 +27,12 @@ class AllolibProcessor extends AudioWorkletProcessor {
         this.bufferSize = processorOptions.bufferSize || 128;
         this.outputChannels = processorOptions.outputChannels || 2;
 
+        console.log(`[AudioWorklet] Initialized: bufferSize=${this.bufferSize}, channels=${this.outputChannels}, sampleRate=${sampleRate}`);
+
         // Audio buffer queue with timing
         this.bufferQueue = [];
-        this.maxQueueSize = 8;  // Allow larger queue for stability
-        this.minQueueSize = 2;  // Minimum buffers before requesting more
+        this.maxQueueSize = 16;  // Allow larger queue for stability
+        this.minQueueSize = 6;   // Keep more buffers queued to prevent underruns
 
         // Sample-accurate scheduling
         this.scheduledEvents = [];  // [{time: number, event: any}]
@@ -56,9 +58,10 @@ class AllolibProcessor extends AudioWorkletProcessor {
             this.handleMessage(event.data);
         };
 
-        // Request initial buffers
-        this.requestBuffer();
-        this.requestBuffer();
+        // Request initial buffers - need enough to build up queue before playback
+        for (let i = 0; i < 8; i++) {
+            this.requestBuffer();
+        }
     }
 
     handleMessage(data) {
@@ -196,6 +199,11 @@ class AllolibProcessor extends AudioWorkletProcessor {
         const numFrames = output[0].length;
         const bufferDuration = numFrames / sampleRate;
 
+        // Log only underruns, not every process call (logging is slow)
+        // if (this.totalFramesProcessed < 1000) {
+        //     console.log(`[AudioWorklet] process: numFrames=${numFrames}, numChannels=${numChannels}, queueLen=${this.bufferQueue.length}`);
+        // }
+
         // Process scheduled events for this time window
         this.processScheduledEvents(currentTime, currentTime + bufferDuration);
 
@@ -204,6 +212,11 @@ class AllolibProcessor extends AudioWorkletProcessor {
 
         if (bufferEntry && bufferEntry.data) {
             const buffer = bufferEntry.data;
+
+            // Log buffer info for debugging (disabled - logging causes latency)
+            // if (this.totalFramesProcessed < 1000) {
+            //     console.log(`[AudioWorklet] Buffer received: length=${buffer.length}, expected=${numFrames * numChannels}`);
+            // }
 
             // Copy buffer to output channels
             for (let channel = 0; channel < numChannels; channel++) {
@@ -241,7 +254,9 @@ class AllolibProcessor extends AudioWorkletProcessor {
         this.currentSample += numFrames;
 
         // Request more buffers if queue is getting low
+        // Request a couple at a time to catch up faster without flooding
         if (this.bufferQueue.length < this.minQueueSize) {
+            this.requestBuffer();
             this.requestBuffer();
         }
 

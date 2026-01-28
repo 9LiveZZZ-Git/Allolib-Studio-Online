@@ -149,26 +149,31 @@ ALLOLIB_WEB_MAIN(HelloSphere)
     subcategory: 'hello-world',
     code: `/**
  * Hello Audio - Your first audio application
- * Generates a simple sine wave tone
+ * Generates a pure sine wave tone (no Gamma, manual calculation)
  */
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
-#include "Gamma/Oscillator.h"
+#include <cmath>
 
 using namespace al;
 
 class HelloAudio : public WebApp {
 public:
     Mesh mesh;
-    gam::Sine<> osc{440.0f};
     float amplitude = 0.3f;
+    float frequency = 440.0f;
+    double phase = 0.0;
+    double phaseIncrement = 0.0;
 
     void onCreate() override {
         addSphere(mesh, 0.5, 32, 32);
         mesh.generateNormals();
         nav().pos(0, 0, 4);
         configureWebAudio(44100, 128, 2, 0);
+
+        // Calculate phase increment for 440Hz at 44100 sample rate
+        phaseIncrement = 2.0 * M_PI * frequency / 44100.0;
     }
 
     void onDraw(Graphics& g) override {
@@ -187,7 +192,15 @@ public:
 
     void onSound(AudioIOData& io) override {
         while (io()) {
-            float sample = osc() * amplitude;
+            // Pure sine wave using standard math
+            float sample = std::sin(phase) * amplitude;
+            phase += phaseIncrement;
+
+            // Keep phase in reasonable range
+            if (phase >= 2.0 * M_PI) {
+                phase -= 2.0 * M_PI;
+            }
+
             io.out(0) = sample;
             io.out(1) = sample;
         }
