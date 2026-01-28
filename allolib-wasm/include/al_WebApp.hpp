@@ -12,6 +12,10 @@
  * - Keyboard/mouse input handling
  * - Main loop management
  *
+ * API compatible with native al::App where possible:
+ * - nav(), pose(), lens(), view() for camera control
+ * - configureAudio() aliased to configureWebAudio()
+ *
  * Unlike the desktop App class, this does not include OSC networking
  * or other features that don't work in the browser.
  */
@@ -19,9 +23,12 @@
 #include "al/graphics/al_Graphics.hpp"
 #include "al/graphics/al_Mesh.hpp"
 #include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Lens.hpp"
+#include "al/graphics/al_Viewpoint.hpp"
 #include "al/io/al_AudioIOData.hpp"
 #include "al/io/al_Window.hpp"
 #include "al/math/al_Vec.hpp"
+#include "al/math/al_Matrix4.hpp"
 #include "al/spatial/al_Pose.hpp"
 
 #include <vector>
@@ -130,9 +137,33 @@ public:
     /// Get audio configuration
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
 
-    /// Get/set the navigation pose (camera position)
+    /// Get/set the navigation pose (camera position) - compatible with al::App
     Pose& nav() { return mNav; }
     const Pose& nav() const { return mNav; }
+
+    /// Get/set the camera pose - alias for nav() for al::App compatibility
+    Pose& pose() { return mNav; }
+    const Pose& pose() const { return mNav; }
+
+    /// Get/set the lens (projection settings) - al::App compatibility
+    Lens& lens() { return mViewpoint.lens(); }
+    const Lens& lens() const { return mViewpoint.lens(); }
+
+    /// Get/set the viewpoint (combined lens + pose) - al::App compatibility
+    Viewpoint& view() { return mViewpoint; }
+    const Viewpoint& view() const { return mViewpoint; }
+
+    /// Get aspect ratio of the window
+    double aspect() const { return mWidth > 0 && mHeight > 0 ? (double)mWidth / mHeight : 1.0; }
+
+    /// Get window dimensions
+    int width() const { return mWidth; }
+    int height() const { return mHeight; }
+
+    /// Alias for configureWebAudio - al::App compatibility
+    void configureAudio(int sampleRate, int bufferSize, int outputChannels, int inputChannels = 0) {
+        configureWebAudio(sampleRate, bufferSize, outputChannels, inputChannels);
+    }
 
     // =========================================================================
     // Audio processing (called from JavaScript)
@@ -175,8 +206,18 @@ private:
     // Audio
     AudioIOData* mAudioIO = nullptr;
 
-    // Navigation
+    // Navigation and view
     Pose mNav;
+    Viewpoint mViewpoint;
+
+    // Initialize viewpoint with nav pose
+    void initViewpoint() {
+        mViewpoint.pose(mNav);
+        // Default lens settings
+        mViewpoint.lens().fovy(60.0);
+        mViewpoint.lens().near(0.01);
+        mViewpoint.lens().far(1000.0);
+    }
 };
 
 /**

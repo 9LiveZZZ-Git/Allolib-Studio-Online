@@ -3,6 +3,13 @@ import { ref, computed } from 'vue'
 import type { AppStatus } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import { categories, examples, type Example } from '@/data/examples'
+import {
+  glossary,
+  categories as glossaryCategories,
+  getEntriesByCategory,
+  searchGlossary,
+  type GlossaryEntry
+} from '@/data/glossary'
 
 defineProps<{
   status: AppStatus
@@ -21,6 +28,8 @@ const emit = defineEmits<{
   fileOpen: []
   fileOpenFromDisk: []
   fileExport: []
+  importNative: []
+  exportNative: []
 }>()
 
 // File menu state
@@ -39,6 +48,8 @@ function handleFileAction(action: string) {
     case 'open': emit('fileOpen'); break
     case 'openFromDisk': emit('fileOpenFromDisk'); break
     case 'export': emit('fileExport'); break
+    case 'importNative': emit('importNative'); break
+    case 'exportNative': emit('exportNative'); break
   }
 }
 
@@ -108,6 +119,60 @@ function closeDropdown() {
   showExamples.value = false
   expandedCategory.value = null
   expandedSubcategory.value = null
+}
+
+// Glossary state
+const showGlossary = ref(false)
+const glossarySearch = ref('')
+const selectedGlossaryCategory = ref<string | null>(null)
+const selectedEntry = ref<GlossaryEntry | null>(null)
+const platformFilter = ref<'all' | 'native' | 'web' | 'both'>('all')
+
+const filteredGlossary = computed(() => {
+  let entries = glossarySearch.value
+    ? searchGlossary(glossarySearch.value)
+    : selectedGlossaryCategory.value
+      ? getEntriesByCategory(selectedGlossaryCategory.value)
+      : glossary
+
+  if (platformFilter.value !== 'all') {
+    entries = entries.filter(e =>
+      e.platforms.includes(platformFilter.value as 'native' | 'web' | 'both') ||
+      (platformFilter.value === 'both' && e.platforms.includes('both'))
+    )
+  }
+
+  return entries.sort((a, b) => a.term.localeCompare(b.term))
+})
+
+function openGlossary() {
+  showGlossary.value = true
+  glossarySearch.value = ''
+  selectedGlossaryCategory.value = null
+  selectedEntry.value = null
+}
+
+function closeGlossary() {
+  showGlossary.value = false
+}
+
+function selectGlossaryCategory(catId: string | null) {
+  selectedGlossaryCategory.value = catId
+  glossarySearch.value = ''
+  selectedEntry.value = null
+}
+
+function selectGlossaryEntry(entry: GlossaryEntry) {
+  selectedEntry.value = entry
+}
+
+function getPlatformBadgeClass(platform: string) {
+  switch (platform) {
+    case 'both': return 'bg-green-600'
+    case 'native': return 'bg-blue-600'
+    case 'web': return 'bg-purple-600'
+    default: return 'bg-gray-600'
+  }
 }
 </script>
 
@@ -208,6 +273,30 @@ function closeDropdown() {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
           <span>Export as .cpp</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
+        <div class="px-4 py-1 text-xs text-gray-500 font-medium">Cross-Platform</div>
+
+        <button
+          @click="handleFileAction('importNative')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <span>Import Native AlloLib...</span>
+        </button>
+
+        <button
+          @click="handleFileAction('exportNative')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+          </svg>
+          <span>Export for Desktop AlloLib</span>
         </button>
       </div>
 
@@ -741,6 +830,17 @@ function closeDropdown() {
       ></div>
     </div>
 
+    <!-- Glossary Button -->
+    <button
+      @click="openGlossary"
+      class="px-3 py-1.5 hover:bg-editor-active rounded text-sm transition-colors flex items-center gap-1"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+      </svg>
+      Glossary
+    </button>
+
     <!-- GitHub Link -->
     <a
       href="https://github.com/9LiveZZZ-Git/Allolib-Studio-Online"
@@ -753,4 +853,191 @@ function closeDropdown() {
       GitHub
     </a>
   </header>
+
+  <!-- Glossary Modal -->
+  <Teleport to="body">
+    <div v-if="showGlossary" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div class="bg-editor-bg border border-editor-border rounded-lg shadow-2xl w-[900px] max-w-[95vw] h-[80vh] flex flex-col">
+        <!-- Header -->
+        <div class="px-4 py-3 border-b border-editor-border flex items-center justify-between shrink-0">
+          <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+            <svg class="w-5 h-5 text-allolib-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            AlloLib Glossary
+          </h2>
+          <button @click="closeGlossary" class="text-gray-400 hover:text-white p-1">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Search and Filters -->
+        <div class="px-4 py-3 border-b border-editor-border flex items-center gap-4 shrink-0">
+          <div class="flex-1 relative">
+            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              v-model="glossarySearch"
+              type="text"
+              placeholder="Search glossary..."
+              class="w-full bg-editor-sidebar border border-editor-border rounded pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-allolib-blue"
+            />
+          </div>
+          <select
+            v-model="platformFilter"
+            class="bg-editor-sidebar border border-editor-border rounded px-3 py-2 text-sm"
+          >
+            <option value="all">All Platforms</option>
+            <option value="both">Cross-Platform</option>
+            <option value="native">Native Only</option>
+            <option value="web">Web Only</option>
+          </select>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex overflow-hidden min-h-0">
+          <!-- Category Sidebar -->
+          <div class="w-48 border-r border-editor-border overflow-y-auto shrink-0">
+            <button
+              @click="selectGlossaryCategory(null)"
+              :class="[
+                'w-full px-4 py-2 text-left text-sm hover:bg-editor-active transition-colors',
+                selectedGlossaryCategory === null && !glossarySearch ? 'bg-editor-active text-allolib-blue' : 'text-gray-300'
+              ]"
+            >
+              All Terms ({{ glossary.length }})
+            </button>
+            <div class="border-t border-editor-border my-1"></div>
+            <button
+              v-for="cat in glossaryCategories"
+              :key="cat.id"
+              @click="selectGlossaryCategory(cat.id)"
+              :class="[
+                'w-full px-4 py-2 text-left text-sm hover:bg-editor-active transition-colors',
+                selectedGlossaryCategory === cat.id ? 'bg-editor-active text-allolib-blue' : 'text-gray-300'
+              ]"
+            >
+              {{ cat.title }}
+            </button>
+          </div>
+
+          <!-- Terms List -->
+          <div class="w-64 border-r border-editor-border overflow-y-auto shrink-0">
+            <div v-if="filteredGlossary.length === 0" class="p-4 text-gray-500 text-sm text-center">
+              No terms found
+            </div>
+            <button
+              v-for="entry in filteredGlossary"
+              :key="entry.term"
+              @click="selectGlossaryEntry(entry)"
+              :class="[
+                'w-full px-4 py-2 text-left hover:bg-editor-active transition-colors border-b border-editor-border',
+                selectedEntry?.term === entry.term ? 'bg-editor-active' : ''
+              ]"
+            >
+              <div class="font-mono text-sm text-white">{{ entry.term }}</div>
+              <div class="flex gap-1 mt-1">
+                <span
+                  v-for="platform in entry.platforms"
+                  :key="platform"
+                  :class="[
+                    'text-[10px] px-1.5 py-0.5 rounded',
+                    getPlatformBadgeClass(platform)
+                  ]"
+                >
+                  {{ platform }}
+                </span>
+              </div>
+            </button>
+          </div>
+
+          <!-- Entry Detail -->
+          <div class="flex-1 overflow-y-auto p-4">
+            <div v-if="!selectedEntry" class="h-full flex items-center justify-center text-gray-500">
+              <div class="text-center">
+                <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                <p>Select a term to view details</p>
+              </div>
+            </div>
+
+            <div v-else class="space-y-4">
+              <!-- Term Header -->
+              <div>
+                <h3 class="text-2xl font-mono font-bold text-white">{{ selectedEntry.term }}</h3>
+                <div class="flex items-center gap-2 mt-2">
+                  <span class="text-xs px-2 py-1 bg-editor-sidebar rounded text-gray-400">
+                    {{ glossaryCategories.find(c => c.id === selectedEntry.category)?.title }}
+                  </span>
+                  <span
+                    v-for="platform in selectedEntry.platforms"
+                    :key="platform"
+                    :class="[
+                      'text-xs px-2 py-1 rounded',
+                      getPlatformBadgeClass(platform)
+                    ]"
+                  >
+                    {{ platform === 'both' ? 'Cross-Platform' : platform === 'native' ? 'Native' : 'Web' }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Definition -->
+              <div>
+                <h4 class="text-sm font-medium text-gray-400 mb-1">Definition</h4>
+                <p class="text-gray-200">{{ selectedEntry.definition }}</p>
+              </div>
+
+              <!-- Syntax -->
+              <div v-if="selectedEntry.syntax">
+                <h4 class="text-sm font-medium text-gray-400 mb-1">Syntax</h4>
+                <pre class="bg-editor-sidebar rounded p-3 text-sm font-mono text-green-400 overflow-x-auto">{{ selectedEntry.syntax }}</pre>
+              </div>
+
+              <!-- Example -->
+              <div v-if="selectedEntry.example">
+                <h4 class="text-sm font-medium text-gray-400 mb-1">Example</h4>
+                <pre class="bg-editor-sidebar rounded p-3 text-sm font-mono text-blue-300 overflow-x-auto whitespace-pre-wrap">{{ selectedEntry.example }}</pre>
+              </div>
+
+              <!-- Web Alternative -->
+              <div v-if="selectedEntry.webAlternative" class="bg-purple-900/30 border border-purple-700 rounded p-3">
+                <h4 class="text-sm font-medium text-purple-400 mb-1 flex items-center gap-1">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Web Alternative
+                </h4>
+                <p class="text-purple-200 text-sm">{{ selectedEntry.webAlternative }}</p>
+              </div>
+
+              <!-- Related Terms -->
+              <div v-if="selectedEntry.relatedTerms?.length">
+                <h4 class="text-sm font-medium text-gray-400 mb-2">Related Terms</h4>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="term in selectedEntry.relatedTerms"
+                    :key="term"
+                    @click="selectGlossaryEntry(glossary.find(e => e.term === term)!)"
+                    class="text-sm px-2 py-1 bg-editor-sidebar hover:bg-editor-active rounded text-allolib-blue"
+                  >
+                    {{ term }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-4 py-2 border-t border-editor-border text-xs text-gray-500 shrink-0">
+          {{ filteredGlossary.length }} terms | AlloLib Studio Online Glossary
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

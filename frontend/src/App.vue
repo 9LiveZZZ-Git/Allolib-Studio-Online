@@ -7,11 +7,25 @@ import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
 import Console from './components/Console.vue'
 import { defaultCode } from '@/utils/monaco-config'
+import {
+  transpileToWeb,
+  transpileToNative,
+  formatForExport,
+  detectCodeType,
+  getTranspileSummary,
+  type TranspileResult
+} from '@/services/transpiler'
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const currentFileName = ref('main.cpp')
+
+// Transpiler modal state
+const showTranspileModal = ref(false)
+const transpileResult = ref<TranspileResult | null>(null)
+const transpileTarget = ref<'native' | 'web'>('native')
+const pendingTranspiledCode = ref('')
 
 // Computed console height style
 const consoleHeightStyle = computed(() => ({
@@ -112,6 +126,100 @@ const handleConsoleResize = (height: number) => {
 const handleAnalysisResize = (height: number) => {
   settingsStore.display.analysisPanelHeight = height
 }
+
+// Transpiler handlers
+const handleImportNative = () => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.cpp,.c,.h,.hpp'
+  input.onchange = async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (file) {
+      const text = await file.text()
+      const codeType = detectCodeType(text)
+
+      if (codeType === 'web') {
+        // Already web code, just load it
+        editorRef.value?.setCode(text)
+        currentFileName.value = file.name
+        appStore.log(`[INFO] Loaded web code: ${file.name}`)
+      } else {
+        // Native code - transpile to web
+        const result = transpileToWeb(text)
+        transpileResult.value = result
+        transpileTarget.value = 'web'
+        pendingTranspiledCode.value = result.code
+
+        if (result.warnings.length > 0 || result.errors.length > 0) {
+          // Show modal with warnings/errors
+          showTranspileModal.value = true
+        } else {
+          // No issues, apply directly
+          editorRef.value?.setCode(result.code)
+          currentFileName.value = file.name.replace(/\.cpp$/, '_web.cpp')
+          appStore.log(`[INFO] Imported and converted to web: ${file.name}`)
+        }
+      }
+    }
+  }
+  input.click()
+}
+
+const handleExportNative = () => {
+  const code = editorRef.value?.getCode() || ''
+  const codeType = detectCodeType(code)
+
+  if (codeType === 'native') {
+    // Already native code, just export
+    const formatted = formatForExport(code, 'native')
+    downloadCode(formatted, currentFileName.value.replace(/_web\.cpp$/, '.cpp'))
+    appStore.log('[INFO] Exported native AlloLib code')
+  } else {
+    // Web code - transpile to native
+    const result = transpileToNative(code)
+    transpileResult.value = result
+    transpileTarget.value = 'native'
+    pendingTranspiledCode.value = formatForExport(result.code, 'native')
+
+    if (result.warnings.length > 0 || result.errors.length > 0) {
+      // Show modal with warnings/errors
+      showTranspileModal.value = true
+    } else {
+      // No issues, download directly
+      downloadCode(pendingTranspiledCode.value, currentFileName.value.replace(/_web\.cpp$/, '.cpp').replace(/\.cpp$/, '_native.cpp'))
+      appStore.log('[INFO] Exported as native AlloLib code')
+    }
+  }
+}
+
+const downloadCode = (code: string, filename: string) => {
+  const blob = new Blob([code], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const applyTranspile = () => {
+  if (transpileTarget.value === 'web') {
+    // Import: apply code to editor
+    editorRef.value?.setCode(pendingTranspiledCode.value)
+    appStore.log('[INFO] Applied transpiled web code')
+  } else {
+    // Export: download the code
+    downloadCode(pendingTranspiledCode.value, currentFileName.value.replace(/_web\.cpp$/, '.cpp').replace(/\.cpp$/, '_native.cpp'))
+    appStore.log('[INFO] Exported as native AlloLib code')
+  }
+  showTranspileModal.value = false
+}
+
+const cancelTranspile = () => {
+  showTranspileModal.value = false
+  transpileResult.value = null
+  pendingTranspiledCode.value = ''
+}
 </script>
 
 <template>
@@ -128,6 +236,8 @@ const handleAnalysisResize = (height: number) => {
       @file-open="handleFileOpen"
       @file-open-from-disk="handleFileOpenFromDisk"
       @file-export="handleFileExport"
+      @import-native="handleImportNative"
+      @export-native="handleExportNative"
     />
 
     <!-- Main Content -->
@@ -155,6 +265,76 @@ const handleAnalysisResize = (height: number) => {
           @log="appStore.log"
           @analysis-resize="handleAnalysisResize"
         />
+      </div>
+    </div>
+
+    <!-- Transpile Modal -->
+    <div v-if="showTranspileModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-editor-bg border border-editor-border rounded-lg shadow-xl max-w-lg w-full mx-4">
+        <div class="px-4 py-3 border-b border-editor-border">
+          <h3 class="text-white font-medium">
+            {{ transpileTarget === 'web' ? 'Import Native AlloLib Code' : 'Export for Desktop AlloLib' }}
+          </h3>
+        </div>
+
+        <div class="p-4 max-h-80 overflow-y-auto">
+          <!-- Errors -->
+          <div v-if="transpileResult?.errors?.length" class="mb-4">
+            <h4 class="text-red-400 font-medium mb-2 flex items-center gap-2">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+              </svg>
+              Errors
+            </h4>
+            <ul class="text-sm text-red-300 space-y-1">
+              <li v-for="(error, i) in transpileResult.errors" :key="i" class="bg-red-900/30 px-3 py-2 rounded">
+                {{ error }}
+              </li>
+            </ul>
+          </div>
+
+          <!-- Warnings -->
+          <div v-if="transpileResult?.warnings?.length" class="mb-4">
+            <h4 class="text-yellow-400 font-medium mb-2 flex items-center gap-2">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+              </svg>
+              Warnings
+            </h4>
+            <ul class="text-sm text-yellow-300 space-y-1">
+              <li v-for="(warning, i) in transpileResult.warnings" :key="i" class="bg-yellow-900/30 px-3 py-2 rounded">
+                {{ warning }}
+              </li>
+            </ul>
+          </div>
+
+          <!-- Info message -->
+          <p class="text-gray-400 text-sm">
+            <template v-if="transpileTarget === 'web'">
+              The code has been converted to AlloLib Online format. Review the warnings above before applying.
+            </template>
+            <template v-else>
+              The code has been converted to native AlloLib format. Review the warnings above before downloading.
+            </template>
+          </p>
+        </div>
+
+        <div class="px-4 py-3 border-t border-editor-border flex justify-end gap-2">
+          <button
+            @click="cancelTranspile"
+            class="px-4 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            @click="applyTranspile"
+            class="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded"
+            :disabled="transpileResult?.errors?.length"
+            :class="{ 'opacity-50 cursor-not-allowed': transpileResult?.errors?.length }"
+          >
+            {{ transpileTarget === 'web' ? 'Apply Code' : 'Download' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>

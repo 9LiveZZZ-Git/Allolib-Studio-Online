@@ -28,6 +28,8 @@ static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void*
 WebApp::WebApp() {
     // Default navigation position (camera at z=5 looking at origin)
     mNav.pos(0, 0, 5);
+    // Initialize viewpoint with nav pose
+    initViewpoint();
 }
 
 WebApp::~WebApp() {

@@ -49,19 +49,16 @@ public:
         lights[0].ambient(Color(0.1f, 0.0f, 0.0f));
         lights[0].diffuse(Color(1.0f, 0.2f, 0.2f));
         lights[0].specular(Color(1.0f, 0.5f, 0.5f));
-        lights[0].attenuation(1.0f, 0.1f, 0.01f);
 
         // Light 1: Green, orbiting
         lights[1].ambient(Color(0.0f, 0.1f, 0.0f));
         lights[1].diffuse(Color(0.2f, 1.0f, 0.2f));
         lights[1].specular(Color(0.5f, 1.0f, 0.5f));
-        lights[1].attenuation(1.0f, 0.1f, 0.01f);
 
         // Light 2: Blue, orbiting
         lights[2].ambient(Color(0.0f, 0.0f, 0.1f));
         lights[2].diffuse(Color(0.2f, 0.2f, 1.0f));
         lights[2].specular(Color(0.5f, 0.5f, 1.0f));
-        lights[2].attenuation(1.0f, 0.1f, 0.01f);
 
         // Light 3: White directional light from above
         lights[3].ambient(Color(0.1f, 0.1f, 0.1f));

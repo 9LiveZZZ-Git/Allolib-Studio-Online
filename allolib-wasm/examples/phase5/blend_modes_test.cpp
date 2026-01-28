@@ -148,7 +148,9 @@ public:
             g.rotate(time * 30 + i * 90, 0, 0, 1);
             g.translate(3.5f, 0, 1);
             g.scale(0.8f);
-            g.color(HSV(i / 4.0f + time * 0.1f, 0.8f, 1.0f).rgb(), 0.6f);
+            Color col(HSV(i / 4.0f + time * 0.1f, 0.8f, 1.0f));
+            col.a = 0.6f;
+            g.color(col);
             g.draw(quad);
             g.popMatrix();
         }

@@ -14,6 +14,7 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **WebGL2 Graphics** - 3D rendering with meshes, lighting, shaders, and textures
 - **Web Audio** - Real-time audio synthesis with Gamma DSP library
 - **22+ Examples** - Ready-to-run demos covering graphics, audio, and interaction
+- **Glossary** - 330+ searchable terms covering AlloLib and Gamma DSP APIs
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
 

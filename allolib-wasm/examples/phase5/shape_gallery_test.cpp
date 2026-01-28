@@ -40,8 +40,8 @@ public:
         // Create all shapes
         createShape("Sphere", [](Mesh& m) { addSphere(m, 1.0, 32, 32); }, HSV(0.0f, 0.7f, 1.0f));
         createShape("Cube", [](Mesh& m) { addCube(m, 1.5); }, HSV(0.1f, 0.7f, 1.0f));
-        createShape("Cone", [](Mesh& m) { addCone(m, 0.8, Vec3f(0, -1, 0), Vec3f(0, 1.5, 0), 32); }, HSV(0.2f, 0.7f, 1.0f));
-        createShape("Cylinder", [](Mesh& m) { addCylinder(m, 0.6, 2.0, 32, 1, true, true); }, HSV(0.3f, 0.7f, 1.0f));
+        createShape("Cone", [](Mesh& m) { addCone(m, 0.8, Vec3f(0, 0, 1.5), 32); }, HSV(0.2f, 0.7f, 1.0f));
+        createShape("Cylinder", [](Mesh& m) { addCylinder(m, 0.6, 2.0, 32); }, HSV(0.3f, 0.7f, 1.0f));
         createShape("Torus", [](Mesh& m) { addTorus(m, 0.3, 1.0, 32, 32); }, HSV(0.4f, 0.7f, 1.0f));
         createShape("Icosphere", [](Mesh& m) { addIcosphere(m, 1.0, 3); }, HSV(0.5f, 0.7f, 1.0f));
         createShape("Dodecahedron", [](Mesh& m) { addDodecahedron(m, 1.0); }, HSV(0.6f, 0.7f, 1.0f));
@@ -49,17 +49,8 @@ public:
         createShape("Tetrahedron", [](Mesh& m) { addTetrahedron(m, 1.2); }, HSV(0.8f, 0.7f, 1.0f));
         createShape("Rect", [](Mesh& m) { addRect(m, -1.0f, -0.75f, 2.0f, 1.5f); }, HSV(0.9f, 0.7f, 1.0f));
 
-        // Create a surface of revolution (vase-like shape)
-        createShape("Surface Loop", [](Mesh& m) {
-            std::vector<Vec3f> profile;
-            for (int i = 0; i <= 16; i++) {
-                float t = i / 16.0f;
-                float y = t * 2.0f - 1.0f;
-                float r = 0.3f + 0.3f * sin(t * M_PI * 2) + 0.1f * sin(t * M_PI * 4);
-                profile.push_back(Vec3f(r, y, 0));
-            }
-            addSurfaceLoop(m, profile.data(), profile.size(), 32, 0);
-        }, HSV(0.95f, 0.7f, 1.0f));
+        // Create a simple annulus (ring shape) as an alternative to surface loop
+        createShape("Annulus", [](Mesh& m) { addAnnulus(m, 0.5, 1.0, 32); }, HSV(0.95f, 0.7f, 1.0f));
 
         // Wire box
         createShape("Wire Box", [](Mesh& m) {

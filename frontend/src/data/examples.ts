@@ -48,6 +48,8 @@ export const categories: ExampleCategory[] = [
       { id: 'oscillators', title: 'Oscillators' },
       { id: 'envelopes', title: 'Envelopes' },
       { id: 'synthesis', title: 'Synthesis' },
+      { id: 'samples', title: 'Samples' },
+      { id: 'effects', title: 'Effects' },
     ],
   },
   {
@@ -1170,6 +1172,209 @@ public:
 ALLOLIB_WEB_MAIN(ProceduralTexture)
 `,
   },
+  {
+    id: 'web-image-texture',
+    title: 'Web Image Texture',
+    description: 'Load images from URL and use as textures',
+    category: 'graphics',
+    subcategory: 'textures',
+    code: `/**
+ * Web Image Texture
+ * Demonstrates loading images asynchronously using WebImage
+ * and applying them as textures to 3D objects.
+ *
+ * Press 1-3 to switch between procedurally generated textures
+ * Press R to reload (for testing different images)
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Texture.hpp"
+#include "al_WebImage.hpp"
+#include <vector>
+
+using namespace al;
+
+class WebImageTexture : public WebApp {
+public:
+    Mesh cubeMesh;
+    Mesh sphereMesh;
+    Texture texture;
+    WebImage image;
+
+    bool imageLoaded = false;
+    bool useProceduralTexture = true;
+    int textureType = 0;
+    double angle = 0;
+    double animTime = 0;
+
+    static const int TEX_SIZE = 256;
+
+    void onCreate() override {
+        // Create meshes with texture coordinates
+        addCube(cubeMesh, 1.5);
+        cubeMesh.generateNormals();
+
+        addSphere(sphereMesh, 1.0, 32, 32);
+        sphereMesh.generateNormals();
+
+        // Start with procedural texture
+        generateProceduralTexture();
+
+        // Note: To load an image from URL, uncomment and modify:
+        // image.load("https://example.com/texture.png");
+
+        nav().pos(0, 0, 5);
+    }
+
+    void generateProceduralTexture() {
+        std::vector<unsigned char> pixels(TEX_SIZE * TEX_SIZE * 4);
+
+        for (int y = 0; y < TEX_SIZE; ++y) {
+            for (int x = 0; x < TEX_SIZE; ++x) {
+                int idx = (y * TEX_SIZE + x) * 4;
+                float fx = x / (float)TEX_SIZE;
+                float fy = y / (float)TEX_SIZE;
+
+                switch (textureType) {
+                    case 0: // Checkerboard
+                    {
+                        bool check = ((x / 32) + (y / 32)) % 2;
+                        if (check) {
+                            pixels[idx + 0] = 50 + x * 200 / TEX_SIZE;
+                            pixels[idx + 1] = 100 + y * 150 / TEX_SIZE;
+                            pixels[idx + 2] = 200;
+                        } else {
+                            pixels[idx + 0] = 220;
+                            pixels[idx + 1] = 180 + y * 75 / TEX_SIZE;
+                            pixels[idx + 2] = 50;
+                        }
+                        break;
+                    }
+                    case 1: // Gradient circles
+                    {
+                        float cx = fx - 0.5f;
+                        float cy = fy - 0.5f;
+                        float d = sqrtf(cx*cx + cy*cy) * 2.0f;
+                        float wave = sinf(d * 20.0f) * 0.5f + 0.5f;
+                        pixels[idx + 0] = (unsigned char)(wave * 255);
+                        pixels[idx + 1] = (unsigned char)((1.0f - d) * 200);
+                        pixels[idx + 2] = (unsigned char)(d * 255);
+                        break;
+                    }
+                    case 2: // Noise-like pattern
+                    {
+                        float n = sinf(x * 0.1f) * cosf(y * 0.1f);
+                        n += sinf(x * 0.05f + y * 0.05f);
+                        n = n * 0.25f + 0.5f;
+                        pixels[idx + 0] = (unsigned char)(n * 200 + 55);
+                        pixels[idx + 1] = (unsigned char)(n * 150 + 50);
+                        pixels[idx + 2] = (unsigned char)((1.0f - n) * 200 + 55);
+                        break;
+                    }
+                }
+                pixels[idx + 3] = 255;
+            }
+        }
+
+        texture.create2D(TEX_SIZE, TEX_SIZE, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        texture.submit(pixels.data());
+        texture.filter(Texture::LINEAR);
+        texture.wrap(Texture::REPEAT);
+        useProceduralTexture = true;
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 20.0;
+        animTime += dt;
+
+        // Check if image finished loading
+        if (!imageLoaded && image.ready()) {
+            imageLoaded = true;
+            // Create texture from loaded image
+            texture.create2D(image.width(), image.height(),
+                           Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+            texture.submit(image.pixels());
+            texture.filter(Texture::LINEAR);
+            texture.wrap(Texture::REPEAT);
+            useProceduralTexture = false;
+            printf("Image texture applied: %dx%d\\n", image.width(), image.height());
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Draw textured cube
+        g.pushMatrix();
+        g.translate(-1.5f, 0, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.rotate(angle * 0.7f, 1, 0, 0);
+
+        texture.bind(0);
+        g.texture();
+        g.draw(cubeMesh);
+        texture.unbind(0);
+
+        g.popMatrix();
+
+        // Draw textured sphere
+        g.pushMatrix();
+        g.translate(1.5f, 0, 0);
+        g.rotate(angle * 0.5f, 0, 1, 0);
+
+        texture.bind(0);
+        g.texture();
+        g.draw(sphereMesh);
+        texture.unbind(0);
+
+        g.popMatrix();
+
+        // Loading indicator
+        if (!useProceduralTexture && !imageLoaded) {
+            g.pushMatrix();
+            g.translate(0, -2, 0);
+            g.rotate(animTime * 180, 0, 0, 1);
+            g.color(0.5f, 0.5f, 0.8f);
+            Mesh loader;
+            addRect(loader, 0.3f, 0.1f);
+            g.draw(loader);
+            g.popMatrix();
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        // Switch procedural textures
+        if (k.key() == '1') {
+            textureType = 0;
+            generateProceduralTexture();
+            printf("Texture: Checkerboard\\n");
+        }
+        if (k.key() == '2') {
+            textureType = 1;
+            generateProceduralTexture();
+            printf("Texture: Circles\\n");
+        }
+        if (k.key() == '3') {
+            textureType = 2;
+            generateProceduralTexture();
+            printf("Texture: Pattern\\n");
+        }
+        if (k.key() == 'r' || k.key() == 'R') {
+            // Example: reload image
+            // image.load("your-image-url.png");
+            // imageLoaded = false;
+            printf("Reload image (uncomment image.load() in code)\\n");
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(WebImageTexture)
+`,
+  },
 
   // ==========================================================================
   // AUDIO - Oscillators
@@ -1195,9 +1400,7 @@ class OscillatorTypes : public WebApp {
 public:
     Mesh mesh;
     gam::Sine<> sine{220.0f};
-    gam::Saw<> saw{220.0f};
-    gam::Square<> square{220.0f};
-    gam::Tri<> tri{220.0f};
+    gam::LFO<> lfo;  // LFO provides saw, square, triangle via methods
 
     int oscType = 0;
     float amplitude = 0.25f;
@@ -1208,6 +1411,7 @@ public:
         mesh.generateNormals();
         nav().pos(0, 0, 4);
         configureWebAudio(44100, 128, 2, 0);
+        lfo.freq(220.0f);
     }
 
     void onAnimate(double dt) override {
@@ -1239,9 +1443,9 @@ public:
             float sample = 0;
             switch (oscType) {
                 case 0: sample = sine() * amplitude; break;
-                case 1: sample = saw() * amplitude; break;
-                case 2: sample = square() * amplitude * 0.5f; break;
-                case 3: sample = tri() * amplitude; break;
+                case 1: sample = lfo.up() * amplitude; break;      // Saw (upward ramp)
+                case 2: sample = lfo.sqr() * amplitude * 0.5f; break;  // Square
+                case 3: sample = lfo.tri() * amplitude; break;     // Triangle
             }
             io.out(0) = sample;
             io.out(1) = sample;
@@ -1522,6 +1726,418 @@ public:
 };
 
 ALLOLIB_WEB_MAIN(AdditiveSynthesis)
+`,
+  },
+
+  // ==========================================================================
+  // AUDIO - Samples
+  // ==========================================================================
+  {
+    id: 'web-sample-player',
+    title: 'Web Sample Player',
+    description: 'Load and play audio samples using Web Audio API',
+    category: 'audio',
+    subcategory: 'samples',
+    code: `/**
+ * Web Sample Player
+ * Demonstrates loading and playing audio samples in the browser
+ * using the WebSamplePlayer (Web Audio API alternative to SoundFile)
+ *
+ * Press SPACE to trigger sample, 1-4 to change playback speed
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al_WebSamplePlayer.hpp"
+#include <cmath>
+
+using namespace al;
+
+class WebSamplePlayerDemo : public WebApp {
+public:
+    WebSamplePlayer sample;
+    Mesh waveformMesh;
+    Mesh progressMesh;
+
+    // Playback state
+    float playPosition = 0;       // Current sample position
+    float playbackSpeed = 1.0f;   // Playback rate
+    bool isPlaying = false;
+    bool isLoaded = false;
+
+    float amplitude = 0.8f;
+    double animTime = 0;
+
+    void onCreate() override {
+        // Create visual meshes
+        waveformMesh.primitive(Mesh::LINE_STRIP);
+        progressMesh.primitive(Mesh::TRIANGLES);
+
+        nav().pos(0, 0, 4);
+        configureWebAudio(44100, 128, 2, 0);
+
+        // Load a sample (you can change this URL to any audio file)
+        // Using a simple test tone URL - replace with your audio file
+        printf("[WebSamplePlayer] Loading sample...\\n");
+
+        // For demo purposes, we'll synthesize a simple sound
+        // In production, use: sample.load("path/to/your/sample.wav");
+        printf("NOTE: Replace the sample.load() URL with your audio file\\n");
+    }
+
+    void onAnimate(double dt) override {
+        animTime += dt;
+
+        // Check if sample loaded
+        if (!isLoaded && sample.ready()) {
+            isLoaded = true;
+            buildWaveformMesh();
+            printf("Sample loaded: %d channels, %d frames, %.0f Hz\\n",
+                   sample.channels(), sample.frames(), sample.sampleRate());
+        }
+    }
+
+    void buildWaveformMesh() {
+        if (!sample.ready()) return;
+
+        waveformMesh.reset();
+        waveformMesh.primitive(Mesh::LINE_STRIP);
+
+        // Build waveform display (downsample for visualization)
+        int frames = sample.frames();
+        int step = std::max(1, frames / 512);
+
+        for (int i = 0; i < frames; i += step) {
+            float x = (float(i) / frames) * 6.0f - 3.0f;
+            float y = sample.read(0, i);  // Left channel
+            waveformMesh.vertex(x, y * 1.5f, 0);
+            waveformMesh.color(0.3f, 0.7f, 1.0f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+
+        if (isLoaded) {
+            // Draw waveform
+            g.lineWidth(1.5f);
+            g.pushMatrix();
+            g.translate(0, 0.5f, 0);
+            g.draw(waveformMesh);
+            g.popMatrix();
+
+            // Draw playback position indicator
+            float progress = playPosition / sample.frames();
+            float indicatorX = progress * 6.0f - 3.0f;
+
+            g.pushMatrix();
+            g.translate(indicatorX, 0.5f, 0);
+            g.color(1.0f, 0.4f, 0.2f);
+            Mesh indicator;
+            addCube(indicator, 0.05f);
+            indicator.generateNormals();
+            g.draw(indicator);
+            g.popMatrix();
+
+            // Draw speed indicator
+            g.pushMatrix();
+            g.translate(0, -1.5f, 0);
+            float speedWidth = playbackSpeed * 0.5f;
+            g.color(0.2f, 0.8f, 0.4f);
+            Mesh speedBar;
+            addRect(speedBar, speedWidth, 0.1f);
+            g.draw(speedBar);
+            g.popMatrix();
+        } else {
+            // Loading indicator
+            g.pushMatrix();
+            g.rotate(animTime * 180, 0, 0, 1);
+            g.color(0.5f, 0.5f, 0.8f);
+            Mesh loader;
+            addRect(loader, 0.5f, 0.1f);
+            g.draw(loader);
+            g.popMatrix();
+        }
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float outL = 0, outR = 0;
+
+            if (isPlaying && isLoaded) {
+                // Read with interpolation for pitch shifting
+                outL = sample.readInterp(0, playPosition) * amplitude;
+                if (sample.channels() > 1) {
+                    outR = sample.readInterp(1, playPosition) * amplitude;
+                } else {
+                    outR = outL;
+                }
+
+                // Advance position
+                playPosition += playbackSpeed;
+
+                // Loop or stop at end
+                if (playPosition >= sample.frames()) {
+                    playPosition = 0;  // Loop
+                    // Or: isPlaying = false; // One-shot
+                }
+            }
+
+            io.out(0) = outL;
+            io.out(1) = outR;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            if (isLoaded) {
+                isPlaying = !isPlaying;
+                if (isPlaying) {
+                    playPosition = 0;  // Start from beginning
+                }
+                printf("%s\\n", isPlaying ? "Playing" : "Stopped");
+            }
+        }
+
+        // Change playback speed
+        if (k.key() == '1') { playbackSpeed = 0.5f; printf("Speed: 0.5x\\n"); }
+        if (k.key() == '2') { playbackSpeed = 1.0f; printf("Speed: 1.0x\\n"); }
+        if (k.key() == '3') { playbackSpeed = 1.5f; printf("Speed: 1.5x\\n"); }
+        if (k.key() == '4') { playbackSpeed = 2.0f; printf("Speed: 2.0x\\n"); }
+
+        // Scrub with arrow keys
+        if (k.key() == Keyboard::LEFT && isLoaded) {
+            playPosition = std::max(0.0f, playPosition - sample.sampleRate() * 0.1f);
+        }
+        if (k.key() == Keyboard::RIGHT && isLoaded) {
+            playPosition = std::min((float)(sample.frames() - 1),
+                                   playPosition + sample.sampleRate() * 0.1f);
+        }
+
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(WebSamplePlayerDemo)
+`,
+  },
+
+  // ==========================================================================
+  // AUDIO - Effects
+  // ==========================================================================
+  {
+    id: 'reverb-filter-chain',
+    title: 'Reverb & Filter Chain',
+    description: 'Audio effects chain with reverb and filters',
+    category: 'audio',
+    subcategory: 'effects',
+    code: `/**
+ * Reverb & Filter Chain
+ * Demonstrates al::Reverb (Dattorro plate reverb) with filter processing
+ *
+ * Press SPACE to trigger sound
+ * 1-3=Reverb size, R=Toggle reverb, F=Toggle filter
+ * UP/DOWN=Filter frequency
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/sound/al_Reverb.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Filter.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class ReverbFilterChain : public WebApp {
+public:
+    // Sound source
+    Sine<> osc;
+    NoisePink<> noise;
+    ADSR<> env;
+
+    // Effects
+    Reverb<float> reverb;
+    Biquad<> lowpass;
+    Biquad<> highpass;
+
+    // State
+    bool reverbEnabled = true;
+    bool filterEnabled = true;
+    float filterFreq = 2000.0f;
+    float reverbMix = 0.3f;
+    float reverbDecay = 0.85f;
+
+    // Visualization
+    Mesh sphereMesh;
+    float visualLevel = 0;
+    float reverbLevel = 0;
+    double time = 0;
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        // Configure oscillator
+        osc.freq(220.0f);
+
+        // Configure envelope
+        env.attack(0.01f);
+        env.decay(0.2f);
+        env.sustain(0.3f);
+        env.release(0.5f);
+
+        // Configure reverb
+        reverb.bandwidth(0.9f);
+        reverb.damping(0.5f);
+        reverb.decay(reverbDecay);
+        reverb.diffusion(0.8f, 0.8f, 0.7f, 0.6f);
+
+        // Configure filters
+        lowpass.type(LOW_PASS);
+        lowpass.freq(filterFreq);
+        lowpass.res(1.5f);
+
+        highpass.type(HIGH_PASS);
+        highpass.freq(80.0f);
+
+        // Create mesh
+        addSphere(sphereMesh, 1.0f, 32, 32);
+        sphereMesh.generateNormals();
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        visualLevel *= 0.95f;  // Decay
+        reverbLevel *= 0.98f;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.06f, 0.06f, 0.1f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Main sphere (dry signal)
+        g.pushMatrix();
+        g.translate(-1.5f, 0, 0);
+        float dryScale = 0.5f + visualLevel * 0.5f;
+        g.scale(dryScale);
+        g.color(0.3f + visualLevel * 0.7f, 0.5f, 0.8f);
+        g.draw(sphereMesh);
+        g.popMatrix();
+
+        // Reverb sphere (wet signal)
+        g.pushMatrix();
+        g.translate(1.5f, 0, 0);
+        float wetScale = 0.3f + reverbLevel * 0.7f;
+        g.scale(wetScale);
+        g.color(0.8f, 0.4f + reverbLevel * 0.4f, 0.3f);
+        g.draw(sphereMesh);
+        g.popMatrix();
+
+        // Filter indicator
+        g.pushMatrix();
+        g.translate(0, -1.5f, 0);
+        float filterNorm = (filterFreq - 100.0f) / 4900.0f;
+        g.color(filterEnabled ? Color(0.2f, 0.8f, 0.4f) : Color(0.4f, 0.4f, 0.4f));
+        Mesh filterBar;
+        addRect(filterBar, filterNorm * 2.0f, 0.1f);
+        g.draw(filterBar);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            // Generate sound
+            float e = env();
+            float dry = (osc() * 0.7f + noise() * 0.3f) * e * 0.5f;
+
+            // Track level for visualization
+            visualLevel = std::max(visualLevel, std::abs(dry));
+
+            // Apply filter
+            float filtered = dry;
+            if (filterEnabled) {
+                filtered = lowpass(filtered);
+                filtered = highpass(filtered);
+            }
+
+            // Apply reverb
+            float wet = 0;
+            if (reverbEnabled) {
+                float reverbIn = filtered;
+                float reverbOutL, reverbOutR;
+                reverb(reverbIn, reverbOutL, reverbOutR);
+                wet = (reverbOutL + reverbOutR) * 0.5f;
+                reverbLevel = std::max(reverbLevel, std::abs(wet) * 2.0f);
+            }
+
+            // Mix dry and wet
+            float out = filtered * (1.0f - reverbMix) + wet * reverbMix;
+
+            // Soft clip
+            out = std::tanh(out * 1.5f);
+
+            io.out(0) = out;
+            io.out(1) = out;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            env.reset();
+            osc.freq(220.0f + (rand() % 220));
+        }
+
+        // Reverb presets
+        if (k.key() == '1') {
+            reverbDecay = 0.7f;
+            reverb.decay(reverbDecay);
+            printf("Reverb: Small room\\n");
+        }
+        if (k.key() == '2') {
+            reverbDecay = 0.85f;
+            reverb.decay(reverbDecay);
+            printf("Reverb: Medium hall\\n");
+        }
+        if (k.key() == '3') {
+            reverbDecay = 0.95f;
+            reverb.decay(reverbDecay);
+            printf("Reverb: Large hall\\n");
+        }
+
+        // Toggle effects
+        if (k.key() == 'r' || k.key() == 'R') {
+            reverbEnabled = !reverbEnabled;
+            printf("Reverb: %s\\n", reverbEnabled ? "ON" : "OFF");
+        }
+        if (k.key() == 'f' || k.key() == 'F') {
+            filterEnabled = !filterEnabled;
+            printf("Filter: %s\\n", filterEnabled ? "ON" : "OFF");
+        }
+
+        // Filter frequency
+        if (k.key() == Keyboard::UP) {
+            filterFreq = std::min(5000.0f, filterFreq * 1.2f);
+            lowpass.freq(filterFreq);
+            printf("Filter freq: %.0f Hz\\n", filterFreq);
+        }
+        if (k.key() == Keyboard::DOWN) {
+            filterFreq = std::max(100.0f, filterFreq / 1.2f);
+            lowpass.freq(filterFreq);
+            printf("Filter freq: %.0f Hz\\n", filterFreq);
+        }
+
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ReverbFilterChain)
 `,
   },
 
@@ -2317,7 +2933,7 @@ class AudioReactive : public WebApp {
 public:
     Mesh mesh;
     Sine<> osc{220.0f};
-    Saw<> lfo{0.5f};
+    LFO<> lfo;  // LFO for modulation
     ADSR<> env{0.01f, 0.1f, 0.5f, 0.3f};
     OnePole<> smoother{0.1f};
 
@@ -2330,6 +2946,7 @@ public:
         mesh.generateNormals();
         nav().pos(0, 0, 5);
         configureWebAudio(44100, 128, 2, 0);
+        lfo.freq(0.5f);  // Slow modulation
     }
 
     void onAnimate(double dt) override {
@@ -2371,7 +2988,7 @@ public:
     void onSound(AudioIOData& io) override {
         float sum = 0;
         while (io()) {
-            float mod = 1.0f + lfo() * 0.5f;
+            float mod = 1.0f + lfo.up() * 0.5f;  // Use saw ramp for modulation
             osc.freq(220.0f * mod);
             float s = osc() * env() * 0.3f;
             sum += fabs(s);
@@ -3267,7 +3884,9 @@ using namespace gam;
 
 class GammaDSPTest : public WebApp {
 public:
-    Sine<> sine; Saw<> saw; Square<> square; Tri<> tri; Pulse<> pulse;
+    // Sine oscillator and LFO for other waveforms
+    Sine<> sine;
+    LFO<> lfo;  // LFO provides saw, square, triangle, pulse via methods
     NoisePink<> pink;
     ADSR<> adsr;
     Biquad<> lowpass, highpass;
@@ -3285,13 +3904,14 @@ public:
 
     void onCreate() override {
         gam::sampleRate(44100);
-        sine.freq(baseFreq); saw.freq(baseFreq); square.freq(baseFreq);
-        tri.freq(baseFreq); pulse.freq(baseFreq); pulse.width(0.3f);
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
+        lfo.mod(0.3f);  // Pulse width for pulse wave
 
         adsr.attack(0.01f); adsr.decay(0.1f); adsr.sustain(0.7f); adsr.release(0.3f);
 
-        lowpass.type(Biquad<>::LOW_PASS); lowpass.freq(2000); lowpass.res(2);
-        highpass.type(Biquad<>::HIGH_PASS); highpass.freq(100);
+        lowpass.type(LOW_PASS); lowpass.freq(2000); lowpass.res(2);
+        highpass.type(HIGH_PASS); highpass.freq(100);
 
         delay.maxDelay(1.0f); delay.delay(0.3f);
         comb1.delay(0.035f); comb1.decay(0.5f);
@@ -3331,11 +3951,11 @@ public:
             float osc = 0;
             switch (oscType) {
                 case 0: osc = sine(); break;
-                case 1: osc = saw(); break;
-                case 2: osc = square(); break;
-                case 3: osc = tri(); break;
-                case 4: osc = pulse(); break;
-                case 5: osc = pink(); break;
+                case 1: osc = lfo.up(); break;      // Saw (upward ramp)
+                case 2: osc = lfo.sqr(); break;     // Square
+                case 3: osc = lfo.tri(); break;     // Triangle
+                case 4: osc = lfo.pulse(); break;   // Pulse
+                case 5: osc = pink(); break;        // Pink noise
             }
             float s = osc * env * 0.5f;
             if (filterOn) { s = lowpass(s); s = highpass(s); }
@@ -3346,7 +3966,7 @@ public:
                 float r = (comb1(s) + comb2(s)) * 0.3f;
                 s = s * 0.7f + d * 0.3f + r * 0.2f;
             }
-            s = tanh(s);
+            s = std::tanh(s);
             io.out(0) = s; io.out(1) = s;
         }
     }
@@ -3362,12 +3982,1530 @@ public:
     }
 
     void updateFreq() {
-        sine.freq(baseFreq); saw.freq(baseFreq); square.freq(baseFreq);
-        tri.freq(baseFreq); pulse.freq(baseFreq);
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
     }
 };
 
 ALLOLIB_WEB_MAIN(GammaDSPTest)
+`,
+  },
+  {
+    id: 'gamma-oscillators-full',
+    title: 'Gamma Oscillators (All Types)',
+    description: 'Complete showcase of all Gamma oscillator types including band-limited',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Gamma Oscillators - Complete Showcase
+ * Demonstrates ALL Gamma oscillator types:
+ * 1=Sine, 2=LFO Saw, 3=LFO Square, 4=LFO Triangle, 5=LFO Pulse
+ * 6=Band-Limited Saw, 7=Band-Limited Square, 8=Buzz, 9=DSF
+ * UP/DOWN=frequency, SPACE=trigger
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaOscillatorsShowcase : public WebApp {
+public:
+    // Computed sine
+    Sine<> sine;
+
+    // LFO - non-band-limited, efficient for low frequencies
+    LFO<> lfo;
+
+    // Band-limited oscillators - use at audio rates to avoid aliasing
+    Saw<> blSaw;      // Band-limited saw
+    Square<> blSquare; // Band-limited square
+
+    // Advanced oscillators
+    Buzz<> buzz;  // Impulse train (sum of cosines)
+    DSF<> dsf;    // Discrete Summation Formula
+
+    // Envelope
+    ADSR<> adsr;
+
+    // Current state
+    int oscType = 0;
+    float baseFreq = 220.0f;
+
+    // Waveform display
+    Mesh waveform;
+    float buffer[512];
+    int bufIdx = 0;
+
+    // Info display
+    const char* oscNames[9] = {
+        "Sine (computed)",
+        "LFO Saw (non-BL)",
+        "LFO Square (non-BL)",
+        "LFO Triangle (non-BL)",
+        "LFO Pulse (non-BL)",
+        "Band-Limited Saw",
+        "Band-Limited Square",
+        "Buzz (impulse train)",
+        "DSF (spectral)"
+    };
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        // Initialize oscillators
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
+        lfo.mod(0.3f);  // Pulse width
+        blSaw.freq(baseFreq);
+        blSquare.freq(baseFreq);
+        buzz.freq(baseFreq);
+        buzz.harmonics(12);
+        dsf.freq(baseFreq);
+        dsf.harmonics(8);
+        dsf.freqRatio(1.0);
+        dsf.ampRatio(0.5);
+
+        // Envelope
+        adsr.attack(0.01f);
+        adsr.decay(0.1f);
+        adsr.sustain(0.7f);
+        adsr.release(0.5f);
+
+        // Waveform display
+        waveform.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 512; i++) {
+            buffer[i] = 0;
+            waveform.vertex((i / 511.0f) * 6.0f - 3.0f, 0, 0);
+            waveform.color(0.4f, 0.9f, 0.5f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+        adsr.reset();
+    }
+
+    void onAnimate(double dt) override {
+        // Update waveform vertices
+        for (int i = 0; i < 512; i++) {
+            waveform.vertices()[i].y = buffer[i] * 2.0f;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+
+        // Draw waveform
+        g.lineWidth(2);
+        g.pushMatrix();
+        g.translate(0, 0, 0);
+        g.draw(waveform);
+        g.popMatrix();
+
+        // Draw info box background
+        g.pushMatrix();
+        g.translate(0, 1.8f, 0);
+        g.color(0.2f, 0.2f, 0.3f, 0.8f);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float env = adsr();
+            float osc = 0;
+
+            switch (oscType) {
+                case 0: osc = sine(); break;
+                case 1: osc = lfo.up(); break;
+                case 2: osc = lfo.sqr(); break;
+                case 3: osc = lfo.tri(); break;
+                case 4: osc = lfo.pulse(); break;
+                case 5: osc = blSaw(); break;
+                case 6: osc = blSquare(); break;
+                case 7: osc = buzz(); break;
+                case 8: osc = dsf(); break;
+            }
+
+            float s = osc * env * 0.4f;
+
+            // Store for visualization
+            buffer[bufIdx] = s;
+            bufIdx = (bufIdx + 1) % 512;
+
+            // Soft clip for safety
+            s = std::tanh(s * 1.5f);
+
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '9') {
+            oscType = k.key() - '1';
+            printf("Oscillator: %s\\n", oscNames[oscType]);
+        }
+        if (k.key() == ' ') {
+            adsr.reset();
+        }
+        if (k.key() == Keyboard::UP) {
+            baseFreq = std::min(baseFreq * 1.1f, 4000.0f);
+            updateFrequencies();
+        }
+        if (k.key() == Keyboard::DOWN) {
+            baseFreq = std::max(baseFreq / 1.1f, 27.5f);
+            updateFrequencies();
+        }
+        return true;
+    }
+
+    void updateFrequencies() {
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
+        blSaw.freq(baseFreq);
+        blSquare.freq(baseFreq);
+        buzz.freq(baseFreq);
+        dsf.freq(baseFreq);
+        printf("Frequency: %.1f Hz\\n", baseFreq);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaOscillatorsShowcase)
+`,
+  },
+  {
+    id: 'gamma-fft-analysis',
+    title: 'Gamma FFT Spectral Analysis',
+    description: 'Real-time FFT visualization using Gamma STFT',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Gamma FFT - Real-time Spectral Analysis
+ * Shows frequency spectrum of different waveforms
+ * 1=Sine, 2=Saw, 3=Square, 4=Triangle, 5=Noise
+ * UP/DOWN=frequency, LEFT/RIGHT=harmonics (for Buzz)
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/DFT.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaFFTAnalysis : public WebApp {
+public:
+    static const int FFT_SIZE = 1024;
+    static const int HOP_SIZE = 256;
+    static const int NUM_BINS = FFT_SIZE / 2 + 1;
+
+    // Oscillators
+    Sine<> sine;
+    LFO<> lfo;
+    Buzz<> buzz;
+    NoisePink<> noise;
+
+    // FFT analysis
+    STFT stft;
+    float magnitudes[NUM_BINS];
+
+    // Display meshes
+    Mesh spectrumBars;
+    Mesh waveformLine;
+    float waveBuffer[512];
+    int waveIdx = 0;
+
+    int oscType = 0;
+    float baseFreq = 220.0f;
+    int numHarmonics = 16;
+
+    const char* oscNames[5] = {
+        "Sine", "Saw (LFO)", "Square (LFO)", "Triangle (LFO)", "Noise"
+    };
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        // Initialize oscillators
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
+        buzz.freq(baseFreq);
+        buzz.harmonics(numHarmonics);
+
+        // Initialize STFT with Hann window
+        stft.resize(FFT_SIZE, HOP_SIZE);
+
+        // Clear magnitudes
+        for (int i = 0; i < NUM_BINS; i++) {
+            magnitudes[i] = 0;
+        }
+
+        // Create spectrum visualization mesh
+        spectrumBars.primitive(Mesh::LINES);
+        for (int i = 0; i < 256; i++) {
+            float x = (i / 255.0f) * 5.0f - 2.5f;
+            spectrumBars.vertex(x, -1.5f, 0);
+            spectrumBars.color(0.2f, 0.6f, 1.0f);
+            spectrumBars.vertex(x, -1.5f, 0);
+            spectrumBars.color(0.4f, 0.9f, 1.0f);
+        }
+
+        // Create waveform line mesh
+        waveformLine.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 512; i++) {
+            waveBuffer[i] = 0;
+            float x = (i / 511.0f) * 5.0f - 2.5f;
+            waveformLine.vertex(x, 1.0f, 0);
+            waveformLine.color(0.3f, 1.0f, 0.5f);
+        }
+
+        nav().pos(0, 0, 6);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        // Update spectrum bars
+        for (int i = 0; i < 256; i++) {
+            int binIdx = (i * NUM_BINS) / 256;
+            float mag = magnitudes[binIdx];
+            // Log scale for better visualization
+            float height = mag > 0.0001f ? (log10f(mag) + 4) * 0.5f : 0;
+            height = std::max(0.0f, std::min(2.5f, height));
+
+            spectrumBars.vertices()[i * 2 + 1].y = -1.5f + height;
+
+            // Color based on height
+            float hue = height / 2.5f;
+            spectrumBars.colors()[i * 2 + 1] = HSV(0.6f - hue * 0.4f, 0.8f, 0.5f + hue * 0.5f);
+        }
+
+        // Update waveform
+        for (int i = 0; i < 512; i++) {
+            waveformLine.vertices()[i].y = 1.0f + waveBuffer[i] * 0.8f;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.1f);
+
+        // Draw spectrum
+        g.lineWidth(3);
+        g.draw(spectrumBars);
+
+        // Draw waveform
+        g.lineWidth(2);
+        g.draw(waveformLine);
+
+        // Draw frequency axis labels would go here in a full implementation
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float s = 0;
+
+            switch (oscType) {
+                case 0: s = sine(); break;
+                case 1: s = lfo.up(); break;
+                case 2: s = lfo.sqr(); break;
+                case 3: s = lfo.tri(); break;
+                case 4: s = noise() * 0.5f; break;
+            }
+
+            // Store for waveform display
+            waveBuffer[waveIdx] = s;
+            waveIdx = (waveIdx + 1) % 512;
+
+            // Feed into STFT
+            if (stft(s * 0.5f)) {
+                // FFT frame ready - extract magnitudes
+                Complex<float>* bins = stft.bins();
+                for (int i = 0; i < NUM_BINS; i++) {
+                    magnitudes[i] = bins[i].mag();
+                }
+            }
+
+            // Output
+            float out = s * 0.3f;
+            io.out(0) = out;
+            io.out(1) = out;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '5') {
+            oscType = k.key() - '1';
+            printf("Source: %s\\n", oscNames[oscType]);
+        }
+        if (k.key() == Keyboard::UP) {
+            baseFreq = std::min(baseFreq * 1.1f, 4000.0f);
+            updateFreq();
+        }
+        if (k.key() == Keyboard::DOWN) {
+            baseFreq = std::max(baseFreq / 1.1f, 55.0f);
+            updateFreq();
+        }
+        if (k.key() == Keyboard::RIGHT) {
+            numHarmonics = std::min(numHarmonics + 2, 64);
+            buzz.harmonics(numHarmonics);
+            printf("Harmonics: %d\\n", numHarmonics);
+        }
+        if (k.key() == Keyboard::LEFT) {
+            numHarmonics = std::max(numHarmonics - 2, 1);
+            buzz.harmonics(numHarmonics);
+            printf("Harmonics: %d\\n", numHarmonics);
+        }
+        return true;
+    }
+
+    void updateFreq() {
+        sine.freq(baseFreq);
+        lfo.freq(baseFreq);
+        buzz.freq(baseFreq);
+        printf("Frequency: %.1f Hz\\n", baseFreq);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaFFTAnalysis)
+`,
+  },
+  {
+    id: 'gamma-envelopes',
+    title: 'Gamma Envelopes Showcase',
+    description: 'All Gamma envelope types: AD, ADSR, Decay, Seg, Curve',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Gamma Envelopes - Complete Showcase
+ * 1=AD, 2=ADSR, 3=Decay, 4=Curve, 5=Seg
+ * SPACE=trigger, UP/DOWN=attack time, LEFT/RIGHT=decay/release
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaEnvelopesShowcase : public WebApp {
+public:
+    // Oscillator
+    Sine<> osc;
+
+    // Envelope types
+    AD<> envAD;
+    ADSR<> envADSR;
+    Decay<> envDecay;
+    Curve<> envCurve;
+    Seg<> envSeg;
+
+    // Envelope parameters
+    float attackTime = 0.05f;
+    float decayTime = 0.3f;
+    float sustainLevel = 0.6f;
+    float releaseTime = 0.5f;
+
+    int envType = 1;  // Start with ADSR
+    bool keyHeld = false;
+
+    // Envelope visualization
+    Mesh envMesh;
+    float envBuffer[512];
+    int bufIdx = 0;
+
+    const char* envNames[5] = {
+        "AD (Attack-Decay)",
+        "ADSR (Attack-Decay-Sustain-Release)",
+        "Decay (Exponential)",
+        "Curve (Variable curvature)",
+        "Seg (Linear interpolation)"
+    };
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+        osc.freq(440.0f);
+
+        // Initialize envelopes
+        envAD.attack(attackTime);
+        envAD.decay(decayTime);
+
+        envADSR.attack(attackTime);
+        envADSR.decay(decayTime);
+        envADSR.sustain(sustainLevel);
+        envADSR.release(releaseTime);
+
+        envDecay.decay(decayTime);
+
+        envCurve.set(decayTime * 44100, -4.0f, 1.0f, 0.0f);
+
+        envSeg.length(decayTime);
+
+        // Envelope display mesh
+        envMesh.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 512; i++) {
+            envBuffer[i] = 0;
+            float x = (i / 511.0f) * 5.0f - 2.5f;
+            envMesh.vertex(x, 0, 0);
+            envMesh.color(1.0f, 0.6f, 0.2f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        for (int i = 0; i < 512; i++) {
+            float y = envBuffer[i] * 2.0f - 1.0f;
+            envMesh.vertices()[i].y = y;
+
+            // Color based on envelope value
+            float h = envBuffer[i];
+            envMesh.colors()[i] = HSV(0.1f - h * 0.1f, 0.9f, 0.5f + h * 0.5f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+
+        g.lineWidth(3);
+        g.draw(envMesh);
+    }
+
+    float getEnvelopeValue() {
+        switch (envType) {
+            case 0: return envAD();
+            case 1: return envADSR();
+            case 2: return envDecay();
+            case 3: return envCurve();
+            case 4: return envSeg();
+            default: return 0;
+        }
+    }
+
+    void triggerEnvelope() {
+        envAD.reset();
+        envADSR.reset();
+        envDecay.reset();
+        envCurve.reset();
+        envSeg.reset();
+    }
+
+    void releaseEnvelope() {
+        envADSR.triggerRelease();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float env = getEnvelopeValue();
+
+            // Store for visualization
+            envBuffer[bufIdx] = env;
+            bufIdx = (bufIdx + 1) % 512;
+
+            float s = osc() * env * 0.3f;
+
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '5') {
+            envType = k.key() - '1';
+            printf("Envelope: %s\\n", envNames[envType]);
+        }
+        if (k.key() == ' ' && !keyHeld) {
+            keyHeld = true;
+            triggerEnvelope();
+            printf("Triggered\\n");
+        }
+        if (k.key() == Keyboard::UP) {
+            attackTime = std::min(attackTime * 1.2f, 2.0f);
+            updateEnvelopes();
+        }
+        if (k.key() == Keyboard::DOWN) {
+            attackTime = std::max(attackTime / 1.2f, 0.001f);
+            updateEnvelopes();
+        }
+        if (k.key() == Keyboard::RIGHT) {
+            decayTime = std::min(decayTime * 1.2f, 5.0f);
+            releaseTime = std::min(releaseTime * 1.2f, 5.0f);
+            updateEnvelopes();
+        }
+        if (k.key() == Keyboard::LEFT) {
+            decayTime = std::max(decayTime / 1.2f, 0.01f);
+            releaseTime = std::max(releaseTime / 1.2f, 0.01f);
+            updateEnvelopes();
+        }
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            keyHeld = false;
+            releaseEnvelope();
+            printf("Released\\n");
+        }
+        return true;
+    }
+
+    void updateEnvelopes() {
+        envAD.attack(attackTime);
+        envAD.decay(decayTime);
+
+        envADSR.attack(attackTime);
+        envADSR.decay(decayTime);
+        envADSR.release(releaseTime);
+
+        envDecay.decay(decayTime);
+
+        envCurve.set(decayTime * 44100, -4.0f, 1.0f, 0.0f);
+
+        envSeg.length(decayTime);
+
+        printf("Attack: %.3fs, Decay: %.3fs, Release: %.3fs\\n",
+               attackTime, decayTime, releaseTime);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaEnvelopesShowcase)
+`,
+  },
+  {
+    id: 'gamma-filters',
+    title: 'Gamma Filters Showcase',
+    description: 'All Gamma filter types: Biquad (LP/HP/BP/Notch), OnePole, AllPass',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Gamma Filters - Complete Showcase
+ * 1=LowPass, 2=HighPass, 3=BandPass, 4=Notch, 5=OnePole, 6=AllPass
+ * UP/DOWN=cutoff frequency, LEFT/RIGHT=resonance
+ * SPACE=trigger noise burst
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Filter.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaFiltersShowcase : public WebApp {
+public:
+    // Sound source
+    NoisePink<> noise;
+    Saw<> saw;
+    ADSR<> env;
+
+    // Filters
+    Biquad<> biquadLP;
+    Biquad<> biquadHP;
+    Biquad<> biquadBP;
+    Biquad<> biquadNotch;
+    OnePole<> onepole;
+    AllPass1<> allpass;
+
+    // Parameters
+    float cutoffFreq = 1000.0f;
+    float resonance = 1.0f;
+    int filterType = 0;
+    bool useSaw = false;
+
+    // Frequency response visualization
+    Mesh freqResponse;
+    float responseBuffer[256];
+
+    const char* filterNames[6] = {
+        "Biquad LowPass",
+        "Biquad HighPass",
+        "Biquad BandPass",
+        "Biquad Notch",
+        "OnePole (simple LP)",
+        "AllPass (phase shift)"
+    };
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        saw.freq(110.0f);
+
+        env.attack(0.01f);
+        env.decay(0.1f);
+        env.sustain(0.5f);
+        env.release(0.3f);
+
+        // Initialize filters
+        biquadLP.type(LOW_PASS);
+        biquadHP.type(HIGH_PASS);
+        biquadBP.type(BAND_PASS);
+        biquadNotch.type(BAND_REJECT);
+
+        updateFilters();
+
+        // Frequency response mesh
+        freqResponse.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 256; i++) {
+            responseBuffer[i] = 0;
+            float x = (i / 255.0f) * 5.0f - 2.5f;
+            freqResponse.vertex(x, 0, 0);
+            freqResponse.color(0.3f, 0.8f, 1.0f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        for (int i = 0; i < 256; i++) {
+            float y = responseBuffer[i] * 3.0f - 1.5f;
+            freqResponse.vertices()[i].y = y;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+
+        g.lineWidth(2);
+        g.draw(freqResponse);
+
+        // Draw cutoff indicator
+        float cutoffX = (log10f(cutoffFreq) - 1.0f) / 3.0f * 5.0f - 2.5f;
+        g.pushMatrix();
+        g.translate(cutoffX, 0, 0);
+        g.color(1.0f, 0.3f, 0.3f, 0.5f);
+        g.scale(0.05f, 3.0f, 1.0f);
+        Mesh line;
+        line.primitive(Mesh::LINES);
+        line.vertex(0, -1, 0);
+        line.vertex(0, 1, 0);
+        g.draw(line);
+        g.popMatrix();
+    }
+
+    float applyFilter(float input) {
+        switch (filterType) {
+            case 0: return biquadLP(input);
+            case 1: return biquadHP(input);
+            case 2: return biquadBP(input);
+            case 3: return biquadNotch(input);
+            case 4: return onepole(input);
+            case 5: return allpass(input);
+            default: return input;
+        }
+    }
+
+    void onSound(AudioIOData& io) override {
+        static int bufIdx = 0;
+
+        while (io()) {
+            float e = env();
+            float source = useSaw ? saw() : noise();
+            float s = source * e;
+
+            // Apply current filter
+            s = applyFilter(s);
+
+            // Store magnitude for visualization
+            responseBuffer[bufIdx] = std::abs(s);
+            bufIdx = (bufIdx + 1) % 256;
+
+            s = std::tanh(s * 2.0f) * 0.3f;
+
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '6') {
+            filterType = k.key() - '1';
+            printf("Filter: %s\\n", filterNames[filterType]);
+        }
+        if (k.key() == ' ') {
+            env.reset();
+        }
+        if (k.key() == 's') {
+            useSaw = !useSaw;
+            printf("Source: %s\\n", useSaw ? "Saw wave" : "Pink noise");
+        }
+        if (k.key() == Keyboard::UP) {
+            cutoffFreq = std::min(cutoffFreq * 1.2f, 15000.0f);
+            updateFilters();
+        }
+        if (k.key() == Keyboard::DOWN) {
+            cutoffFreq = std::max(cutoffFreq / 1.2f, 50.0f);
+            updateFilters();
+        }
+        if (k.key() == Keyboard::RIGHT) {
+            resonance = std::min(resonance * 1.2f, 20.0f);
+            updateFilters();
+        }
+        if (k.key() == Keyboard::LEFT) {
+            resonance = std::max(resonance / 1.2f, 0.1f);
+            updateFilters();
+        }
+        return true;
+    }
+
+    void updateFilters() {
+        biquadLP.freq(cutoffFreq);
+        biquadLP.res(resonance);
+
+        biquadHP.freq(cutoffFreq);
+        biquadHP.res(resonance);
+
+        biquadBP.freq(cutoffFreq);
+        biquadBP.res(resonance);
+
+        biquadNotch.freq(cutoffFreq);
+        biquadNotch.res(resonance);
+
+        onepole.freq(cutoffFreq);
+
+        allpass.freq(cutoffFreq);
+
+        printf("Cutoff: %.0f Hz, Resonance: %.2f\\n", cutoffFreq, resonance);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaFiltersShowcase)
+`,
+  },
+  {
+    id: 'gamma-delays-effects',
+    title: 'Gamma Delays & Effects',
+    description: 'Delay lines, comb filters, chorus, flanger effects',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Gamma Delays & Effects
+ * 1=Delay, 2=Comb, 3=Flanger, 4=Chorus, 5=Burst, 6=Chirp
+ * UP/DOWN=delay time, LEFT/RIGHT=feedback/depth
+ * SPACE=trigger effect
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Delay.h"
+#include "Gamma/Effects.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class GammaDelaysEffects : public WebApp {
+public:
+    // Sound source
+    Sine<> osc;
+    ADSR<> env;
+    NoisePink<> noise;
+
+    // Delay effects
+    Delay<float, ipl::Linear> delay;
+    Comb<> comb;
+
+    // LFO for modulation effects
+    LFO<> lfo;
+
+    // Effect modules
+    Burst burst;
+    Chirp<> chirp;
+
+    // Parameters
+    float delayTime = 0.25f;
+    float feedback = 0.5f;
+    float modDepth = 0.3f;
+    int effectType = 0;
+
+    // Visualization
+    Mesh waveform;
+    float buffer[512];
+    int bufIdx = 0;
+
+    const char* effectNames[6] = {
+        "Simple Delay",
+        "Comb Filter",
+        "Flanger",
+        "Chorus",
+        "Burst (noise)",
+        "Chirp (sweep)"
+    };
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        osc.freq(220.0f);
+
+        env.attack(0.01f);
+        env.decay(0.2f);
+        env.sustain(0.5f);
+        env.release(0.5f);
+
+        // Initialize delay line
+        delay.maxDelay(2.0f);
+        delay.delay(delayTime);
+
+        // Initialize comb filter
+        comb.maxDelay(0.5f);
+        comb.delay(0.02f);
+        comb.decay(0.5f);
+        comb.fbk(feedback);
+
+        // LFO for modulation
+        lfo.freq(0.5f);
+
+        // Burst and Chirp
+        burst(8000, 200, 0.1f);
+        chirp(880, 110, 0.3f);
+
+        // Waveform display
+        waveform.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 512; i++) {
+            buffer[i] = 0;
+            float x = (i / 511.0f) * 5.0f - 2.5f;
+            waveform.vertex(x, 0, 0);
+            waveform.color(0.5f, 0.8f, 1.0f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        for (int i = 0; i < 512; i++) {
+            waveform.vertices()[i].y = buffer[i] * 2.0f;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        g.lineWidth(2);
+        g.draw(waveform);
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float e = env();
+            float dry = osc() * e * 0.5f;
+            float wet = 0;
+
+            switch (effectType) {
+                case 0: {  // Simple delay
+                    float delayed = delay(dry);
+                    wet = dry + delayed * feedback;
+                    break;
+                }
+                case 1: {  // Comb filter
+                    wet = comb(dry);
+                    break;
+                }
+                case 2: {  // Flanger
+                    float modDelay = 0.002f + lfo.tri() * 0.003f * modDepth;
+                    delay.delay(modDelay);
+                    float delayed = delay(dry);
+                    wet = dry + delayed * 0.7f;
+                    break;
+                }
+                case 3: {  // Chorus
+                    float modDelay = 0.02f + lfo.tri() * 0.01f * modDepth;
+                    delay.delay(modDelay);
+                    float delayed = delay(dry);
+                    wet = (dry + delayed) * 0.7f;
+                    break;
+                }
+                case 4: {  // Burst
+                    wet = burst() * 0.5f;
+                    break;
+                }
+                case 5: {  // Chirp
+                    wet = chirp() * 0.5f;
+                    break;
+                }
+            }
+
+            // Store for visualization
+            buffer[bufIdx] = wet;
+            bufIdx = (bufIdx + 1) % 512;
+
+            // Soft clip
+            wet = std::tanh(wet * 1.5f) * 0.4f;
+
+            io.out(0) = wet;
+            io.out(1) = wet;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() >= '1' && k.key() <= '6') {
+            effectType = k.key() - '1';
+            printf("Effect: %s\\n", effectNames[effectType]);
+        }
+        if (k.key() == ' ') {
+            env.reset();
+            burst.reset();
+            chirp.reset();
+        }
+        if (k.key() == Keyboard::UP) {
+            delayTime = std::min(delayTime * 1.2f, 1.0f);
+            delay.delay(delayTime);
+            printf("Delay: %.3f s\\n", delayTime);
+        }
+        if (k.key() == Keyboard::DOWN) {
+            delayTime = std::max(delayTime / 1.2f, 0.001f);
+            delay.delay(delayTime);
+            printf("Delay: %.3f s\\n", delayTime);
+        }
+        if (k.key() == Keyboard::RIGHT) {
+            feedback = std::min(feedback + 0.1f, 0.95f);
+            modDepth = std::min(modDepth + 0.1f, 1.0f);
+            comb.fbk(feedback);
+            printf("Feedback/Depth: %.2f\\n", feedback);
+        }
+        if (k.key() == Keyboard::LEFT) {
+            feedback = std::max(feedback - 0.1f, 0.0f);
+            modDepth = std::max(modDepth - 0.1f, 0.0f);
+            comb.fbk(feedback);
+            printf("Feedback/Depth: %.2f\\n", feedback);
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(GammaDelaysEffects)
+`,
+  },
+  {
+    id: 'allolib-reverb',
+    title: 'AlloLib Plate Reverb',
+    description: 'Dattorro plate reverb algorithm from al::Reverb',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * AlloLib Plate Reverb
+ * High-quality Dattorro plate reverb algorithm
+ * SPACE=trigger, UP/DOWN=decay, LEFT/RIGHT=damping
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/sound/al_Reverb.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Noise.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class ReverbDemo : public WebApp {
+public:
+    // Sound sources
+    Sine<> osc;
+    NoisePink<> noise;
+    ADSR<> env;
+
+    // AlloLib plate reverb
+    Reverb<float> reverb;
+
+    // Parameters
+    float decayAmount = 0.85f;
+    float dampingAmount = 0.4f;
+    float wetMix = 0.5f;
+    int sourceType = 0;  // 0=sine, 1=noise
+
+    // Visualization
+    Mesh waveL, waveR;
+    float bufferL[256], bufferR[256];
+    int bufIdx = 0;
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+
+        osc.freq(440.0f);
+        env.attack(0.01f);
+        env.decay(0.1f);
+        env.sustain(0.3f);
+        env.release(0.5f);
+
+        // Configure reverb
+        reverb.decay(decayAmount);
+        reverb.damping(dampingAmount);
+        reverb.bandwidth(0.9995f);
+        reverb.diffusion(0.76f, 0.666f, 0.707f, 0.571f);
+
+        // Waveform displays
+        waveL.primitive(Mesh::LINE_STRIP);
+        waveR.primitive(Mesh::LINE_STRIP);
+        for (int i = 0; i < 256; i++) {
+            bufferL[i] = bufferR[i] = 0;
+            float x = (i / 255.0f) * 4.0f - 2.0f;
+            waveL.vertex(x, 0.7f, 0);
+            waveL.color(0.3f, 0.8f, 1.0f);
+            waveR.vertex(x, -0.7f, 0);
+            waveR.color(1.0f, 0.5f, 0.3f);
+        }
+
+        nav().pos(0, 0, 5);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        for (int i = 0; i < 256; i++) {
+            waveL.vertices()[i].y = 0.7f + bufferL[i] * 0.5f;
+            waveR.vertices()[i].y = -0.7f + bufferR[i] * 0.5f;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        g.lineWidth(2);
+        g.draw(waveL);
+        g.draw(waveR);
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float e = env();
+            float dry = (sourceType == 0 ? osc() : noise()) * e * 0.5f;
+
+            // Apply reverb (mono in, stereo out)
+            float wetL, wetR;
+            reverb(dry, wetL, wetR, 0.6f);
+
+            // Mix dry and wet
+            float outL = dry * (1.0f - wetMix) + wetL * wetMix;
+            float outR = dry * (1.0f - wetMix) + wetR * wetMix;
+
+            // Store for visualization
+            bufferL[bufIdx] = outL;
+            bufferR[bufIdx] = outR;
+            bufIdx = (bufIdx + 1) % 256;
+
+            io.out(0) = outL;
+            io.out(1) = outR;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            env.reset();
+        }
+        if (k.key() == '1') {
+            sourceType = 0;
+            printf("Source: Sine\\n");
+        }
+        if (k.key() == '2') {
+            sourceType = 1;
+            printf("Source: Noise\\n");
+        }
+        if (k.key() == Keyboard::UP) {
+            decayAmount = std::min(decayAmount + 0.05f, 0.99f);
+            reverb.decay(decayAmount);
+            printf("Decay: %.2f\\n", decayAmount);
+        }
+        if (k.key() == Keyboard::DOWN) {
+            decayAmount = std::max(decayAmount - 0.05f, 0.1f);
+            reverb.decay(decayAmount);
+            printf("Decay: %.2f\\n", decayAmount);
+        }
+        if (k.key() == Keyboard::RIGHT) {
+            dampingAmount = std::min(dampingAmount + 0.05f, 0.99f);
+            reverb.damping(dampingAmount);
+            printf("Damping: %.2f\\n", dampingAmount);
+        }
+        if (k.key() == Keyboard::LEFT) {
+            dampingAmount = std::max(dampingAmount - 0.05f, 0.0f);
+            reverb.damping(dampingAmount);
+            printf("Damping: %.2f\\n", dampingAmount);
+        }
+        if (k.key() == 'w') {
+            wetMix = std::min(wetMix + 0.1f, 1.0f);
+            printf("Wet Mix: %.1f\\n", wetMix);
+        }
+        if (k.key() == 'd') {
+            wetMix = std::max(wetMix - 0.1f, 0.0f);
+            printf("Wet Mix: %.1f\\n", wetMix);
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ReverbDemo)
+`,
+  },
+  {
+    id: 'distance-attenuation',
+    title: 'Distance Attenuation',
+    description: 'DistAtten class for distance-based volume falloff',
+    category: 'feature-tests',
+    subcategory: 'audio',
+    code: `/**
+ * Distance Attenuation Demo
+ * Shows how sound attenuates with distance
+ * WASD=move source, 1-3=attenuation law
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/spatial/al_DistAtten.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+using namespace gam;
+
+class DistanceAttenDemo : public WebApp {
+public:
+    Sine<> osc;
+
+    // Distance attenuation
+    DistAtten<float> distAtten;
+
+    // Positions
+    Vec3f sourcePos{2, 0, 0};
+    Vec3f listenerPos{0, 0, 0};
+
+    // Visualization
+    Mesh sourceMesh, listenerMesh, groundMesh;
+
+    int attenLaw = 1;  // 0=none, 1=linear, 2=inverse, 3=inverse square
+
+    void onCreate() override {
+        gam::sampleRate(44100);
+        osc.freq(440.0f);
+
+        // Configure distance attenuation
+        distAtten.near(0.5f);    // Full volume at 0.5 units
+        distAtten.far(10.0f);    // Silent at 10 units
+        distAtten.law(ATTEN_LINEAR);
+
+        // Create meshes
+        addSphere(sourceMesh, 0.2f, 16, 16);
+        sourceMesh.generateNormals();
+
+        addSphere(listenerMesh, 0.15f, 16, 16);
+        listenerMesh.generateNormals();
+
+        // Ground grid
+        groundMesh.primitive(Mesh::LINES);
+        for (int i = -5; i <= 5; i++) {
+            groundMesh.vertex(i, -0.5f, -5);
+            groundMesh.vertex(i, -0.5f, 5);
+            groundMesh.vertex(-5, -0.5f, i);
+            groundMesh.vertex(5, -0.5f, i);
+        }
+        for (int i = 0; i < groundMesh.vertices().size(); i++) {
+            groundMesh.color(0.3f, 0.3f, 0.3f);
+        }
+
+        nav().pos(0, 2, 8);
+        nav().faceToward(Vec3d(0, 0, 0));
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Draw ground
+        g.lighting(false);
+        g.draw(groundMesh);
+        g.lighting(true);
+
+        // Draw source (color based on attenuation)
+        float dist = (sourcePos - listenerPos).mag();
+        float atten = distAtten(dist);
+
+        g.pushMatrix();
+        g.translate(sourcePos);
+        g.color(1.0f, atten, 0.2f);
+        g.draw(sourceMesh);
+        g.popMatrix();
+
+        // Draw listener
+        g.pushMatrix();
+        g.translate(listenerPos);
+        g.color(0.2f, 0.8f, 1.0f);
+        g.draw(listenerMesh);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        float dist = (sourcePos - listenerPos).mag();
+        float atten = distAtten(dist);
+
+        while (io()) {
+            float s = osc() * atten * 0.3f;
+
+            // Simple stereo panning based on X position
+            float pan = (sourcePos.x - listenerPos.x) * 0.5f;
+            pan = std::max(-1.0f, std::min(1.0f, pan));
+
+            float gainL = (1.0f - pan) * 0.5f;
+            float gainR = (1.0f + pan) * 0.5f;
+
+            io.out(0) = s * gainL;
+            io.out(1) = s * gainR;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        float moveSpeed = 0.3f;
+        if (k.key() == 'w') sourcePos.z -= moveSpeed;
+        if (k.key() == 's') sourcePos.z += moveSpeed;
+        if (k.key() == 'a') sourcePos.x -= moveSpeed;
+        if (k.key() == 'd') sourcePos.x += moveSpeed;
+        if (k.key() == 'q') sourcePos.y += moveSpeed;
+        if (k.key() == 'e') sourcePos.y -= moveSpeed;
+
+        if (k.key() == '1') {
+            distAtten.law(ATTEN_NONE);
+            printf("Attenuation: None\\n");
+        }
+        if (k.key() == '2') {
+            distAtten.law(ATTEN_LINEAR);
+            printf("Attenuation: Linear\\n");
+        }
+        if (k.key() == '3') {
+            distAtten.law(ATTEN_INVERSE);
+            printf("Attenuation: Inverse\\n");
+        }
+        if (k.key() == '4') {
+            distAtten.law(ATTEN_INVERSE_SQUARE);
+            printf("Attenuation: Inverse Square\\n");
+        }
+
+        float dist = (sourcePos - listenerPos).mag();
+        printf("Distance: %.2f, Attenuation: %.3f\\n", dist, distAtten(dist));
+
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(DistanceAttenDemo)
+`,
+  },
+  {
+    id: 'hashspace-demo',
+    title: 'HashSpace Spatial Query',
+    description: 'Efficient spatial hashing for proximity detection',
+    category: 'feature-tests',
+    subcategory: 'advanced',
+    code: `/**
+ * HashSpace Demo - Spatial Hashing
+ * Efficient spatial queries for many objects
+ * Click to add objects, neighbors highlight
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/spatial/al_HashSpace.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class HashSpaceDemo : public WebApp {
+public:
+    static const int MAX_OBJECTS = 100;
+
+    // HashSpace for spatial queries
+    HashSpace space;
+    HashSpace::Query query;
+
+    // Object data
+    struct Object {
+        HashSpace::Object hsObj;
+        Vec3f pos;
+        Vec3f vel;
+        bool isNeighbor;
+    };
+    std::vector<Object> objects;
+
+    // Query point (mouse controlled)
+    Vec3f queryPoint{0, 0, 0};
+    float queryRadius = 1.5f;
+
+    Mesh sphereMesh;
+    Mesh queryMesh;
+    double time = 0;
+
+    void onCreate() override {
+        // Initialize HashSpace (dim=3, resolution)
+        space.dim(3);
+        space.maxRadius(queryRadius);
+
+        // Create sphere mesh
+        addSphere(sphereMesh, 0.1f, 8, 8);
+        sphereMesh.generateNormals();
+
+        // Create query visualization mesh (wireframe sphere)
+        addSphere(queryMesh, queryRadius, 16, 16);
+
+        // Add initial objects
+        for (int i = 0; i < 30; i++) {
+            addRandomObject();
+        }
+
+        nav().pos(0, 0, 10);
+        configureWebAudio(44100, 128, 2, 0);
+    }
+
+    void addRandomObject() {
+        if (objects.size() >= MAX_OBJECTS) return;
+
+        Object obj;
+        obj.pos = Vec3f(
+            (rand() / float(RAND_MAX) - 0.5f) * 8,
+            (rand() / float(RAND_MAX) - 0.5f) * 8,
+            (rand() / float(RAND_MAX) - 0.5f) * 4
+        );
+        obj.vel = Vec3f(
+            (rand() / float(RAND_MAX) - 0.5f) * 0.5f,
+            (rand() / float(RAND_MAX) - 0.5f) * 0.5f,
+            (rand() / float(RAND_MAX) - 0.5f) * 0.25f
+        );
+        obj.isNeighbor = false;
+
+        // Register with HashSpace
+        obj.hsObj = HashSpace::Object(space, objects.size());
+        obj.hsObj.pos(obj.pos.x, obj.pos.y, obj.pos.z);
+
+        objects.push_back(obj);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        // Update object positions
+        for (auto& obj : objects) {
+            obj.pos += obj.vel * dt;
+
+            // Bounce off boundaries
+            for (int i = 0; i < 3; i++) {
+                if (obj.pos[i] > 4 || obj.pos[i] < -4) {
+                    obj.vel[i] *= -1;
+                    obj.pos[i] = std::max(-4.0f, std::min(4.0f, obj.pos[i]));
+                }
+            }
+
+            // Update HashSpace position
+            obj.hsObj.pos(obj.pos.x, obj.pos.y, obj.pos.z);
+            obj.isNeighbor = false;
+        }
+
+        // Query neighbors
+        int numNeighbors = query(space, queryPoint.x, queryPoint.y, queryPoint.z, queryRadius);
+
+        for (int i = 0; i < numNeighbors; i++) {
+            int idx = query[i]->id;
+            if (idx < objects.size()) {
+                objects[idx].isNeighbor = true;
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Draw objects
+        for (const auto& obj : objects) {
+            g.pushMatrix();
+            g.translate(obj.pos);
+            if (obj.isNeighbor) {
+                g.color(1.0f, 0.8f, 0.2f);  // Yellow for neighbors
+            } else {
+                g.color(0.3f, 0.5f, 0.8f);  // Blue for others
+            }
+            g.draw(sphereMesh);
+            g.popMatrix();
+        }
+
+        // Draw query sphere (wireframe)
+        g.lighting(false);
+        g.blending(true);
+        g.blendTrans();
+        g.pushMatrix();
+        g.translate(queryPoint);
+        g.color(0.2f, 1.0f, 0.5f, 0.2f);
+        g.polygonMode(Graphics::LINE);
+        g.draw(queryMesh);
+        g.polygonMode(Graphics::FILL);
+        g.popMatrix();
+        g.blending(false);
+    }
+
+    void onSound(AudioIOData& io) override {
+        // Count neighbors for audio feedback
+        int neighbors = 0;
+        for (const auto& obj : objects) {
+            if (obj.isNeighbor) neighbors++;
+        }
+
+        float freq = 200 + neighbors * 50;
+        float amp = neighbors > 0 ? 0.1f : 0.0f;
+
+        static float phase = 0;
+        while (io()) {
+            float s = sin(phase * 2 * M_PI) * amp;
+            phase += freq / 44100.0f;
+            if (phase > 1) phase -= 1;
+            io.out(0) = s;
+            io.out(1) = s;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            addRandomObject();
+            printf("Objects: %zu\\n", objects.size());
+        }
+        if (k.key() == Keyboard::UP) {
+            queryRadius = std::min(queryRadius + 0.2f, 5.0f);
+            space.maxRadius(queryRadius);
+            printf("Query radius: %.1f\\n", queryRadius);
+        }
+        if (k.key() == Keyboard::DOWN) {
+            queryRadius = std::max(queryRadius - 0.2f, 0.5f);
+            space.maxRadius(queryRadius);
+            printf("Query radius: %.1f\\n", queryRadius);
+        }
+        return true;
+    }
+
+    bool onMouseMove(const Mouse& m) override {
+        // Map mouse to 3D position
+        float x = (m.x() / 800.0f - 0.5f) * 10;
+        float y = -(m.y() / 600.0f - 0.5f) * 10;
+        queryPoint = Vec3f(x, y, 0);
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(HashSpaceDemo)
 `,
   },
   {
@@ -3520,6 +5658,135 @@ public:
 };
 
 ALLOLIB_WEB_MAIN(SpatialAudioTest)
+`,
+  },
+  {
+    id: 'cross-platform-app',
+    title: 'Cross-Platform App',
+    description: 'Code that works on both desktop AlloLib and AlloLib Online',
+    category: 'feature-tests',
+    subcategory: 'graphics',
+    code: `/**
+ * Cross-Platform AlloLib Application
+ *
+ * This code uses the compatibility layer to work on BOTH:
+ * - Native AlloLib (desktop with GLFW/OpenGL)
+ * - AlloLib Studio Online (browser with WebGL2/WebAudio)
+ *
+ * The key differences handled by al_compat.hpp:
+ * 1. Base class: al::App (aliased to WebApp on WASM)
+ * 2. Main macro: ALLOLIB_MAIN() works on both
+ * 3. Audio config: configureAudio/configureWebAudio unified
+ */
+
+// Use compatibility header for cross-platform support
+// On desktop: #include "al/app/al_App.hpp"
+// On WASM:    #include "al_WebApp.hpp"
+// This header handles both:
+#include "al_compat.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+
+/**
+ * Example app that runs on both desktop and browser
+ */
+class CrossPlatformApp : public App {  // "App" works on both platforms!
+public:
+    Mesh sphereMesh;
+    gam::Sine<> osc{440.0f};
+
+    double rotation = 0;
+    float amplitude = 0.3f;
+    int colorMode = 0;
+
+    void onCreate() override {
+        addSphere(sphereMesh, 1.0, 32, 32);
+        sphereMesh.generateNormals();
+        nav().pos(0, 0, 5);
+
+        // This works on both platforms:
+        // - Desktop: calls configureAudio()
+        // - WASM: calls configureWebAudio()
+        configureAudio(44100, 128, 2, 0);
+
+        // Platform detection (optional)
+        if (isWASM()) {
+            printf("Running in browser (WebAssembly)\\n");
+        } else {
+            printf("Running on desktop\\n");
+        }
+    }
+
+    void onAnimate(double dt) override {
+        rotation += dt * 45.0;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        g.pushMatrix();
+        g.rotate(rotation, 0, 1, 0);
+        g.rotate(rotation * 0.7, 1, 0, 0);
+
+        // Color based on mode
+        switch (colorMode % 3) {
+            case 0: g.color(0.8f, 0.3f, 0.2f); break;  // Red
+            case 1: g.color(0.2f, 0.8f, 0.3f); break;  // Green
+            case 2: g.color(0.2f, 0.3f, 0.8f); break;  // Blue
+        }
+
+        g.draw(sphereMesh);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float sample = osc() * amplitude;
+            io.out(0) = sample;
+            io.out(1) = sample;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        // Change color with 1-3
+        if (k.key() >= '1' && k.key() <= '3') {
+            colorMode = k.key() - '1';
+            printf("Color mode: %d\\n", colorMode);
+        }
+
+        // Change frequency with up/down
+        if (k.key() == Keyboard::UP) {
+            osc.freq(osc.freq() * 1.1f);
+            printf("Frequency: %.1f Hz\\n", osc.freq());
+        }
+        if (k.key() == Keyboard::DOWN) {
+            osc.freq(osc.freq() / 1.1f);
+            printf("Frequency: %.1f Hz\\n", osc.freq());
+        }
+
+        return true;
+    }
+};
+
+// This macro works on both platforms:
+// - Desktop: creates main() that calls app.start()
+// - WASM: creates Emscripten exports + main()
+ALLOLIB_MAIN(CrossPlatformApp)
+
+/*
+ * To compile for desktop:
+ *   g++ -o app app.cpp -lallolib -lgamma -lglfw ...
+ *
+ * To compile for WASM (what AlloLib Online does):
+ *   em++ -o app.js app.cpp ... -s WASM=1
+ *
+ * The same source file works for both!
+ */
 `,
   },
 ]

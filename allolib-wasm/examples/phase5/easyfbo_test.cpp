@@ -80,7 +80,8 @@ public:
         addSphere(sphere, 1.0, 32, 32);
         sphere.generateNormals();
 
-        addCube(cube, 0.8);
+        addCube(cube, 1.0);
+        cube.scale(0.8f);
         cube.generateNormals();
 
         // Create screen-space quad for post-processing
@@ -137,7 +138,7 @@ public:
         // === Pass 1: Render scene to FBO ===
         g.pushFramebuffer(fbo);
         g.pushViewport(fbo.width(), fbo.height());
-        g.pushCamera(nav().view());
+        g.pushCamera(view());
         g.pushMatrix();
 
         renderScene(g);
@@ -158,10 +159,10 @@ public:
         postShader.uniform("time", (float)time);
 
         // Bind FBO texture
-        fbo.colorTexture().bind(0);
+        fbo.tex().bind(0);
         g.texture();
         g.draw(screenQuad);
-        fbo.colorTexture().unbind(0);
+        fbo.tex().unbind(0);
     }
 
     bool onKeyDown(const Keyboard& k) override {
