@@ -1,298 +1,210 @@
 # AlloLib Studio Online
 
-Browser-based creative coding environment for AlloLib C++ applications.
+**Write, compile, and run AlloLib C++ code directly in your browser.**
 
-## Status
+AlloLib Studio Online is a browser-based creative coding environment for building interactive audio-visual applications using the [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) C++ framework. No local installation required.
 
-**Phase 6: Editor Enhancement - COMPLETE**
+![Status](https://img.shields.io/badge/status-Phase%206%20Complete-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-### Core Features
-- ✅ Monaco Editor with C++ syntax and AlloLib snippets
-- ✅ Server-side compilation with Emscripten (~5 second compile time)
-- ✅ WebGL2 graphics rendering (3D meshes, colors, transforms, lighting)
-- ✅ Web Audio playback (Gamma oscillators, AudioWorklet output)
-- ✅ Scene System (PolySynth, SynthVoice, DynamicScene, PositionedVoice)
-- ✅ Custom GLSL ES 3.0 shaders
-- ✅ Procedural texture generation
+## Features
 
-### Phase 6 Features (NEW)
-- ✅ **Enhanced Monaco Intellisense** - Class member completion, signature help
-- ✅ **Compiler Diagnostics** - Error line highlighting with red squiggles
-- ✅ **IndexedDB Project Storage** - Multiple projects, version history
-- ✅ **Parameter System** - JavaScript-side parameter management with UI
-- ✅ **Safety Limiter** - Soft clipper + brick-wall limiter for audio protection
-- ✅ **22 Example Projects** - Covering graphics, audio, interaction, and more
-- ✅ **Audio Analysis Panel** - Level meters, waveform, spectrum, Lissajous
+- **Code Editor** - Monaco Editor with C++ syntax highlighting, AlloLib snippets, and intelligent autocomplete
+- **Live Compilation** - Server-side Emscripten compilation (~5 seconds) to WebAssembly
+- **WebGL2 Graphics** - 3D rendering with meshes, lighting, shaders, and textures
+- **Web Audio** - Real-time audio synthesis with Gamma DSP library
+- **22+ Examples** - Ready-to-run demos covering graphics, audio, and interaction
+- **Error Highlighting** - Compiler errors shown directly in the editor
+- **Audio Safety** - Built-in limiter protects your speakers
 
-## Overview
+## Quick Start
 
-AlloLib Studio Online enables users to write, compile, and run AlloLib C++ code directly in the web browser. No local installation required.
+### Online Demo
 
-## Architecture
+Visit the hosted version (coming soon) or run locally:
 
-This project uses **server-side compilation**:
-- User writes C++ code in the browser (Monaco Editor)
-- Code is sent to the backend server
-- Server compiles with Emscripten against AlloLib
-- WebAssembly binary is returned to the browser
-- WASM executes with WebGL2 graphics and Web Audio
-
-## Project Structure
-
-```
-allolib-studio-online/
-├── frontend/           # Vue 3 + TypeScript web application
-│   ├── src/
-│   │   ├── components/ # Vue components (Editor, Viewer, Console, etc.)
-│   │   ├── services/   # Compiler, Runtime, Storage services
-│   │   ├── stores/     # Pinia state management
-│   │   └── utils/      # Utilities and helpers
-│   └── ...
-├── backend/            # Node.js compilation server
-│   ├── src/
-│   │   ├── routes/     # API endpoints
-│   │   ├── services/   # Compilation service, caching
-│   │   └── workers/    # Job handlers
-│   ├── docker/         # Dockerfile and compile script
-│   └── ...
-├── allolib/            # AlloLib library (cloned separately)
-├── al_ext/             # AlloLib extensions (cloned separately)
-└── docs/               # Documentation
-```
-
-## Tech Stack
-
-**Frontend:**
-- Vue 3 + TypeScript
-- Monaco Editor (code editing with AlloLib snippets)
-- Tailwind CSS (styling)
-- Pinia (state management)
-- WebGL2 + Web Audio API (output)
-
-**Backend:**
-- Node.js + Express
-- Emscripten (C++ to WASM compilation)
-- BullMQ + Redis (job queue)
-- Docker (sandboxed compilation)
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm
-- Docker + Docker Compose
-- Git
-
-### Installation
+### Run Locally
 
 ```bash
 # Clone the repository
 git clone https://github.com/9LiveZZZ-Git/Allolib-Studio-Online.git
 cd Allolib-Studio-Online
 
-# Clone AlloLib (required for compilation)
+# Clone AlloLib (required)
 git clone https://github.com/AlloSphere-Research-Group/allolib.git
-cd allolib
-git submodule update --init --recursive
-cd ..
-
-# Clone AlloLib extensions (optional, for additional features)
-git clone https://github.com/AlloSphere-Research-Group/al_ext.git
-cd al_ext
-git submodule update --init --recursive
-cd ..
+cd allolib && git submodule update --init --recursive && cd ..
 
 # Install dependencies
 npm install
-```
 
-### Running with Docker (Recommended)
-
-```bash
-# Start all services (Redis, Compiler, Backend)
+# Start with Docker (recommended)
 docker-compose up -d
-
-# Start frontend dev server
 npm run dev:frontend
+
+# Visit http://localhost:3000
 ```
 
-Then visit http://localhost:3000
+**Requirements:** Node.js 18+, Docker, Git
 
-### Development (without Docker)
+## Usage
+
+1. **Write** your C++ code in the editor (or choose an example)
+2. **Run** to compile and execute
+3. **View** the output in the WebGL canvas
+4. **Listen** to audio through your speakers
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+S` | Save to browser |
+| `Ctrl+Enter` | Compile and run |
+| `Ctrl+F` | Find |
+| `Ctrl+G` | Go to line |
+
+### Code Snippets
+
+Type these prefixes and press Tab:
+
+- `allolib-app` - Basic application template
+- `mesh-sphere` - Create a sphere mesh
+- `sine-osc` - Sine wave oscillator
+- `synthvoice` - Polyphonic voice template
+
+### Controls
+
+Default camera controls in the viewer:
+- **WASD** - Move forward/left/back/right
+- **Q/E** - Move up/down
+- **Mouse drag** - Look around
+
+## Examples
+
+The Examples dropdown includes demos organized by category:
+
+| Category | Examples |
+|----------|----------|
+| **Basics** | Hello Sphere, Hello Audio, AudioVisual |
+| **Graphics** | Shapes, Transforms, Lighting, Shaders, Textures |
+| **Audio** | Oscillators, Envelopes, Synthesis |
+| **Interaction** | Keyboard, Mouse, Navigation |
+| **Scene System** | SynthVoice, PolySynth, DynamicScene |
+| **Advanced** | Particles, Generative, Audio-Visual |
+
+## Architecture
+
+```
+Browser                          Server
+┌─────────────────┐             ┌─────────────────┐
+│  Monaco Editor  │   HTTP      │   Express API   │
+│       ↓         │ ────────→   │       ↓         │
+│  C++ Source     │             │  Emscripten     │
+│       ↓         │   WASM      │       ↓         │
+│  WASM Runtime   │ ←────────   │  WebAssembly    │
+│       ↓         │             └─────────────────┘
+│  WebGL2 + Audio │
+└─────────────────┘
+```
+
+## Tech Stack
+
+| Layer | Technologies |
+|-------|-------------|
+| **Frontend** | Vue 3, TypeScript, Monaco Editor, Tailwind CSS, Pinia |
+| **Backend** | Node.js, Express, Redis, BullMQ |
+| **Compiler** | Emscripten 3.1.50, Docker |
+| **Output** | WebGL2, Web Audio API, AudioWorklet |
+
+## Project Structure
+
+```
+allolib-studio-online/
+├── frontend/           # Vue 3 web application
+│   └── src/
+│       ├── components/ # UI components
+│       ├── services/   # Compiler, Runtime
+│       ├── stores/     # Pinia state
+│       └── utils/      # Helpers, Monaco config
+├── backend/            # Node.js compilation server
+│   └── docker/         # Emscripten container
+├── allolib/            # AlloLib C++ library
+└── allolib-wasm/       # WASM build configuration
+```
+
+## Development
+
+### Without Docker (Mock Mode)
 
 ```bash
-# Start both frontend and backend
 npm run dev
-
-# Or separately:
-npm run dev:frontend  # http://localhost:3000
-npm run dev:backend   # http://localhost:4000
 ```
 
-Note: Without Docker, compilation will use mock mode (no actual WASM generation).
+This starts both frontend and backend, but compilation returns mock results (no actual WASM).
 
-### Building for Production
+### With Docker (Full Compilation)
+
+```bash
+docker-compose up -d    # Start Redis + Compiler + Backend
+npm run dev:frontend    # Start frontend only
+```
+
+### Build for Production
 
 ```bash
 npm run build
 ```
 
-## Usage
+## Technical Details
 
-1. Write your AlloLib C++ code in the editor
-2. Click **Run** to compile and execute
-3. View output in the WebGL canvas
-4. Check the console for compilation logs and errors
+<details>
+<summary><strong>WebGL2 Notes</strong></summary>
 
-### Code Snippets
+AlloLib Studio uses WebGL2 (OpenGL ES 3.0). Key differences from desktop OpenGL:
 
-The editor includes AlloLib-specific snippets:
-- `allolib-app` - Basic application template
-- `mesh-sphere` - Create a sphere mesh
-- `mesh-cube` - Create a cube mesh
-- `sine-osc` - Sine wave oscillator
-- `adsr-env` - ADSR envelope
-- `nav3d` - 3D camera setup
-- `color-hsv` - HSV color creation
-- `shader-basic` - Basic shader program
-- `synthvoice` - Polyphonic voice template
-- `polysynth` - PolySynth setup
-- `stereopanner` - Stereo panning
+- No geometry shaders (use CPU-side generation)
+- No tessellation (use pre-tessellated meshes)
+- GLSL ES 3.0 (not GLSL 330)
+- Float textures require `EXT_color_buffer_float` for FBO rendering
 
-### Intellisense Features
+</details>
 
-The Monaco editor provides intelligent code completion:
+<details>
+<summary><strong>Web Audio Notes</strong></summary>
 
-- **Class Member Completion** - Type `mesh.` to see methods like `vertex()`, `color()`, `normal()`
-- **Signature Help** - See parameter hints when typing function calls
-- **Hover Documentation** - Hover over AlloLib types for documentation
-- **Namespace Completion** - Type `al::` or `gam::` for namespace-aware suggestions
+Audio runs in an AudioWorklet for low latency:
 
-### Error Highlighting
-
-Compilation errors are displayed directly in the editor:
-- Red squiggles under error locations
-- Error messages on hover
-- Auto-jump to first error
-- Supports GCC/Clang/Emscripten error formats
-
-### Audio Safety
-
-The audio output includes a safety limiter to protect your speakers:
-
-- **Soft Clipper** - Gentle tanh-based saturation before hard clipping
-- **Brick-Wall Limiter** - Prevents audio exceeding -1dB threshold
-- **Visual Indicator** - "LIM" badge shows gain reduction in real-time
-- **Configurable** - Adjust threshold and drive in Settings → Audio
-
-## WebGL2 Technical Notes
-
-AlloLib Studio Online uses WebGL2 (OpenGL ES 3.0), which has some differences from desktop OpenGL. Here's how we handle them:
-
-### Graphics Limitations & Solutions
-
-| Limitation | Desktop OpenGL | WebGL2 Solution |
-|------------|----------------|-----------------|
-| **No Geometry Shaders** | Geometry shader stage | CPU-side vertex generation, instancing |
-| **No Tessellation** | Tessellation shaders | Pre-tessellated meshes, adaptive LOD |
-| **Limited Extensions** | Wide extension support | Runtime extension detection |
-| **GLSL Version** | GLSL 3.30+ | GLSL ES 3.0 compatibility layer |
-| **Memory Limits** | System RAM | Reasonable defaults, streaming |
-
-### Float Textures (EXT_color_buffer_float)
-
-Float textures can always be *read* in WebGL2, but rendering to them (as FBO targets) requires the `EXT_color_buffer_float` extension:
-
-```cpp
-#include "al/graphics/al_WebGL2Extensions.hpp"
-
-// Check if float render targets are available
-if (al::WebGL2Extensions::canRenderToFloatTexture()) {
-    // Use RGBA32F for HDR rendering
-    texture.create2D(width, height, GL_RGBA32F, GL_RGBA, GL_FLOAT);
-} else {
-    // Fall back to 8-bit
-    texture.create2D(width, height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-}
-```
-
-### Cubemap Textures
-
-Cubemap textures are fully supported in WebGL2 core (no extension needed):
-
-```cpp
-al::Texture cubemap;
-cubemap.createCubemap(512, GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE);
-// Submit faces with glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, ...)
-```
-
-### Extension Detection
-
-Use the `WebGL2Extensions` helper to check runtime capabilities:
-
-```cpp
-auto& caps = al::WebGL2Extensions::capabilities();
-
-if (caps.anisotropicFiltering) {
-    // Use up to caps.maxAnisotropy levels
-}
-
-if (caps.s3tcCompression) {
-    // DXT/S3TC compressed textures available
-}
-```
-
-## Web Audio Technical Notes
-
-### Audio Architecture
-
-Audio runs in an AudioWorklet for low-latency processing:
 - 128 samples per buffer (Web Audio standard)
-- Configurable sample rate (typically 44.1kHz or 48kHz)
-- Stereo output (expandable to multichannel)
+- 44.1kHz or 48kHz sample rate
+- Stereo output
+- Built-in safety limiter (soft clip + brick-wall)
 
-### Buffer Underrun Detection
+</details>
 
-The audio processor monitors for buffer underruns and reports statistics:
+<details>
+<summary><strong>Safety Limiter</strong></summary>
 
-```javascript
-// The worklet sends 'underrun' messages when audio glitches occur
-workletNode.port.onmessage = (event) => {
-    if (event.data.type === 'underrun') {
-        console.warn('Audio underrun:', event.data.count);
-    }
-};
-```
+The audio output includes protection:
 
-### Sample-Accurate Scheduling
+- **Soft Clipper** - Gentle tanh saturation
+- **Brick-Wall Limiter** - Prevents clipping at -1dB
+- **Visual Indicator** - Shows gain reduction in real-time
 
-Events can be scheduled with sample accuracy using `AudioContext.currentTime`:
+Configure in Settings → Audio.
 
-```javascript
-// Schedule an event 100ms in the future
-workletNode.port.postMessage({
-    type: 'scheduleEvent',
-    time: audioContext.currentTime + 0.1,
-    event: { type: 'noteOn', note: 60 }
-});
-```
+</details>
 
-### Spatializer Support
+## Contributing
 
-AlloLib's spatializers work via stereo panning:
-- **StereoPanner** - Simple left/right panning (full support)
-- **VBAP/DBAP** - Downmixed to stereo for web (2 speakers)
-- **Ambisonics** - First-order decode to stereo
+Contributions are welcome! Please feel free to submit issues and pull requests.
 
-```cpp
-// Use StereoPanner for web audio
-al::StereoPanner panner;
-panner.numSpeakers(2);
-std::vector<float> azimuths = {-45.0f, 45.0f};
-panner.setSpeakerAngles(azimuths);
-```
+## Acknowledgments
+
+- [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) - The AlloSphere Research Group
+- [Gamma](https://github.com/LancePutnam/Gamma) - Lance Putnam's DSP library
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) - Microsoft
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+Copyright (c) 2025 Luc Freiburg
