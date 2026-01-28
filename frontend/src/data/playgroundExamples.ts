@@ -1457,9 +1457,20 @@ class MyApp : public App {
 public:
     SynthGUIManager<SineEnv> synthManager{"SineEnv"};
 
+    // GUI Parameters
+    Parameter amplitude{"Amplitude", "", 0.3f, 0.0f, 1.0f};
+    Parameter attackTime{"Attack", "", 0.1f, 0.01f, 3.0f};
+    Parameter releaseTime{"Release", "", 2.0f, 0.1f, 10.0f};
+    ControlGUI gui;
+
     void onCreate() override {
         gam::sampleRate(44100);
         nav().pos(0, 0, 0);
+
+        // Register parameters with GUI
+        gui << amplitude << attackTime << releaseTime;
+        gui.init();
+
         std::cout << "[AudioVisual Spheres]" << std::endl;
         std::cout << "Spheres fly outward based on pitch!" << std::endl;
         std::cout << "Play with keyboard: ZXCVBNM, QWERTY" << std::endl;
@@ -1467,6 +1478,10 @@ public:
 
     void onSound(AudioIOData& io) override {
         synthManager.render(io);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
     }
 
     void onDraw(Graphics& g) override {
@@ -1479,6 +1494,9 @@ public:
         if (midiNote > 0) {
             synthManager.voice()->setInternalParameterValue(
                 "frequency", ::pow(2.f, (midiNote - 69.f) / 12.f) * 440.f);
+            synthManager.voice()->setInternalParameterValue("amplitude", amplitude.get());
+            synthManager.voice()->setInternalParameterValue("attackTime", attackTime.get());
+            synthManager.voice()->setInternalParameterValue("releaseTime", releaseTime.get());
             synthManager.triggerOn(midiNote);
         }
         return true;
