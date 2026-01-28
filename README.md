@@ -7,6 +7,18 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 ![Status](https://img.shields.io/badge/status-Phase%207%20Complete-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+---
+
+> **Built on the work of the [AlloSphere Research Group](https://allosphere.ucsb.edu/) at UC Santa Barbara.**
+>
+> Special thanks to **Dr. JoAnn Kuchera-Morin** — Director, Inventor, and Lead Researcher of the [AlloSphere Research Facility](https://allosphere.ucsb.edu/) — whose vision for immersive multimedia research made AlloLib and the AlloSphere possible.
+>
+> Thanks to **Dr. Andres Cabrera** ([@mantaraya36](https://github.com/mantaraya36)) for architecting and leading development of [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) and [AlloLib Playground](https://github.com/AlloSphere-Research-Group/allolib_playground), and to **Dr. Lance Putnam** ([@LancePutnam](https://github.com/LancePutnam)) for creating the [Gamma](https://github.com/LancePutnam/Gamma) DSP library and the original [AlloSystem](https://github.com/AlloSphere-Research-Group/AlloSystem).
+>
+> And to all the AlloLib and AlloLib Playground contributors: **Keehong Youn**, **Kon Hyong Kim**, **Karl Yerkes**, **Myungin Lee**, **Timothy Wood**, **Joel A. Jaffe**, **Sihwa Park**, **Graham Wakefield**, **Aaron Anderson**, and **Dennis Adderton**.
+
+---
+
 ## Features
 
 ### Core
@@ -236,8 +248,11 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## Acknowledgments
 
-- [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) - The AlloSphere Research Group
-- [Gamma](https://github.com/LancePutnam/Gamma) - Lance Putnam's DSP library
+- [AlloSphere Research Group](https://allosphere.ucsb.edu/) - UCSB's immersive multimedia research facility, directed by Dr. JoAnn Kuchera-Morin
+- [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) - Interactive multimedia C++ library by Dr. Andres Cabrera and the AlloSphere team
+- [AlloLib Playground](https://github.com/AlloSphere-Research-Group/allolib_playground) - Tutorials and examples for AlloLib by Dr. Andres Cabrera, Myungin Lee, and contributors
+- [AlloSystem](https://github.com/AlloSphere-Research-Group/AlloSystem) - The original AlloSphere C++ libraries by Dr. Lance Putnam
+- [Gamma](https://github.com/LancePutnam/Gamma) - Generic sound synthesis C++ library by Dr. Lance Putnam
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) - Microsoft
 
 ## License
