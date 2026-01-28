@@ -1,12 +1,15 @@
 <script setup lang="ts">
 /**
- * Analysis Panel
+ * Toolbar Panel
  *
- * Provides real-time analysis with two main tabs:
+ * Provides parameter controls and real-time analysis with tabs:
+ * - Params: Parameter controls for the running application
  * - Audio: Stereo meters, waveform, spectrum analyzer
  * - Video: FPS counter, frame time, render stats
  */
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { parameterSystem, ParameterType, type Parameter, type ParameterGroup } from '@/utils/parameter-system'
+import { useProjectStore } from '@/stores/project'
 
 const props = defineProps<{
   isRunning: boolean
@@ -53,8 +56,50 @@ function stopResize() {
   document.body.style.userSelect = ''
 }
 
-// Main tab state
-const activeTab = ref<'audio' | 'video'>('audio')
+// Parameter panel state
+const parameterGroups = ref<ParameterGroup[]>([])
+const expandedGroups = ref<Set<string>>(new Set(['Parameters', 'Audio', 'Graphics', 'Color']))
+const showPresetMenu = ref(false)
+const newPresetName = ref('')
+const presetList = ref<string[]>([])
+
+function updateParameters() {
+  parameterGroups.value = parameterSystem.getGrouped()
+}
+
+// Update preset list from project files
+function updatePresetList() {
+  const synthName = extractSynthName()
+  const dataFolder = `bin/${synthName}-data`
+
+  // Find all .preset files in the data folder
+  const presets: string[] = []
+  for (const file of projectStore.files) {
+    if (file.path.startsWith(dataFolder) && file.path.endsWith('.preset')) {
+      // Use the filename without extension as the preset name
+      const name = file.name.replace('.preset', '')
+      presets.push(name)
+    }
+  }
+
+  // Sort numerically if they're numbers, otherwise alphabetically
+  presets.sort((a, b) => {
+    const numA = parseInt(a)
+    const numB = parseInt(b)
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+    return a.localeCompare(b)
+  })
+
+  presetList.value = presets
+}
+
+const hasParameters = computed(() => parameterSystem.count > 0)
+
+// Subscribe to parameter changes
+let paramUnsubscribe: (() => void) | null = null
+
+// Main tab state - switches to 'params' when parameters appear
+const activeTab = ref<'audio' | 'video' | 'params'>('audio')
 
 // Audio sub-view state
 const audioView = ref<'waveform' | 'spectrum' | 'stereo'>('stereo')
@@ -641,9 +686,265 @@ watch(audioView, () => {
   setTimeout(setupCanvases, 50)
 })
 
+// Parameter panel functions
+function toggleGroup(groupName: string) {
+  if (expandedGroups.value.has(groupName)) {
+    expandedGroups.value.delete(groupName)
+  } else {
+    expandedGroups.value.add(groupName)
+  }
+}
+
+function handleSliderChange(param: Parameter, event: Event) {
+  const target = event.target as HTMLInputElement
+  parameterSystem.setByIndex(param.index, parseFloat(target.value))
+}
+
+function handleBoolToggle(param: Parameter) {
+  parameterSystem.setByIndex(param.index, param.value === 0 ? 1 : 0)
+}
+
+function handleMenuChange(param: Parameter, event: Event) {
+  const target = event.target as HTMLSelectElement
+  parameterSystem.setByIndex(param.index, parseInt(target.value))
+}
+
+function handleTrigger(param: Parameter) {
+  parameterSystem.trigger(param.index)
+}
+
+function resetToDefault(param: Parameter) {
+  parameterSystem.resetToDefault(param.index)
+}
+
+function formatValue(param: Parameter): string {
+  const value = param.value
+  if (param.type === ParameterType.INT || param.type === ParameterType.MENU) {
+    return Math.round(value).toString()
+  }
+  if (param.type === ParameterType.BOOL) {
+    return value > 0.5 ? 'On' : 'Off'
+  }
+  if (Math.abs(value) < 0.001 && value !== 0) return value.toExponential(2)
+  if (Math.abs(value) < 10) return value.toFixed(3)
+  if (Math.abs(value) < 100) return value.toFixed(2)
+  return value.toFixed(1)
+}
+
+function getStep(param: Parameter): number {
+  if (param.type === ParameterType.INT || param.type === ParameterType.MENU) return 1
+  const range = param.max - param.min
+  if (range <= 1) return 0.001
+  if (range <= 10) return 0.01
+  if (range <= 100) return 0.1
+  return 1
+}
+
+// Save preset with custom name to project file
+function savePreset() {
+  if (!newPresetName.value.trim()) return
+
+  const synthName = extractSynthName()
+  const dataFolder = `bin/${synthName}-data`
+  const presetName = newPresetName.value.trim()
+  const presetPath = `${dataFolder}/${presetName}.preset`
+
+  // Create folders if needed
+  if (!projectStore.folders.some(f => f.path === 'bin')) {
+    projectStore.createFolder('bin')
+  }
+  if (!projectStore.folders.some(f => f.path === dataFolder)) {
+    projectStore.createFolder(`${synthName}-data`, 'bin')
+  }
+
+  // Find preset number (use existing number or find next)
+  let presetNum = parseInt(presetName)
+  if (isNaN(presetNum)) {
+    presetNum = findNextPresetNumber(synthName)
+  }
+
+  // Generate and save preset content
+  const content = generatePresetContent(presetNum)
+  const result = projectStore.createDataFile(presetPath, content)
+
+  if (result.success) {
+    projectStore.saveProject()
+    console.log(`[Preset] Saved: ${presetPath}`)
+  }
+
+  newPresetName.value = ''
+  updatePresetList()
+  showPresetMenu.value = false
+}
+
+// Project store for file operations
+const projectStore = useProjectStore()
+
+/**
+ * Extract synth name from the project code
+ * Looks for SynthGUIManager<...> synthManager{"Name"} pattern
+ */
+function extractSynthName(): string {
+  const mainFile = projectStore.getFileContent('main.cpp')
+  if (!mainFile) return 'Synth'
+
+  // Look for SynthGUIManager pattern: SynthGUIManager<...> name{"SynthName"}
+  const match = mainFile.match(/SynthGUIManager<[^>]+>\s+\w+\s*\{\s*"([^"]+)"\s*\}/)
+  if (match) return match[1]
+
+  // Fallback: look for simpler pattern
+  const match2 = mainFile.match(/SynthGUIManager<(\w+)>/)
+  if (match2) return match2[1]
+
+  return 'Synth'
+}
+
+/**
+ * Generate allolib preset file content
+ * Format: ::N\n/paramName f value\n...\n::
+ */
+function generatePresetContent(presetNumber: number): string {
+  const params = parameterSystem.getAll()
+  let content = `::${presetNumber}\n`
+
+  for (const param of params) {
+    // Skip trigger parameters (no persistent value)
+    if (param.type === ParameterType.TRIGGER) continue
+
+    // Format: /paramName f value (f for float)
+    const typeChar = param.type === ParameterType.INT ? 'i' : 'f'
+    content += `/${param.name} ${typeChar} ${param.value.toFixed(6)} \n`
+  }
+
+  content += '::\n'
+  return content
+}
+
+/**
+ * Find the next available preset number
+ */
+function findNextPresetNumber(synthName: string): number {
+  const dataFolder = `bin/${synthName}-data`
+  let num = 0
+
+  // Check existing files to find next available number
+  for (const file of projectStore.files) {
+    if (file.path.startsWith(dataFolder) && file.path.endsWith('.preset')) {
+      const match = file.path.match(/(\d+)\.preset$/)
+      if (match) {
+        const existingNum = parseInt(match[1])
+        if (existingNum >= num) {
+          num = existingNum + 1
+        }
+      }
+    }
+  }
+
+  return num
+}
+
+// Quick save preset as allolib-format file
+function quickSavePreset() {
+  const synthName = extractSynthName()
+  const dataFolder = `bin/${synthName}-data`
+  const presetNum = findNextPresetNumber(synthName)
+  const presetPath = `${dataFolder}/${presetNum}.preset`
+
+  console.log(`[Preset] Quick save: synthName=${synthName}, path=${presetPath}`)
+
+  // Create the bin folder if needed
+  if (!projectStore.folders.some(f => f.path === 'bin')) {
+    const binResult = projectStore.createFolder('bin')
+    console.log(`[Preset] Created bin folder:`, binResult)
+  }
+
+  // Create the data folder if needed
+  if (!projectStore.folders.some(f => f.path === dataFolder)) {
+    const dataResult = projectStore.createFolder(`${synthName}-data`, 'bin')
+    console.log(`[Preset] Created data folder:`, dataResult)
+  }
+
+  // Generate preset content
+  const content = generatePresetContent(presetNum)
+  console.log(`[Preset] Generated content:`, content)
+
+  // Create the preset file using the store's data file function
+  const result = projectStore.createDataFile(presetPath, content)
+
+  if (result.success) {
+    // Save project to localStorage
+    projectStore.saveProject()
+    console.log(`[Preset] Saved preset to ${presetPath}`)
+  } else {
+    console.error(`[Preset] Failed to save: ${result.error}`)
+  }
+}
+
+// Parse allolib preset file content and apply values
+function loadPreset(name: string) {
+  const synthName = extractSynthName()
+  const presetPath = `bin/${synthName}-data/${name}.preset`
+
+  const file = projectStore.getFileByPath(presetPath)
+  if (!file) {
+    console.error(`[Preset] File not found: ${presetPath}`)
+    return
+  }
+
+  // Parse the preset file
+  // Format: ::N\n/paramName f value\n...\n::
+  const lines = file.content.split('\n')
+  for (const line of lines) {
+    // Match parameter lines: /paramName f value or /paramName i value
+    const match = line.match(/^\/(\S+)\s+[fi]\s+([\d.-]+)/)
+    if (match) {
+      const paramName = match[1]
+      const value = parseFloat(match[2])
+      parameterSystem.set(paramName, value)
+    }
+  }
+
+  console.log(`[Preset] Loaded preset: ${name}`)
+  showPresetMenu.value = false
+}
+
+// Delete a preset file from the project
+function deletePreset(name: string, event: Event) {
+  event.stopPropagation()
+  if (confirm(`Delete preset "${name}"?`)) {
+    const synthName = extractSynthName()
+    const presetPath = `bin/${synthName}-data/${name}.preset`
+
+    const result = projectStore.deleteFile(presetPath)
+    if (result.success) {
+      projectStore.saveProject()
+      updatePresetList()
+      console.log(`[Preset] Deleted: ${presetPath}`)
+    } else {
+      console.error(`[Preset] Failed to delete: ${result.error}`)
+    }
+  }
+}
+
+// Watch for file changes to update preset list
+watch(() => projectStore.files, () => {
+  updatePresetList()
+}, { deep: true })
+
 onMounted(() => {
   setupCanvases()
   window.addEventListener('resize', setupCanvases)
+
+  // Subscribe to parameter changes
+  updateParameters()
+  updatePresetList()
+  paramUnsubscribe = parameterSystem.subscribe(() => {
+    updateParameters()
+    // Auto-switch to params tab when parameters appear
+    if (parameterSystem.count > 0 && activeTab.value !== 'params') {
+      activeTab.value = 'params'
+    }
+  })
 })
 
 onBeforeUnmount(() => {
@@ -651,6 +952,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', setupCanvases)
   document.removeEventListener('mousemove', onMouseMove)
   document.removeEventListener('mouseup', stopResize)
+  if (paramUnsubscribe) paramUnsubscribe()
 })
 </script>
 
@@ -672,8 +974,21 @@ onBeforeUnmount(() => {
     <!-- Header with main tabs -->
     <div class="h-8 flex items-center justify-between px-3 border-b border-editor-border shrink-0">
       <div class="flex items-center gap-2">
-        <span class="text-sm text-gray-400">Analysis</span>
+        <span class="text-sm text-gray-400">Toolbar</span>
         <div class="flex gap-1 ml-2">
+          <!-- Params tab - always visible -->
+          <button
+            @click="activeTab = 'params'"
+            :class="[
+              'px-2 py-0.5 text-xs rounded transition-colors',
+              activeTab === 'params'
+                ? 'bg-allolib-blue text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            ]"
+          >
+            Params
+            <span v-if="hasParameters" class="ml-1 text-[10px] opacity-70">({{ parameterSystem.count }})</span>
+          </button>
           <button
             @click="activeTab = 'audio'"
             :class="[
@@ -744,6 +1059,167 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- Parameters Content -->
+    <div v-show="activeTab === 'params'" class="flex-1 flex flex-col overflow-hidden">
+      <div class="flex-1 overflow-y-auto">
+        <div v-for="group in parameterGroups" :key="group.name" class="border-b border-editor-border last:border-b-0">
+          <!-- Group Header -->
+          <button
+            class="w-full px-3 py-1 flex items-center gap-1 text-xs hover:bg-editor-active bg-editor-sidebar"
+            @click="toggleGroup(group.name)"
+          >
+            <svg
+              class="w-2.5 h-2.5 text-gray-500 transition-transform flex-shrink-0"
+              :class="{ 'rotate-90': expandedGroups.has(group.name) }"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <span class="text-gray-300 font-medium">{{ group.name }}</span>
+            <span class="text-gray-500">({{ group.parameters.length }})</span>
+          </button>
+
+          <!-- Parameters -->
+          <div v-if="expandedGroups.has(group.name)" class="px-3 py-1.5 space-y-1.5 bg-editor-bg">
+            <div v-for="param in group.parameters" :key="param.index" class="flex items-center gap-2">
+              <!-- Float/Int Slider -->
+              <template v-if="param.type === ParameterType.FLOAT || param.type === ParameterType.INT">
+                <label
+                  class="text-xs text-gray-400 w-24 truncate flex-shrink-0 cursor-pointer"
+                  :title="param.name + ' (double-click to reset)'"
+                  @dblclick="resetToDefault(param)"
+                >
+                  {{ param.displayName }}
+                </label>
+                <input
+                  type="range"
+                  :min="param.min"
+                  :max="param.max"
+                  :step="getStep(param)"
+                  :value="param.value"
+                  @input="handleSliderChange(param, $event)"
+                  class="flex-1 h-3 bg-gray-700 rounded appearance-none cursor-pointer accent-allolib-blue"
+                />
+                <span class="text-xs text-blue-400 font-mono w-12 text-right">
+                  {{ formatValue(param) }}
+                </span>
+              </template>
+
+              <!-- Bool Toggle -->
+              <template v-else-if="param.type === ParameterType.BOOL">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">
+                  {{ param.displayName }}
+                </label>
+                <button
+                  @click="handleBoolToggle(param)"
+                  :class="[
+                    'w-4 h-4 border rounded-sm flex items-center justify-center',
+                    param.value > 0.5 ? 'bg-allolib-blue border-allolib-blue' : 'bg-gray-700 border-gray-600'
+                  ]"
+                >
+                  <svg v-if="param.value > 0.5" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                  </svg>
+                </button>
+              </template>
+
+              <!-- Menu -->
+              <template v-else-if="param.type === ParameterType.MENU">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">
+                  {{ param.displayName }}
+                </label>
+                <select
+                  :value="Math.round(param.value)"
+                  @change="handleMenuChange(param, $event)"
+                  class="flex-1 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300"
+                >
+                  <option v-for="i in (param.max + 1)" :key="i - 1" :value="i - 1">
+                    Option {{ i - 1 }}
+                  </option>
+                </select>
+              </template>
+
+              <!-- Trigger -->
+              <template v-else-if="param.type === ParameterType.TRIGGER">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">
+                  {{ param.displayName }}
+                </label>
+                <button
+                  @click="handleTrigger(param)"
+                  class="px-3 h-5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded text-gray-300"
+                >
+                  Trigger
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preset Footer -->
+      <div class="px-3 py-1.5 border-t border-editor-border bg-editor-sidebar flex items-center gap-2 shrink-0">
+        <span class="text-xs text-gray-500">Presets:</span>
+        <div class="relative flex-1">
+          <button
+            @click="showPresetMenu = !showPresetMenu"
+            class="w-full h-5 text-xs bg-gray-700 border border-gray-600 rounded px-2 text-left text-gray-300 flex items-center justify-between"
+          >
+            <span>{{ presetList.length > 0 ? `${presetList.length} saved` : 'None' }}</span>
+            <svg class="w-3 h-3 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M7 10l5 5 5-5z" />
+            </svg>
+          </button>
+
+          <!-- Preset dropdown -->
+          <div
+            v-if="showPresetMenu"
+            class="absolute bottom-6 left-0 w-48 bg-editor-sidebar border border-editor-border rounded shadow-lg z-50"
+          >
+            <div v-if="presetList.length > 0" class="max-h-32 overflow-y-auto">
+              <div
+                v-for="preset in presetList"
+                :key="preset"
+                @click="loadPreset(preset)"
+                class="w-full px-2 py-1 text-xs text-left text-gray-300 hover:bg-editor-active flex items-center justify-between group cursor-pointer"
+              >
+                <span>{{ preset }}</span>
+                <span
+                  @click.stop="deletePreset(preset, $event)"
+                  class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 px-1 cursor-pointer"
+                >
+                  ✕
+                </span>
+              </div>
+            </div>
+            <div v-else class="px-2 py-1 text-xs text-gray-500 italic">No presets</div>
+            <div class="border-t border-editor-border px-2 py-1.5 flex gap-1">
+              <input
+                v-model="newPresetName"
+                @keyup.enter="savePreset"
+                placeholder="New preset"
+                class="flex-1 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300"
+              />
+              <button
+                @click="savePreset"
+                :disabled="!newPresetName.trim()"
+                class="px-2 h-5 text-xs bg-gray-600 hover:bg-gray-500 rounded text-gray-300 disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+        <button
+          @click="quickSavePreset"
+          class="px-2 h-5 text-xs bg-blue-600 hover:bg-blue-500 border border-blue-700 rounded text-white"
+          title="Save preset as 'Preset N'"
+        >
+          Quick Save
+        </button>
+      </div>
+    </div>
+
     <!-- Audio Content -->
     <div v-show="activeTab === 'audio'" class="flex-1 flex flex-col overflow-hidden">
       <!-- Stereo Meter with Limiter Indicator -->
@@ -798,5 +1274,42 @@ onBeforeUnmount(() => {
 <style scoped>
 .analysis-panel {
   min-height: 160px;
+}
+
+/* Parameter slider styling */
+.analysis-panel input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #374151;
+  border-radius: 4px;
+}
+
+.analysis-panel input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 14px;
+  background: #9ca3af;
+  border-radius: 2px;
+  cursor: grab;
+}
+
+.analysis-panel input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  background: #58a6ff;
+}
+
+.analysis-panel input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 14px;
+  background: #9ca3af;
+  border-radius: 2px;
+  border: none;
+  cursor: grab;
+}
+
+.analysis-panel input[type="range"]::-moz-range-thumb:active {
+  cursor: grabbing;
+  background: #58a6ff;
 }
 </style>

@@ -5,6 +5,8 @@
  * Each example is a fully functional AlloLib web application.
  */
 
+import { playgroundCategories, playgroundExamples } from './playgroundExamples'
+
 export interface Example {
   id: string
   title: string
@@ -85,10 +87,14 @@ export const categories: ExampleCategory[] = [
     subcategories: [
       { id: 'graphics', title: 'Graphics Tests' },
       { id: 'audio', title: 'Audio Tests' },
+      { id: 'ui', title: 'UI Tests' },
     ],
   },
+  // Merge playground categories (from allolib_playground tutorials)
+  ...playgroundCategories,
 ]
 
+// Combine base examples with playground examples
 export const examples: Example[] = [
   // ==========================================================================
   // BASICS - Hello World
@@ -5789,6 +5795,182 @@ ALLOLIB_MAIN(CrossPlatformApp)
  */
 `,
   },
+  // ==========================================================================
+  // FEATURE TESTS - UI Tests
+  // ==========================================================================
+  {
+    id: 'parameter-panel-test',
+    title: 'Parameter Panel Demo',
+    description: 'Demonstrates the web-based parameter GUI with sliders, toggles, and presets',
+    category: 'feature-tests',
+    subcategory: 'ui',
+    code: `/**
+ * Parameter Panel Demo
+ *
+ * This example demonstrates the Vue-based parameter panel that replaces
+ * ImGui in the browser. Parameters registered with ControlGUI appear
+ * in the Parameters panel below the viewer.
+ *
+ * Features:
+ * - Float sliders with real-time feedback
+ * - Boolean toggles (checkboxes)
+ * - Menu/dropdown selections
+ * - Preset save/load to localStorage
+ * - Double-click parameter name to reset to default
+ *
+ * The same code will use real ImGui when exported to native AlloLib!
+ */
+
+#include "al_playground_compat.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+
+class ParameterDemoApp : public App {
+public:
+    // Parameters - these will appear in the web GUI
+    Parameter frequency{"Frequency", "", 440.0f, 100.0f, 2000.0f};
+    Parameter amplitude{"Amplitude", "", 0.3f, 0.0f, 1.0f};
+    Parameter rotation_speed{"Rotation Speed", "", 30.0f, 0.0f, 180.0f};
+    ParameterInt shape_type{"Shape", "", 0, 0, 3};
+    ParameterBool audio_enabled{"Audio Enabled", "", true};
+    Parameter hue{"Hue", "Color", 0.5f, 0.0f, 1.0f};
+    Parameter saturation{"Saturation", "Color", 0.8f, 0.0f, 1.0f};
+    Parameter brightness{"Brightness", "Color", 0.9f, 0.0f, 1.0f};
+
+    // The GUI manager - in WASM this uses WebControlGUI, on native it uses ImGui
+    ControlGUI gui;
+
+    // Audio
+    gam::Sine<> osc;
+
+    // Graphics
+    Mesh sphere, cube, cone, torus;
+    double angle = 0;
+
+    void onCreate() override {
+        // Register all parameters with the GUI
+        // These will appear in the Parameters panel
+        gui << frequency << amplitude << rotation_speed;
+        gui << shape_type << audio_enabled;
+        gui << hue << saturation << brightness;
+
+        // Set up GUI (optional title and position on native)
+        gui.setTitle("Demo Controls");
+
+        // Create meshes for different shapes
+        addSphere(sphere, 1.0, 32, 32);
+        addCube(cube);
+        addCone(cone, 0.5, Vec3f(0, 0, 1.5));
+        addTorus(torus, 0.3, 0.8, 32, 32);
+
+        sphere.generateNormals();
+        cube.generateNormals();
+        cone.generateNormals();
+        torus.generateNormals();
+
+        nav().pos(0, 0, 5);
+        configureAudio(44100, 128, 2, 0);
+    }
+
+    void onAnimate(double dt) override {
+        angle += rotation_speed.get() * dt;
+
+        // Update oscillator frequency from parameter
+        osc.freq(frequency.get());
+
+        // Draw the GUI (no-op in WASM, Vue panel handles it)
+        gui.draw();
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1);
+
+        // Set up basic lighting
+        g.lighting(true);
+        g.light().pos(5, 5, 5);
+
+        // Convert HSV to RGB for color
+        float h = hue.get();
+        float s = saturation.get();
+        float v = brightness.get();
+
+        // Simple HSV to RGB conversion
+        float c = v * s;
+        float x = c * (1 - std::abs(std::fmod(h * 6, 2.0f) - 1));
+        float m = v - c;
+        float r, gr, b;
+
+        if (h < 1.0f/6) { r = c; gr = x; b = 0; }
+        else if (h < 2.0f/6) { r = x; gr = c; b = 0; }
+        else if (h < 3.0f/6) { r = 0; gr = c; b = x; }
+        else if (h < 4.0f/6) { r = 0; gr = x; b = c; }
+        else if (h < 5.0f/6) { r = x; gr = 0; b = c; }
+        else { r = c; gr = 0; b = x; }
+
+        g.color(r + m, gr + m, b + m);
+
+        g.pushMatrix();
+        g.rotate(angle, 0, 1, 0);
+        g.rotate(angle * 0.7, 1, 0, 0);
+
+        // Draw selected shape based on parameter
+        switch (shape_type.get()) {
+            case 0: g.draw(sphere); break;
+            case 1: g.draw(cube); break;
+            case 2: g.draw(cone); break;
+            case 3: g.draw(torus); break;
+        }
+
+        g.popMatrix();
+
+        // Show parameter values on screen
+        // (In native ImGui, you could draw text overlays)
+    }
+
+    void onSound(AudioIOData& io) override {
+        while (io()) {
+            float sample = 0;
+
+            if (audio_enabled.get()) {
+                sample = osc() * amplitude.get();
+            }
+
+            io.out(0) = io.out(1) = sample;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        // 1-4 to change shape
+        if (k.key() >= '1' && k.key() <= '4') {
+            shape_type.set(k.key() - '1');
+        }
+
+        // Space to toggle audio
+        if (k.key() == ' ') {
+            audio_enabled.set(!audio_enabled.get());
+        }
+
+        return true;
+    }
+};
+
+ALLOLIB_MAIN(ParameterDemoApp)
+
+/*
+ * Try these:
+ * - Adjust sliders in the Parameters panel below
+ * - Save a preset with your favorite settings
+ * - Double-click a parameter name to reset it
+ * - Press 1-4 to change shapes via keyboard
+ * - Press SPACE to toggle audio
+ */
+`,
+  },
+  // Merge playground examples (from allolib_playground tutorials)
+  ...playgroundExamples,
 ]
 
 // Helper function to get examples by category

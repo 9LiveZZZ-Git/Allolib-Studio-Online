@@ -13,7 +13,11 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Live Compilation** - Server-side Emscripten compilation (~5 seconds) to WebAssembly
 - **WebGL2 Graphics** - 3D rendering with meshes, lighting, shaders, and textures
 - **Web Audio** - Real-time audio synthesis with Gamma DSP library
-- **22+ Examples** - Ready-to-run demos covering graphics, audio, and interaction
+- **Parameter Panel** - Interactive GUI controls for synth parameters (like ImGui)
+- **Preset System** - Save/load presets as allolib-compatible `.preset` files
+- **Multi-File Projects** - Create headers, organize with folders, export as ZIP
+- **Polyphonic Synths** - SynthGUIManager, PolySynth, keyboard-triggered voices
+- **30+ Examples** - Ready-to-run demos covering graphics, audio, synthesis, and interaction
 - **Glossary** - 330+ searchable terms covering AlloLib and Gamma DSP APIs
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
@@ -51,8 +55,9 @@ npm run dev:frontend
 
 1. **Write** your C++ code in the editor (or choose an example)
 2. **Run** to compile and execute
-3. **View** the output in the WebGL canvas
-4. **Listen** to audio through your speakers
+3. **Play** notes using your keyboard (ZXCVBNM, ASDFGHJ, QWERTYU)
+4. **Adjust** parameters in the Parameter Panel
+5. **Save** presets with Quick Save (creates `.preset` files)
 
 ### Keyboard Shortcuts
 
@@ -72,7 +77,14 @@ Type these prefixes and press Tab:
 - `sine-osc` - Sine wave oscillator
 - `synthvoice` - Polyphonic voice template
 
-### Controls
+### Musical Keyboard
+
+For synth examples, play notes with your keyboard:
+- **ZXCVBNM** - C3 to B3 (low octave)
+- **ASDFGHJ** - C4 to B4 (middle C octave)
+- **QWERTYU** - C5 to B5 (high octave)
+
+### Camera Controls
 
 Default camera controls in the viewer:
 - **WASD** - Move forward/left/back/right
@@ -90,6 +102,8 @@ The Examples dropdown includes demos organized by category:
 | **Audio** | Oscillators, Envelopes, Synthesis |
 | **Interaction** | Keyboard, Mouse, Navigation |
 | **Scene System** | SynthVoice, PolySynth, DynamicScene |
+| **Playground Synthesis** | Sine Envelope, Wavetable, FM, Subtractive, Additive |
+| **Playground AudioVisual** | AudioVisual Spheres, Synthesis Showcase |
 | **Advanced** | Particles, Generative, Audio-Visual |
 
 ## Architecture

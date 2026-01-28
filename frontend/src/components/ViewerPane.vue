@@ -220,7 +220,7 @@ function handleResize() {
       </div>
       </div>
 
-      <!-- Analysis Panel -->
+      <!-- Toolbar Panel -->
       <AnalysisPanel
         v-show="showAnalysisPanel !== false"
         :is-running="isAudioRunning"

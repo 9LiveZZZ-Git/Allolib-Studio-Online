@@ -5,6 +5,8 @@
  * including graphics rendering and audio processing.
  */
 
+import { parameterSystem } from '@/utils/parameter-system'
+
 export interface RuntimeConfig {
   canvas: HTMLCanvasElement
   onPrint?: (text: string) => void
@@ -19,6 +21,7 @@ export interface WasmModule {
   _free?: (ptr: number) => void
   cwrap?: (name: string, returnType: string, argTypes: string[]) => Function
   ccall?: (name: string, returnType: string, argTypes: string[], args: any[]) => any
+  UTF8ToString?: (ptr: number) => string
   HEAPF32?: Float32Array
   canvas?: HTMLCanvasElement
   GL?: WebGLRenderingContext
@@ -30,6 +33,18 @@ export interface WasmModule {
   _allolib_destroy?: () => void
   _allolib_process_audio?: (buffer: number, frames: number, channels: number) => void
   _allolib_configure_audio?: (sampleRate: number, bufferSize: number, outCh: number, inCh: number) => void
+
+  // WebControlGUI exports (parameter panel)
+  _al_webgui_get_parameter_count?: () => number
+  _al_webgui_get_parameter_name?: (index: number) => number // Returns pointer to string
+  _al_webgui_get_parameter_group?: (index: number) => number // Returns pointer to string
+  _al_webgui_get_parameter_type?: (index: number) => number
+  _al_webgui_get_parameter_min?: (index: number) => number
+  _al_webgui_get_parameter_max?: (index: number) => number
+  _al_webgui_get_parameter_value?: (index: number) => number
+  _al_webgui_get_parameter_default?: (index: number) => number
+  _al_webgui_set_parameter_value?: (index: number, value: number) => void
+  _al_webgui_trigger_parameter?: (index: number) => void
 }
 
 declare global {
@@ -392,6 +407,12 @@ export class AllolibRuntime {
       // Resume audio context (must be after user interaction)
       this.resumeAudio()
 
+      // Connect the parameter system to the WASM module
+      // This enables the Vue ParameterPanel to show and control parameters
+      if (this.module) {
+        parameterSystem.connectWasm(this.module)
+      }
+
       this.onPrint('[SUCCESS] Application started')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -417,6 +438,9 @@ export class AllolibRuntime {
     if (!this.isRunning) return
 
     this.isRunning = false
+
+    // Disconnect parameter system
+    parameterSystem.disconnectWasm()
 
     // Stop the AlloLib app
     if (this.module?._allolib_stop) {

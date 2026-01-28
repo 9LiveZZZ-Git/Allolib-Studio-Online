@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { submitCompilation, pollJobCompletion, cleanupJob } from '@/services/compiler'
+import { submitCompilation, pollJobCompletion, cleanupJob, type ProjectFile } from '@/services/compiler'
 import { parseCompilerOutput, type CompilerDiagnostic } from '@/utils/error-parser'
 
 export type AppStatus = 'idle' | 'compiling' | 'loading' | 'running' | 'error'
@@ -31,7 +31,7 @@ export const useAppStore = defineStore('app', () => {
     consoleOutput.value = []
   }
 
-  async function compile(source: string) {
+  async function compile(files: ProjectFile[], mainFile: string = 'main.cpp') {
     if (status.value === 'compiling' || status.value === 'running') {
       return
     }
@@ -39,11 +39,11 @@ export const useAppStore = defineStore('app', () => {
     status.value = 'compiling'
     errorMessage.value = null
     diagnostics.value = [] // Clear previous diagnostics
-    log('[INFO] Starting compilation...')
+    log(`[INFO] Starting compilation... (${files.length} file${files.length > 1 ? 's' : ''})`)
 
     try {
       // Submit compilation request
-      const response = await submitCompilation(source)
+      const response = await submitCompilation({ files, mainFile })
 
       if (!response.success) {
         throw new Error(response.error || 'Compilation failed')

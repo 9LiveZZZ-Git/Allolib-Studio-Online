@@ -26,10 +26,19 @@ static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void*
 #endif
 
 WebApp::WebApp() {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[WebApp] Constructor start'); });
+#endif
     // Default navigation position (camera at z=5 looking at origin)
     mNav.pos(0, 0, 5);
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[WebApp] Nav pos set'); });
+#endif
     // Initialize viewpoint with nav pose
     initViewpoint();
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[WebApp] Constructor done'); });
+#endif
 }
 
 WebApp::~WebApp() {
@@ -57,15 +66,27 @@ void WebApp::dimensions(int width, int height) {
 void WebApp::start() {
     if (mRunning) return;
 
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] start() called'); });
+#endif
     std::cout << "[AlloLib] Starting web application..." << std::endl;
 
     // Initialize graphics
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] About to call initGraphics()'); });
+#endif
     initGraphics();
 
     // Initialize audio
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] About to call initAudio()'); });
+#endif
     initAudio();
 
     // Call user's onCreate
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] About to call onCreate()'); });
+#endif
     onCreate();
 
     mRunning = true;
@@ -113,6 +134,18 @@ void WebApp::stop() {
 
 #ifdef __EMSCRIPTEN__
     emscripten_cancel_main_loop();
+
+    // Remove keyboard event handlers (pass nullptr to unregister)
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, EM_TRUE, nullptr);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, EM_TRUE, nullptr);
+
+    // Remove mouse event handlers
+    emscripten_set_mousedown_callback("#canvas", nullptr, EM_TRUE, nullptr);
+    emscripten_set_mouseup_callback("#canvas", nullptr, EM_TRUE, nullptr);
+    emscripten_set_mousemove_callback("#canvas", nullptr, EM_TRUE, nullptr);
+    emscripten_set_wheel_callback("#canvas", nullptr, EM_TRUE, nullptr);
+
+    EM_ASM({ console.log('[AlloLib] Input event handlers removed'); });
 
     // Cleanup audio
     EM_ASM({
@@ -188,7 +221,33 @@ public:
 // Keyboard event callback
 static EM_BOOL keyCallback(int eventType, const EmscriptenKeyboardEvent* e, void* userData) {
     WebApp* app = static_cast<WebApp*>(userData);
-    if (!app) return EM_FALSE;
+    if (!app) {
+        EM_ASM({ console.log('[Keyboard] No app!'); });
+        return EM_FALSE;
+    }
+
+    // Check if user is typing in an input field - if so, don't capture the key event
+    bool isTypingInInput = EM_ASM_INT({
+        var activeEl = document.activeElement;
+        if (!activeEl) return 0;
+        var tagName = activeEl.tagName.toLowerCase();
+        // Don't capture keys when typing in input, textarea, select, or contenteditable elements
+        if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+            return 1;
+        }
+        if (activeEl.isContentEditable) {
+            return 1;
+        }
+        return 0;
+    });
+
+    if (isTypingInInput) {
+        // Let the browser handle the key event for the input field
+        return EM_FALSE;
+    }
+
+    EM_ASM({ console.log('[Keyboard] Event: type=' + $0 + ', key=' + UTF8ToString($1) + ', code=' + UTF8ToString($2)); },
+           eventType, e->key, e->code);
 
     // Create AlloLib Keyboard object using helper class
     KeyboardAccess k;
@@ -223,7 +282,9 @@ static EM_BOOL keyCallback(int eventType, const EmscriptenKeyboardEvent* e, void
     // Call appropriate handler
     bool handled = false;
     if (eventType == EMSCRIPTEN_EVENT_KEYDOWN) {
+        EM_ASM({ console.log('[Keyboard] Calling onKeyDown, key code=' + $0); }, key);
         handled = app->onKeyDown(k);
+        EM_ASM({ console.log('[Keyboard] onKeyDown returned ' + $0); }, handled ? 1 : 0);
     } else if (eventType == EMSCRIPTEN_EVENT_KEYUP) {
         handled = app->onKeyUp(k);
     }

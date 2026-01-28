@@ -228,13 +228,17 @@ private:
     static AppClass* gWebApp = nullptr;                                  \
     extern "C" {                                                         \
         EMSCRIPTEN_KEEPALIVE void allolib_create() {                    \
+            EM_ASM({ console.log('[WASM] allolib_create() called'); }); \
             if (!gWebApp) {                                              \
                 gWebApp = new AppClass();                                \
+                EM_ASM({ console.log('[WASM] App instance created'); });\
             }                                                            \
         }                                                                \
         EMSCRIPTEN_KEEPALIVE void allolib_start() {                     \
+            EM_ASM({ console.log('[WASM] allolib_start() called'); });  \
             if (gWebApp) {                                               \
                 gWebApp->start();                                        \
+                EM_ASM({ console.log('[WASM] start() returned'); });    \
             }                                                            \
         }                                                                \
         EMSCRIPTEN_KEEPALIVE void allolib_stop() {                      \
@@ -263,8 +267,10 @@ private:
         }                                                                \
     }                                                                    \
     int main() {                                                         \
+        EM_ASM({ console.log('[WASM] main() called'); });               \
         allolib_create();                                                \
         allolib_start();                                                 \
+        EM_ASM({ console.log('[WASM] main() done'); });                 \
         return 0;                                                        \
     }
 

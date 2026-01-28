@@ -39,7 +39,7 @@ EMCC_FLAGS=(
     -sUSE_GLFW=3
     -sALLOW_MEMORY_GROWTH=1
     -sEXPORTED_RUNTIME_METHODS="['ccall','cwrap','UTF8ToString','stringToUTF8']"
-    -sEXPORTED_FUNCTIONS="['_main','_malloc','_free','_allolib_create','_allolib_start','_allolib_stop','_allolib_destroy','_allolib_process_audio','_allolib_configure_audio']"
+    -sEXPORTED_FUNCTIONS="['_main','_malloc','_free','_allolib_create','_allolib_start','_allolib_stop','_allolib_destroy','_allolib_process_audio','_allolib_configure_audio','_al_webgui_get_parameter_count','_al_webgui_get_parameter_name','_al_webgui_get_parameter_group','_al_webgui_get_parameter_type','_al_webgui_get_parameter_min','_al_webgui_get_parameter_max','_al_webgui_get_parameter_value','_al_webgui_get_parameter_default','_al_webgui_set_parameter_value','_al_webgui_set_parameter_string','_al_webgui_trigger_parameter','_al_webgui_set_parameter_vec3','_al_webgui_set_parameter_vec4']"
     -sMODULARIZE=1
     -sEXPORT_ES6=1
     -sENVIRONMENT='web'
@@ -76,9 +76,13 @@ DEFS=(
 echo "[INFO] Compiling with em++..."
 echo "[INFO] Command: em++ ${EMCC_FLAGS[*]} ${INCLUDE_FLAGS[*]} ${DEFS[*]} $SOURCE_FILE ${LIB_FLAGS[*]} -o $OUTPUT_DIR/app.js"
 
-# Compile
+# WebControlGUI stubs file (provides default implementations for programs that don't use WebControlGUI)
+WEBGUI_STUBS="$ALLOLIB_WASM_DIR/src/al_WebControlGUI.cpp"
+
+# Compile - include stubs to ensure exported symbols are always defined
 em++ "${EMCC_FLAGS[@]}" "${INCLUDE_FLAGS[@]}" "${DEFS[@]}" \
     "$SOURCE_FILE" \
+    "$WEBGUI_STUBS" \
     "${LIB_FLAGS[@]}" \
     -o "$OUTPUT_DIR/app.js"
 

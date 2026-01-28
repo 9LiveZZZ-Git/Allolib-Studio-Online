@@ -28,6 +28,7 @@ const emit = defineEmits<{
   fileOpen: []
   fileOpenFromDisk: []
   fileExport: []
+  fileExportZip: []
   importNative: []
   exportNative: []
 }>()
@@ -48,6 +49,7 @@ function handleFileAction(action: string) {
     case 'open': emit('fileOpen'); break
     case 'openFromDisk': emit('fileOpenFromDisk'); break
     case 'export': emit('fileExport'); break
+    case 'exportZip': emit('fileExportZip'); break
     case 'importNative': emit('importNative'); break
     case 'exportNative': emit('exportNative'); break
   }
@@ -193,13 +195,13 @@ function getPlatformBadgeClass(platform: string) {
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
-        File
+        Project
         <svg class="w-3 h-3" :class="{ 'rotate-180': showFileMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
-      <!-- File Menu Dropdown -->
+      <!-- Project Menu Dropdown -->
       <div
         v-if="showFileMenu"
         class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1"
@@ -273,6 +275,16 @@ function getPlatformBadgeClass(platform: string) {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
           <span>Export as .cpp</span>
+        </button>
+
+        <button
+          @click="handleFileAction('exportZip')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+          </svg>
+          <span>Export Project as ZIP</span>
         </button>
 
         <div class="border-t border-editor-border my-1"></div>
@@ -771,7 +783,7 @@ function getPlatformBadgeClass(platform: string) {
         <!-- Display Settings -->
         <div v-if="activeSettingsTab === 'display'" class="p-4 space-y-4">
           <div class="flex items-center justify-between">
-            <label class="text-sm text-gray-300">Show Analysis Panel</label>
+            <label class="text-sm text-gray-300">Show Toolbar Panel</label>
             <button
               @click="settings.display.showAnalysisPanel = !settings.display.showAnalysisPanel; handleSettingChange()"
               :class="[

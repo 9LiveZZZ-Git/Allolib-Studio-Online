@@ -1,5 +1,15 @@
 const API_BASE = '/api/compile'
 
+export interface ProjectFile {
+  name: string
+  content: string
+}
+
+export interface CompilationRequest {
+  files: ProjectFile[]
+  mainFile?: string
+}
+
 export interface CompilationResponse {
   success: boolean
   jobId: string
@@ -24,16 +34,32 @@ export interface JobStatusResponse {
   }
 }
 
-export async function submitCompilation(source: string): Promise<CompilationResponse> {
+/**
+ * Submit a multi-file project for compilation
+ */
+export async function submitCompilation(request: CompilationRequest): Promise<CompilationResponse> {
   const response = await fetch(API_BASE, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ source }),
+    body: JSON.stringify({
+      files: request.files,
+      mainFile: request.mainFile || 'main.cpp',
+    }),
   })
 
   return response.json()
+}
+
+/**
+ * Legacy single-file compilation (for backward compatibility)
+ */
+export async function submitSingleFileCompilation(source: string): Promise<CompilationResponse> {
+  return submitCompilation({
+    files: [{ name: 'main.cpp', content: source }],
+    mainFile: 'main.cpp',
+  })
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {

@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useAppStore } from './stores/app'
 import { useSettingsStore } from './stores/settings'
+import { useProjectStore } from './stores/project'
 import Toolbar from './components/Toolbar.vue'
 import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
@@ -15,9 +16,11 @@ import {
   getTranspileSummary,
   type TranspileResult
 } from '@/services/transpiler'
+import JSZip from 'jszip'
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
+const projectStore = useProjectStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const currentFileName = ref('main.cpp')
 
@@ -34,10 +37,16 @@ const consoleHeightStyle = computed(() => ({
 }))
 
 const handleRun = async () => {
-  const code = editorRef.value?.getCode() || ''
+  // Get all files from the project for compilation
+  const files = editorRef.value?.getFilesForCompilation() || []
+  if (files.length === 0) {
+    appStore.log('[ERROR] No files to compile')
+    return
+  }
+
   // Clear previous errors before compiling
   editorRef.value?.clearDiagnostics()
-  await appStore.compile(code)
+  await appStore.compile(files, 'main.cpp')
 
   // If there are diagnostics (errors/warnings), show them in the editor
   if (appStore.diagnostics.length > 0) {
@@ -57,10 +66,10 @@ const handleLoadExample = (code: string) => {
 
 // File menu handlers
 const handleFileNew = () => {
-  if (confirm('Create a new file? Unsaved changes will be lost.')) {
-    editorRef.value?.setCode(defaultCode)
+  if (confirm('Create a new project? Unsaved changes will be lost.')) {
+    editorRef.value?.newProject()
     currentFileName.value = 'main.cpp'
-    appStore.log('[INFO] New file created')
+    appStore.log('[INFO] New project created')
   }
 }
 
@@ -117,6 +126,31 @@ const handleFileExport = () => {
   a.click()
   URL.revokeObjectURL(url)
   appStore.log(`[INFO] Exported: ${currentFileName.value}`)
+}
+
+const handleFileExportZip = async () => {
+  const zip = new JSZip()
+  const project = projectStore.project
+  const projectName = project.name || 'allolib-project'
+
+  // Add all project files to the zip
+  for (const file of project.files) {
+    zip.file(file.path, file.content)
+  }
+
+  // Generate zip and download
+  try {
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${projectName}.zip`
+    a.click()
+    URL.revokeObjectURL(url)
+    appStore.log(`[INFO] Exported project as ZIP: ${projectName}.zip (${project.files.length} files)`)
+  } catch (error) {
+    appStore.log(`[ERROR] Failed to create ZIP: ${error}`)
+  }
 }
 
 const handleConsoleResize = (height: number) => {
@@ -236,6 +270,7 @@ const cancelTranspile = () => {
       @file-open="handleFileOpen"
       @file-open-from-disk="handleFileOpenFromDisk"
       @file-export="handleFileExport"
+      @file-export-zip="handleFileExportZip"
       @import-native="handleImportNative"
       @export-native="handleExportNative"
     />

@@ -1,14 +1,28 @@
 /**
  * Parameter System for AlloLib Studio
  *
- * Provides a bridge between C++ parameters and the web UI.
- * Parameters can be registered from WASM and controlled from JavaScript.
+ * Provides a bridge between C++ WebControlGUI parameters and the web UI.
+ * Parameters registered in C++ via WebControlGUI are automatically
+ * exposed to JavaScript and can be controlled from the Vue UI.
  *
- * Future integration:
- * - C++ code calls _allolib_register_parameter(name, group, value, min, max)
- * - JavaScript receives parameter updates via callbacks
- * - UI sends parameter changes back to WASM via _allolib_set_parameter(name, value)
+ * C++ Integration:
+ * - WebControlGUI registers parameters via << operator
+ * - Parameters are exposed via al_webgui_* C exports
+ * - JS receives notifications via window.allolib callbacks
  */
+
+// Parameter type enum matching WebParamType in C++
+export enum ParameterType {
+  FLOAT = 0,
+  INT = 1,
+  BOOL = 2,
+  STRING = 3,
+  VEC3 = 4,
+  VEC4 = 5,
+  COLOR = 6,
+  MENU = 7,
+  TRIGGER = 8,
+}
 
 export interface Parameter {
   name: string
@@ -17,9 +31,11 @@ export interface Parameter {
   value: number
   min: number
   max: number
+  defaultValue: number
   step?: number
-  type: 'float' | 'int' | 'bool'
-  onChange?: (value: number) => void
+  type: ParameterType
+  index: number // Index in C++ parameter list
+  menuItems?: string[] // For menu parameters
 }
 
 export interface ParameterGroup {
@@ -27,45 +43,175 @@ export interface ParameterGroup {
   parameters: Parameter[]
 }
 
-type ParameterCallback = (name: string, value: number) => void
+type ParameterCallback = () => void
 
 class ParameterSystem {
-  private parameters: Map<string, Parameter> = new Map()
+  private parameters: Map<number, Parameter> = new Map() // keyed by index
   private callbacks: Set<ParameterCallback> = new Set()
   private wasmModule: any = null
+  private pollInterval: number | null = null
+
+  constructor() {
+    // Set up global callbacks for C++ notifications
+    this.setupAlloLibCallbacks()
+  }
 
   /**
-   * Register a parameter
+   * Set up window.allolib callbacks for C++ notifications
    */
-  register(param: Omit<Parameter, 'onChange'>): Parameter {
-    const fullParam: Parameter = {
-      ...param,
-      step: param.step || (param.type === 'int' ? 1 : 0.01),
+  private setupAlloLibCallbacks(): void {
+    if (typeof window === 'undefined') return
+
+    // Create the allolib namespace if it doesn't exist
+    ;(window as any).allolib = (window as any).allolib || {}
+
+    // Called when C++ adds a parameter via WebControlGUI
+    ;(window as any).allolib.onParameterAdded = (info: {
+      index: number
+      name: string
+      group: string
+      type: number
+      min: number
+      max: number
+      value: number
+      defaultValue: number
+    }) => {
+      console.log('[ParameterSystem] Parameter added from C++:', info)
+      const param: Parameter = {
+        name: info.name,
+        displayName: info.name,
+        group: info.group || 'Parameters',
+        value: info.value,
+        min: info.min,
+        max: info.max,
+        defaultValue: info.defaultValue,
+        type: info.type as ParameterType,
+        index: info.index,
+        step: info.type === ParameterType.INT ? 1 : 0.01,
+      }
+      this.parameters.set(info.index, param)
+      this.notifyChange()
     }
-    this.parameters.set(param.name, fullParam)
-    this.notifyChange(param.name, param.value)
-    return fullParam
+
+    // Called when C++ parameter value changes
+    ;(window as any).allolib.onParameterChanged = (index: number, value: number) => {
+      const param = this.parameters.get(index)
+      if (param) {
+        param.value = value
+        this.notifyChange()
+      }
+    }
   }
 
   /**
-   * Unregister a parameter
+   * Connect to WASM module
    */
-  unregister(name: string): void {
-    this.parameters.delete(name)
+  connectWasm(module: any): void {
+    this.wasmModule = module
+    console.log('[ParameterSystem] Connected to WASM module')
+
+    // Load any existing parameters from WASM
+    this.loadFromWasm()
+
+    // Start polling for parameter updates (for values changed from C++ side)
+    this.startPolling()
   }
 
   /**
-   * Clear all parameters
+   * Disconnect from WASM module
    */
-  clear(): void {
+  disconnectWasm(): void {
+    this.wasmModule = null
     this.parameters.clear()
+    this.stopPolling()
+    this.notifyChange()
   }
 
   /**
-   * Get a parameter by name
+   * Load parameters from WASM module
    */
-  get(name: string): Parameter | undefined {
-    return this.parameters.get(name)
+  loadFromWasm(): void {
+    if (!this.wasmModule) return
+
+    const getCount = this.wasmModule._al_webgui_get_parameter_count
+    if (!getCount) {
+      console.log('[ParameterSystem] WebGUI functions not available')
+      return
+    }
+
+    const count = getCount()
+    console.log(`[ParameterSystem] Loading ${count} parameters from WASM`)
+
+    for (let i = 0; i < count; i++) {
+      const namePtr = this.wasmModule._al_webgui_get_parameter_name(i)
+      const groupPtr = this.wasmModule._al_webgui_get_parameter_group(i)
+      const name = this.wasmModule.UTF8ToString(namePtr)
+      const group = this.wasmModule.UTF8ToString(groupPtr)
+      const type = this.wasmModule._al_webgui_get_parameter_type(i)
+      const min = this.wasmModule._al_webgui_get_parameter_min(i)
+      const max = this.wasmModule._al_webgui_get_parameter_max(i)
+      const value = this.wasmModule._al_webgui_get_parameter_value(i)
+      const defaultValue = this.wasmModule._al_webgui_get_parameter_default(i)
+
+      const param: Parameter = {
+        name,
+        displayName: name,
+        group: group || 'Parameters',
+        value,
+        min,
+        max,
+        defaultValue,
+        type: type as ParameterType,
+        index: i,
+        step: type === ParameterType.INT ? 1 : 0.01,
+      }
+
+      console.log(`[ParameterSystem] Loaded parameter: ${name} (${group})`, param)
+      this.parameters.set(i, param)
+    }
+
+    this.notifyChange()
+  }
+
+  /**
+   * Start polling for parameter value changes
+   */
+  private startPolling(): void {
+    if (this.pollInterval) return
+
+    this.pollInterval = window.setInterval(() => {
+      this.syncFromWasm()
+    }, 100) // Poll every 100ms
+  }
+
+  /**
+   * Stop polling
+   */
+  private stopPolling(): void {
+    if (this.pollInterval) {
+      window.clearInterval(this.pollInterval)
+      this.pollInterval = null
+    }
+  }
+
+  /**
+   * Sync parameter values from WASM
+   */
+  private syncFromWasm(): void {
+    if (!this.wasmModule?._al_webgui_get_parameter_value) return
+
+    let changed = false
+    for (const [index, param] of this.parameters) {
+      const newValue = this.wasmModule._al_webgui_get_parameter_value(index)
+      if (Math.abs(param.value - newValue) > 0.0001) {
+        param.value = newValue
+        changed = true
+      }
+    }
+
+    if (changed) {
+      this.notifyChange()
+    }
   }
 
   /**
@@ -82,46 +228,89 @@ class ParameterSystem {
     const groups = new Map<string, Parameter[]>()
 
     for (const param of this.parameters.values()) {
-      const groupName = param.group || 'General'
+      const groupName = param.group || 'Parameters'
       if (!groups.has(groupName)) {
         groups.set(groupName, [])
       }
       groups.get(groupName)!.push(param)
     }
 
-    return Array.from(groups.entries()).map(([name, parameters]) => ({
+    // Sort groups alphabetically, but put "Parameters" first
+    const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+      if (a[0] === 'Parameters') return -1
+      if (b[0] === 'Parameters') return 1
+      return a[0].localeCompare(b[0])
+    })
+
+    return sortedGroups.map(([name, parameters]) => ({
       name,
       parameters,
     }))
   }
 
   /**
-   * Set a parameter value
+   * Set a parameter value by index
    */
-  set(name: string, value: number): void {
-    const param = this.parameters.get(name)
+  setByIndex(index: number, value: number): void {
+    const param = this.parameters.get(index)
     if (!param) return
 
     // Clamp to range
     value = Math.max(param.min, Math.min(param.max, value))
 
     // Round for int type
-    if (param.type === 'int') {
+    if (param.type === ParameterType.INT || param.type === ParameterType.MENU) {
       value = Math.round(value)
     }
 
     param.value = value
 
-    // Call parameter-specific callback
-    if (param.onChange) {
-      param.onChange(value)
+    // Send to WASM
+    if (this.wasmModule?._al_webgui_set_parameter_value) {
+      this.wasmModule._al_webgui_set_parameter_value(index, value)
     }
 
-    // Notify global listeners
-    this.notifyChange(name, value)
+    this.notifyChange()
+  }
 
-    // Send to WASM if available
-    this.sendToWasm(name, value)
+  /**
+   * Set a parameter value by name
+   */
+  set(name: string, value: number): void {
+    for (const [index, param] of this.parameters) {
+      if (param.name === name) {
+        this.setByIndex(index, value)
+        return
+      }
+    }
+  }
+
+  /**
+   * Trigger a trigger parameter
+   */
+  trigger(index: number): void {
+    if (this.wasmModule?._al_webgui_trigger_parameter) {
+      this.wasmModule._al_webgui_trigger_parameter(index)
+    }
+  }
+
+  /**
+   * Reset parameter to default value
+   */
+  resetToDefault(index: number): void {
+    const param = this.parameters.get(index)
+    if (param) {
+      this.setByIndex(index, param.defaultValue)
+    }
+  }
+
+  /**
+   * Reset all parameters to defaults
+   */
+  resetAllToDefaults(): void {
+    for (const [index] of this.parameters) {
+      this.resetToDefault(index)
+    }
   }
 
   /**
@@ -133,149 +322,238 @@ class ParameterSystem {
   }
 
   /**
-   * Connect to WASM module
+   * Notify all subscribers of a change
    */
-  connectWasm(module: any): void {
-    this.wasmModule = module
-
-    // Check for parameter functions
-    if (module._allolib_get_parameter_count) {
-      this.loadFromWasm()
-    }
-  }
-
-  /**
-   * Disconnect from WASM module
-   */
-  disconnectWasm(): void {
-    this.wasmModule = null
-  }
-
-  /**
-   * Load parameters from WASM module
-   */
-  private loadFromWasm(): void {
-    if (!this.wasmModule?._allolib_get_parameter_count) return
-
-    const count = this.wasmModule._allolib_get_parameter_count()
-    for (let i = 0; i < count; i++) {
-      // These functions would need to be exported from the WASM module
-      // For now, this is a placeholder for future integration
-      // const name = this.wasmModule._allolib_get_parameter_name(i)
-      // const value = this.wasmModule._allolib_get_parameter_value(i)
-      // etc.
-    }
-  }
-
-  /**
-   * Send parameter value to WASM
-   */
-  private sendToWasm(name: string, value: number): void {
-    if (!this.wasmModule?._allolib_set_parameter) return
-
-    // This would require the parameter name to be passed as a pointer
-    // For simplicity, we could use an index-based approach
-    // this.wasmModule._allolib_set_parameter(index, value)
-  }
-
-  private notifyChange(name: string, value: number): void {
+  private notifyChange(): void {
     for (const callback of this.callbacks) {
-      callback(name, value)
+      callback()
     }
+  }
+
+  /**
+   * Get parameter count
+   */
+  get count(): number {
+    return this.parameters.size
+  }
+
+  /**
+   * Check if parameters are available
+   */
+  get hasParameters(): boolean {
+    return this.parameters.size > 0
   }
 }
 
 // Global parameter system instance
 export const parameterSystem = new ParameterSystem()
 
-// Declare global for WASM access
-declare global {
-  interface Window {
-    alloParameterSystem: ParameterSystem
+// Expose to window for debugging
+if (typeof window !== 'undefined') {
+  ;(window as any).alloParameterSystem = parameterSystem
+}
+
+// Type helper for UI display
+export function getParameterTypeLabel(type: ParameterType): string {
+  switch (type) {
+    case ParameterType.FLOAT:
+      return 'float'
+    case ParameterType.INT:
+      return 'int'
+    case ParameterType.BOOL:
+      return 'bool'
+    case ParameterType.STRING:
+      return 'string'
+    case ParameterType.VEC3:
+      return 'vec3'
+    case ParameterType.VEC4:
+      return 'vec4'
+    case ParameterType.COLOR:
+      return 'color'
+    case ParameterType.MENU:
+      return 'menu'
+    case ParameterType.TRIGGER:
+      return 'trigger'
+    default:
+      return 'unknown'
   }
 }
 
-// Expose to window for WASM access
+// ============================================================================
+// Preset System - Save/Load parameter states to localStorage
+// ============================================================================
+
+export interface Preset {
+  name: string
+  timestamp: number
+  values: Record<string, number> // parameter name -> value
+}
+
+const PRESET_STORAGE_KEY = 'allolib-parameter-presets'
+
+class PresetManager {
+  private presets: Map<string, Preset> = new Map()
+
+  constructor() {
+    this.loadFromStorage()
+  }
+
+  /**
+   * Load presets from localStorage
+   */
+  private loadFromStorage(): void {
+    try {
+      const stored = localStorage.getItem(PRESET_STORAGE_KEY)
+      if (stored) {
+        const data = JSON.parse(stored) as Preset[]
+        for (const preset of data) {
+          this.presets.set(preset.name, preset)
+        }
+        console.log(`[PresetManager] Loaded ${this.presets.size} presets from storage`)
+      }
+    } catch (error) {
+      console.warn('[PresetManager] Failed to load presets:', error)
+    }
+  }
+
+  /**
+   * Save presets to localStorage
+   */
+  private saveToStorage(): void {
+    try {
+      const data = Array.from(this.presets.values())
+      localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(data))
+    } catch (error) {
+      console.warn('[PresetManager] Failed to save presets:', error)
+    }
+  }
+
+  /**
+   * Save current parameter values as a preset
+   */
+  savePreset(name: string): void {
+    const values: Record<string, number> = {}
+
+    for (const param of parameterSystem.getAll()) {
+      // Don't save trigger parameters (they have no value)
+      if (param.type !== ParameterType.TRIGGER) {
+        values[param.name] = param.value
+      }
+    }
+
+    const preset: Preset = {
+      name,
+      timestamp: Date.now(),
+      values,
+    }
+
+    this.presets.set(name, preset)
+    this.saveToStorage()
+    console.log(`[PresetManager] Saved preset: ${name}`)
+  }
+
+  /**
+   * Load a preset by name
+   */
+  loadPreset(name: string): boolean {
+    const preset = this.presets.get(name)
+    if (!preset) {
+      console.warn(`[PresetManager] Preset not found: ${name}`)
+      return false
+    }
+
+    // Apply values to parameters
+    for (const [paramName, value] of Object.entries(preset.values)) {
+      parameterSystem.set(paramName, value)
+    }
+
+    console.log(`[PresetManager] Loaded preset: ${name}`)
+    return true
+  }
+
+  /**
+   * Delete a preset
+   */
+  deletePreset(name: string): boolean {
+    const deleted = this.presets.delete(name)
+    if (deleted) {
+      this.saveToStorage()
+      console.log(`[PresetManager] Deleted preset: ${name}`)
+    }
+    return deleted
+  }
+
+  /**
+   * Get all preset names
+   */
+  getPresetNames(): string[] {
+    return Array.from(this.presets.keys())
+  }
+
+  /**
+   * Get all presets
+   */
+  getAllPresets(): Preset[] {
+    return Array.from(this.presets.values()).sort((a, b) => b.timestamp - a.timestamp)
+  }
+
+  /**
+   * Check if a preset exists
+   */
+  hasPreset(name: string): boolean {
+    return this.presets.has(name)
+  }
+
+  /**
+   * Rename a preset
+   */
+  renamePreset(oldName: string, newName: string): boolean {
+    const preset = this.presets.get(oldName)
+    if (!preset) return false
+
+    this.presets.delete(oldName)
+    preset.name = newName
+    this.presets.set(newName, preset)
+    this.saveToStorage()
+    return true
+  }
+
+  /**
+   * Export presets as JSON string
+   */
+  exportPresets(): string {
+    return JSON.stringify(Array.from(this.presets.values()), null, 2)
+  }
+
+  /**
+   * Import presets from JSON string
+   */
+  importPresets(json: string, merge = true): number {
+    try {
+      const data = JSON.parse(json) as Preset[]
+      if (!merge) {
+        this.presets.clear()
+      }
+      let count = 0
+      for (const preset of data) {
+        if (preset.name && preset.values) {
+          this.presets.set(preset.name, preset)
+          count++
+        }
+      }
+      this.saveToStorage()
+      return count
+    } catch (error) {
+      console.warn('[PresetManager] Failed to import presets:', error)
+      return 0
+    }
+  }
+}
+
+// Global preset manager instance
+export const presetManager = new PresetManager()
+
+// Expose to window for debugging
 if (typeof window !== 'undefined') {
-  window.alloParameterSystem = parameterSystem
-}
-
-/**
- * Helper to create a parameter with common defaults
- */
-export function createParameter(
-  name: string,
-  options: {
-    displayName?: string
-    group?: string
-    value?: number
-    min?: number
-    max?: number
-    step?: number
-    type?: 'float' | 'int' | 'bool'
-  } = {}
-): Parameter {
-  return parameterSystem.register({
-    name,
-    displayName: options.displayName || name,
-    group: options.group || 'General',
-    value: options.value ?? 0.5,
-    min: options.min ?? 0,
-    max: options.max ?? 1,
-    step: options.step,
-    type: options.type || 'float',
-  })
-}
-
-/**
- * Create demo parameters for testing
- */
-export function createDemoParameters(): void {
-  parameterSystem.clear()
-
-  createParameter('frequency', {
-    displayName: 'Frequency',
-    group: 'Audio',
-    value: 440,
-    min: 100,
-    max: 2000,
-    step: 1,
-    type: 'float',
-  })
-
-  createParameter('amplitude', {
-    displayName: 'Amplitude',
-    group: 'Audio',
-    value: 0.3,
-    min: 0,
-    max: 1,
-    step: 0.01,
-  })
-
-  createParameter('rotationSpeed', {
-    displayName: 'Rotation Speed',
-    group: 'Graphics',
-    value: 30,
-    min: 0,
-    max: 180,
-    step: 1,
-  })
-
-  createParameter('hue', {
-    displayName: 'Hue',
-    group: 'Graphics',
-    value: 0.5,
-    min: 0,
-    max: 1,
-    step: 0.01,
-  })
-
-  createParameter('saturation', {
-    displayName: 'Saturation',
-    group: 'Graphics',
-    value: 0.8,
-    min: 0,
-    max: 1,
-    step: 0.01,
-  })
+  ;(window as any).alloPresetManager = presetManager
 }
