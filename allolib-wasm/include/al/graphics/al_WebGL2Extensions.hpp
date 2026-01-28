@@ -24,6 +24,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
+#include <GLES3/gl3.h>
 #endif
 
 namespace al {
@@ -189,11 +190,9 @@ private:
     static bool sInitialized;
     static WebGL2Capabilities sCapabilities;
 
-    // C callbacks for JavaScript interop
-    friend void al_webgl2_set_capability(int index, int value);
-    friend void al_webgl2_set_float_param(int index, float value);
-    friend void al_webgl2_set_int_param(int index, int value);
-    friend void al_webgl2_set_debug_info(const char* vendor, const char* renderer);
+public:
+    // Direct access for C interop functions
+    static WebGL2Capabilities& mutableCapabilities() { return sCapabilities; }
 };
 
 // C exports for JavaScript interop

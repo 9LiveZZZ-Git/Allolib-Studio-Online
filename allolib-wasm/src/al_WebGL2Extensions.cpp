@@ -48,11 +48,13 @@ void WebGL2Extensions::printCapabilities() {
     std::cout << "===========================" << std::endl;
 }
 
-// C exports for JavaScript interop
+} // namespace al
+
+// C exports for JavaScript interop (outside namespace)
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE void al_webgl2_set_capability(int index, int value) {
-    auto& caps = WebGL2Extensions::sCapabilities;
+    auto& caps = al::WebGL2Extensions::mutableCapabilities();
     switch (index) {
         case 0: caps.floatTexturesRenderable = (value != 0); break;
         case 1: caps.floatTextureLinearFilter = (value != 0); break;
@@ -65,14 +67,14 @@ EMSCRIPTEN_KEEPALIVE void al_webgl2_set_capability(int index, int value) {
 }
 
 EMSCRIPTEN_KEEPALIVE void al_webgl2_set_float_param(int index, float value) {
-    auto& caps = WebGL2Extensions::sCapabilities;
+    auto& caps = al::WebGL2Extensions::mutableCapabilities();
     switch (index) {
         case 0: caps.maxAnisotropy = value; break;
     }
 }
 
 EMSCRIPTEN_KEEPALIVE void al_webgl2_set_int_param(int index, int value) {
-    auto& caps = WebGL2Extensions::sCapabilities;
+    auto& caps = al::WebGL2Extensions::mutableCapabilities();
     switch (index) {
         case 0: caps.maxTextureSize = value; break;
         case 1: caps.maxCubemapSize = value; break;
@@ -84,11 +86,9 @@ EMSCRIPTEN_KEEPALIVE void al_webgl2_set_int_param(int index, int value) {
 }
 
 EMSCRIPTEN_KEEPALIVE void al_webgl2_set_debug_info(const char* vendor, const char* renderer) {
-    auto& caps = WebGL2Extensions::sCapabilities;
+    auto& caps = al::WebGL2Extensions::mutableCapabilities();
     caps.vendor = vendor ? vendor : "";
     caps.renderer = renderer ? renderer : "";
 }
 
 } // extern "C"
-
-} // namespace al
