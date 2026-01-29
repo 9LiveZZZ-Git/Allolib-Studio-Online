@@ -19,7 +19,7 @@ const props = defineProps<{
 const isAudioRunning = computed(() => props.status === 'running')
 
 const emit = defineEmits<{
-  started: []
+  started: [runtime: AllolibRuntime]
   error: [message: string]
   log: [message: string]
   'analysis-resize': [height: number]
@@ -86,7 +86,7 @@ watch(() => props.jsUrl, async (newUrl) => {
       // Load and start
       await runtime.load(newUrl)
       runtime.start()
-      emit('started')
+      emit('started', runtime)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       emit('error', message)

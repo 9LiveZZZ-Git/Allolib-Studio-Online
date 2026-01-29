@@ -1136,6 +1136,13 @@ export const useSequencerStore = defineStore('sequencer', () => {
         const voiceId = nextVoiceId++
         const key = `${voiceId}:${note.id}`
         triggeredNotes.add(key)
+
+        // Set all note parameters on control voice BEFORE triggering
+        // These get copied to the new voice by al_seq_trigger_on
+        for (let i = 0; i < note.params.length; i++) {
+          runtime.setVoiceParam(0, i, note.params[i])
+        }
+
         runtime.triggerVoice(voiceId, note.frequency, note.amplitude, note.duration)
       }
 

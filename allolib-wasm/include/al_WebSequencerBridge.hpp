@@ -92,7 +92,7 @@ inline void al_seq_trigger_on(int id, float freq, float amp, float dur) {
 
     // Set parameters on the voice by name convention
     // AlloLib synth voices typically have "frequency" and "amplitude" parameters
-    auto& params = voice->triggerParameters();
+    auto params = voice->triggerParameters();
     for (auto* paramMeta : params) {
         auto* param = dynamic_cast<al::Parameter*>(paramMeta);
         if (!param) continue;

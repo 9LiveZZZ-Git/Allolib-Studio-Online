@@ -12,6 +12,7 @@ import ConsolePanel from './components/ConsolePanel.vue'
 import SequencerPanel from './components/SequencerPanel.vue'
 import { defaultCode } from '@/utils/monaco-config'
 import { wsService } from '@/services/websocket'
+import type { AllolibRuntime } from '@/services/runtime'
 import {
   transpileToWeb,
   transpileToNative,
@@ -274,6 +275,12 @@ const handleClearConsole = () => {
   appStore.clearConsole()
 }
 
+// Runtime started handler - connects runtime to sequencer for voice triggering
+const handleRuntimeStarted = (runtime: AllolibRuntime) => {
+  appStore.setRunning()
+  sequencerStore.connectRuntime(runtime)
+}
+
 // Auto-detect synth classes when compilation succeeds
 watch(() => appStore.status, (newStatus) => {
   if (newStatus === 'running') {
@@ -362,7 +369,7 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
           :js-url="appStore.jsUrl"
           :show-analysis-panel="settingsStore.display.showAnalysisPanel"
           :panel-height="settingsStore.display.analysisPanelHeight"
-          @started="appStore.setRunning"
+          @started="handleRuntimeStarted"
           @error="appStore.setError"
           @log="appStore.log"
           @analysis-resize="handleAnalysisResize"

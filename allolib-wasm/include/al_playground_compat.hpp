@@ -56,8 +56,9 @@
 // ============================================================================
 
 #ifdef __EMSCRIPTEN__
-// WASM builds: Include web-based parameter GUI
+// WASM builds: Include web-based parameter GUI and sequencer bridge
 #include "al_WebControlGUI.hpp"
+#include "al_WebSequencerBridge.hpp"
 #else
 // Native builds: Include real ImGui-based classes from allolib
 // These are the actual implementations that use Dear ImGui
@@ -303,6 +304,12 @@ public:
             mPolySynth.allocateVoice<TSynthVoice>();
         }
 #ifdef __EMSCRIPTEN__
+        // Register with WebSequencerBridge for JS-driven voice triggering
+        WebSequencerBridge::setPolySynth(&mPolySynth);
+        WebSequencerBridge::setControlParameters(mControlVoice.triggerParameters());
+        EM_ASM({ console.log('[SynthGUIManager] WebSequencerBridge registered with %d control params'); },
+               (int)mControlVoice.triggerParameters().size());
+
         EM_ASM({ console.log('[SynthGUIManager] Constructor done, voices allocated'); });
 #endif
     }
