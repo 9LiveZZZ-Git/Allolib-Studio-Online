@@ -3,6 +3,7 @@ import { ref, shallowRef } from 'vue'
 import type { Terminal } from 'xterm'
 import { useProjectStore } from './project'
 import { useAppStore } from './app'
+import { useSequencerStore } from './sequencer'
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────
 const C = {
@@ -820,6 +821,18 @@ export const useTerminalStore = defineStore('terminal', () => {
           ['which <cmd>', 'Show command type'],
           ['version', 'Show version info'],
           ['help [command]', 'Show help'],
+        ]],
+        ['Sequencer', [
+          ['seq play', 'Start playback'],
+          ['seq stop', 'Stop and reset'],
+          ['seq pause', 'Pause playback'],
+          ['seq seek <time>', 'Jump to time (sec or beats)'],
+          ['seq bpm [value]', 'Get/set tempo'],
+          ['seq loop [on|off]', 'Toggle loop mode'],
+          ['seq tracks', 'List arrangement tracks'],
+          ['seq clips', 'List all clips'],
+          ['seq status', 'Show sequencer state'],
+          ['seq synths', 'List detected synths'],
         ]],
       ]
 
@@ -1706,6 +1719,546 @@ export const useTerminalStore = defineStore('terminal', () => {
       writeln(`${C.dim}Shell: /bin/alloterm${C.reset}`)
       ctx.stdout = `v${VERSION}\n`
     },
+
+    // ──────────────────────────────────────────────── seq (sequencer)
+    seq(ctx) {
+      const sequencer = useSequencerStore()
+      const sub = ctx.args[0]
+      const subArgs = ctx.args.slice(1)
+
+      // Helper to format time as MM:SS.mmm or beats
+      const formatTime = (sec: number): string => {
+        const mins = Math.floor(sec / 60)
+        const secs = sec % 60
+        return `${mins}:${secs.toFixed(3).padStart(6, '0')}`
+      }
+
+      const formatBeats = (sec: number): string => {
+        const beats = (sec / 60) * sequencer.bpm
+        return `${beats.toFixed(2)} beats`
+      }
+
+      if (!sub) {
+        // Show usage
+        writeln(`${C.bold}seq${C.reset} - Sequencer control`)
+        writeln('')
+        writeln(`${C.cyan}Transport:${C.reset}`)
+        writeln(`  ${C.green}seq play${C.reset}              Start playback`)
+        writeln(`  ${C.green}seq stop${C.reset}              Stop and reset to start`)
+        writeln(`  ${C.green}seq pause${C.reset}             Pause playback`)
+        writeln(`  ${C.green}seq seek <time>${C.reset}       Seek to time (seconds or beats)`)
+        writeln('')
+        writeln(`${C.cyan}Settings:${C.reset}`)
+        writeln(`  ${C.green}seq bpm [value]${C.reset}       Get/set tempo (BPM)`)
+        writeln(`  ${C.green}seq loop [on|off]${C.reset}     Toggle or set loop mode`)
+        writeln(`  ${C.green}seq loop-range <s> <e>${C.reset} Set loop start/end (seconds)`)
+        writeln(`  ${C.green}seq snap [mode]${C.reset}       Get/set snap (none|beat|bar|1/4|1/8|1/16)`)
+        writeln('')
+        writeln(`${C.cyan}Tracks:${C.reset}`)
+        writeln(`  ${C.green}seq tracks${C.reset}            List arrangement tracks`)
+        writeln(`  ${C.green}seq track add <synth>${C.reset} Add track for synth`)
+        writeln(`  ${C.green}seq track del <n>${C.reset}     Delete track by index`)
+        writeln(`  ${C.green}seq track mute <n>${C.reset}    Toggle track mute`)
+        writeln(`  ${C.green}seq track solo <n>${C.reset}    Toggle track solo`)
+        writeln('')
+        writeln(`${C.cyan}Clips:${C.reset}`)
+        writeln(`  ${C.green}seq clips${C.reset}             List all clips`)
+        writeln(`  ${C.green}seq clip new <name>${C.reset}   Create new clip`)
+        writeln(`  ${C.green}seq clip sel <id>${C.reset}     Select clip by ID`)
+        writeln(`  ${C.green}seq clip del <id>${C.reset}     Delete clip by ID`)
+        writeln(`  ${C.green}seq clip info${C.reset}         Show active clip details`)
+        writeln('')
+        writeln(`${C.cyan}Notes:${C.reset}`)
+        writeln(`  ${C.green}seq notes${C.reset}             List notes in active clip`)
+        writeln(`  ${C.green}seq note add <f> <a> <d>${C.reset} Add note (freq, amp, dur)`)
+        writeln(`  ${C.green}seq note del <id>${C.reset}     Delete note by ID`)
+        writeln('')
+        writeln(`${C.cyan}Files:${C.reset}`)
+        writeln(`  ${C.green}seq save [path]${C.reset}       Save clip to .synthSequence`)
+        writeln(`  ${C.green}seq load <path>${C.reset}       Load .synthSequence file`)
+        writeln('')
+        writeln(`${C.cyan}Info:${C.reset}`)
+        writeln(`  ${C.green}seq status${C.reset}            Show sequencer status`)
+        writeln(`  ${C.green}seq synths${C.reset}            List detected synths`)
+        return
+      }
+
+      switch (sub) {
+        // ── Transport ────────────────────────────────
+        case 'play':
+          sequencer.play()
+          writeln(`${C.green}▶${C.reset} Playing`)
+          break
+
+        case 'stop':
+          sequencer.stop()
+          writeln(`${C.yellow}■${C.reset} Stopped`)
+          break
+
+        case 'pause':
+          sequencer.pause()
+          writeln(`${C.yellow}❚❚${C.reset} Paused at ${formatTime(sequencer.playheadPosition)}`)
+          break
+
+        case 'seek': {
+          if (!subArgs[0]) {
+            writeError('seq seek: missing time argument')
+            return
+          }
+          let time = 0
+          const arg = subArgs[0].toLowerCase()
+          if (arg.endsWith('b') || arg.endsWith('beat') || arg.endsWith('beats')) {
+            // Parse as beats
+            const beats = parseFloat(arg)
+            time = (beats / sequencer.bpm) * 60
+          } else {
+            time = parseFloat(arg)
+          }
+          if (isNaN(time) || time < 0) {
+            writeError(`seq seek: invalid time '${subArgs[0]}'`)
+            return
+          }
+          sequencer.setPosition(time)
+          writeln(`Seeked to ${formatTime(time)} (${formatBeats(time)})`)
+          break
+        }
+
+        // ── Settings ─────────────────────────────────
+        case 'bpm': {
+          if (!subArgs[0]) {
+            writeln(`BPM: ${C.cyan}${sequencer.bpm}${C.reset}`)
+            writeln(`Beat duration: ${C.dim}${(60 / sequencer.bpm).toFixed(3)}s${C.reset}`)
+          } else {
+            const newBpm = parseFloat(subArgs[0])
+            if (isNaN(newBpm) || newBpm <= 0 || newBpm > 999) {
+              writeError(`seq bpm: invalid BPM '${subArgs[0]}' (1-999)`)
+              return
+            }
+            sequencer.bpm = newBpm
+            writeln(`BPM set to ${C.cyan}${newBpm}${C.reset}`)
+          }
+          break
+        }
+
+        case 'loop': {
+          if (!subArgs[0]) {
+            sequencer.toggleLoop()
+            writeln(`Loop: ${sequencer.loopEnabled ? `${C.green}ON${C.reset}` : `${C.dim}OFF${C.reset}`}`)
+          } else if (subArgs[0] === 'on') {
+            sequencer.loopEnabled = true
+            writeln(`Loop: ${C.green}ON${C.reset}`)
+          } else if (subArgs[0] === 'off') {
+            sequencer.loopEnabled = false
+            writeln(`Loop: ${C.dim}OFF${C.reset}`)
+          } else {
+            writeError(`seq loop: expected 'on' or 'off'`)
+          }
+          if (sequencer.loopEnabled) {
+            writeln(`  Range: ${formatTime(sequencer.loopStart)} - ${formatTime(sequencer.loopEnd)}`)
+          }
+          break
+        }
+
+        case 'loop-range': {
+          if (subArgs.length < 2) {
+            writeln(`Loop range: ${formatTime(sequencer.loopStart)} - ${formatTime(sequencer.loopEnd)}`)
+            return
+          }
+          const start = parseFloat(subArgs[0])
+          const end = parseFloat(subArgs[1])
+          if (isNaN(start) || isNaN(end) || start < 0 || end <= start) {
+            writeError('seq loop-range: invalid range (end must be > start)')
+            return
+          }
+          sequencer.loopStart = start
+          sequencer.loopEnd = end
+          writeln(`Loop range: ${formatTime(start)} - ${formatTime(end)}`)
+          break
+        }
+
+        case 'snap': {
+          const modes = ['none', 'beat', 'bar', '1/4', '1/8', '1/16']
+          if (!subArgs[0]) {
+            writeln(`Snap mode: ${C.cyan}${sequencer.snapMode}${C.reset}`)
+            writeln(`Available: ${C.dim}${modes.join(', ')}${C.reset}`)
+          } else {
+            const mode = subArgs[0]
+            if (!modes.includes(mode)) {
+              writeError(`seq snap: unknown mode '${mode}'`)
+              writeln(`Available: ${modes.join(', ')}`)
+              return
+            }
+            sequencer.snapMode = mode as typeof sequencer.snapMode
+            writeln(`Snap mode: ${C.cyan}${mode}${C.reset}`)
+          }
+          break
+        }
+
+        // ── Tracks ───────────────────────────────────
+        case 'tracks': {
+          const tracks = sequencer.arrangementTracks
+          if (tracks.length === 0) {
+            writeln(`${C.dim}No arrangement tracks${C.reset}`)
+            writeln(`Use ${C.green}seq track add <synth>${C.reset} to create one`)
+            return
+          }
+          writeln(`${C.bold}Arrangement Tracks${C.reset} (${tracks.length})`)
+          writeln('')
+          for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i]
+            const flags = []
+            if (t.muted) flags.push(`${C.yellow}M${C.reset}`)
+            if (t.solo) flags.push(`${C.green}S${C.reset}`)
+            const flagStr = flags.length ? ` [${flags.join('')}]` : ''
+            writeln(`  ${C.dim}${i}:${C.reset} ${t.name} ${C.dim}(${t.synthName})${C.reset}${flagStr}`)
+          }
+          break
+        }
+
+        case 'track': {
+          const action = subArgs[0]
+          if (!action) {
+            writeError('seq track: missing action (add|del|mute|solo)')
+            return
+          }
+
+          switch (action) {
+            case 'add': {
+              const synthName = subArgs[1]
+              if (!synthName) {
+                writeError('seq track add: missing synth name')
+                const synths = sequencer.detectedSynthClasses
+                if (synths.length > 0) {
+                  writeln(`Available synths: ${synths.map(s => s.name).join(', ')}`)
+                }
+                return
+              }
+              sequencer.ensureSynthTrack(synthName)
+              writeln(`Added track for ${C.cyan}${synthName}${C.reset}`)
+              break
+            }
+
+            case 'del':
+            case 'delete':
+            case 'rm': {
+              const idx = parseInt(subArgs[1])
+              if (isNaN(idx)) {
+                writeError('seq track del: missing track index')
+                return
+              }
+              if (idx < 0 || idx >= sequencer.arrangementTracks.length) {
+                writeError(`seq track del: invalid track index ${idx}`)
+                return
+              }
+              const name = sequencer.arrangementTracks[idx].name
+              sequencer.deleteTrack(idx)
+              writeln(`Deleted track ${idx}: ${name}`)
+              break
+            }
+
+            case 'mute': {
+              const idx = parseInt(subArgs[1])
+              if (isNaN(idx) || idx < 0 || idx >= sequencer.arrangementTracks.length) {
+                writeError('seq track mute: invalid track index')
+                return
+              }
+              const track = sequencer.arrangementTracks[idx]
+              track.muted = !track.muted
+              writeln(`Track ${idx}: ${track.muted ? `${C.yellow}MUTED${C.reset}` : 'unmuted'}`)
+              break
+            }
+
+            case 'solo': {
+              const idx = parseInt(subArgs[1])
+              if (isNaN(idx) || idx < 0 || idx >= sequencer.arrangementTracks.length) {
+                writeError('seq track solo: invalid track index')
+                return
+              }
+              const track = sequencer.arrangementTracks[idx]
+              track.solo = !track.solo
+              writeln(`Track ${idx}: ${track.solo ? `${C.green}SOLO${C.reset}` : 'unsolo'}`)
+              break
+            }
+
+            default:
+              writeError(`seq track: unknown action '${action}'`)
+          }
+          break
+        }
+
+        // ── Clips ────────────────────────────────────
+        case 'clips': {
+          const clips = sequencer.clips
+          if (clips.length === 0) {
+            writeln(`${C.dim}No clips${C.reset}`)
+            writeln(`Use ${C.green}seq clip new <name>${C.reset} to create one`)
+            return
+          }
+          writeln(`${C.bold}Clips${C.reset} (${clips.length})`)
+          writeln('')
+          for (const clip of clips) {
+            const active = clip.id === sequencer.activeClipId ? `${C.green}*${C.reset}` : ' '
+            const dirty = clip.isDirty ? `${C.yellow}*${C.reset}` : ''
+            writeln(`${active} ${C.dim}${clip.id.slice(0, 8)}${C.reset} ${clip.name}${dirty} ${C.dim}(${clip.notes.length} notes, ${clip.duration.toFixed(2)}s)${C.reset}`)
+          }
+          break
+        }
+
+        case 'clip': {
+          const action = subArgs[0]
+          if (!action) {
+            writeError('seq clip: missing action (new|sel|del|info)')
+            return
+          }
+
+          switch (action) {
+            case 'new':
+            case 'create': {
+              const name = subArgs.slice(1).join(' ') || 'New Clip'
+              const clip = sequencer.createClip(name)
+              sequencer.setActiveClip(clip.id)
+              writeln(`Created clip: ${C.cyan}${clip.name}${C.reset}`)
+              writeln(`ID: ${C.dim}${clip.id}${C.reset}`)
+              break
+            }
+
+            case 'sel':
+            case 'select': {
+              const id = subArgs[1]
+              if (!id) {
+                writeError('seq clip sel: missing clip ID')
+                return
+              }
+              // Find clip by ID prefix
+              const clip = sequencer.clips.find(c => c.id.startsWith(id))
+              if (!clip) {
+                writeError(`seq clip sel: no clip matching '${id}'`)
+                return
+              }
+              sequencer.setActiveClip(clip.id)
+              writeln(`Selected: ${C.cyan}${clip.name}${C.reset}`)
+              break
+            }
+
+            case 'del':
+            case 'delete':
+            case 'rm': {
+              const id = subArgs[1]
+              if (!id) {
+                writeError('seq clip del: missing clip ID')
+                return
+              }
+              const clip = sequencer.clips.find(c => c.id.startsWith(id))
+              if (!clip) {
+                writeError(`seq clip del: no clip matching '${id}'`)
+                return
+              }
+              sequencer.deleteClip(clip.id)
+              writeln(`Deleted clip: ${clip.name}`)
+              break
+            }
+
+            case 'info': {
+              const clip = sequencer.activeClip
+              if (!clip) {
+                writeln(`${C.dim}No active clip${C.reset}`)
+                return
+              }
+              writeln(`${C.bold}${clip.name}${C.reset}${clip.isDirty ? ` ${C.yellow}(unsaved)${C.reset}` : ''}`)
+              writeln(`  ID: ${C.dim}${clip.id}${C.reset}`)
+              writeln(`  Synth: ${C.cyan}${clip.synthName}${C.reset}`)
+              writeln(`  Duration: ${formatTime(clip.duration)} (${formatBeats(clip.duration)})`)
+              writeln(`  Notes: ${clip.notes.length}`)
+              if (clip.filePath) {
+                writeln(`  File: ${C.dim}${clip.filePath}${C.reset}`)
+              }
+              if (clip.paramNames.length > 0) {
+                writeln(`  Params: ${C.dim}${clip.paramNames.join(', ')}${C.reset}`)
+              }
+              break
+            }
+
+            default:
+              writeError(`seq clip: unknown action '${action}'`)
+          }
+          break
+        }
+
+        // ── Notes ────────────────────────────────────
+        case 'notes': {
+          const clip = sequencer.activeClip
+          if (!clip) {
+            writeln(`${C.dim}No active clip${C.reset}`)
+            return
+          }
+          const notes = clip.notes
+          if (notes.length === 0) {
+            writeln(`${C.dim}No notes in clip${C.reset}`)
+            return
+          }
+          writeln(`${C.bold}Notes in ${clip.name}${C.reset} (${notes.length})`)
+          writeln('')
+          // Show first 20 notes
+          const shown = notes.slice(0, 20)
+          for (const note of shown) {
+            const sel = note.selected ? `${C.green}*${C.reset}` : ' '
+            const muted = note.muted ? `${C.dim}M${C.reset}` : ''
+            writeln(`${sel}${muted} ${C.dim}${note.id.slice(0, 6)}${C.reset} t=${note.startTime.toFixed(3)} f=${note.frequency.toFixed(1)}Hz a=${note.amplitude.toFixed(2)} d=${note.duration.toFixed(3)}`)
+          }
+          if (notes.length > 20) {
+            writeln(`${C.dim}... and ${notes.length - 20} more${C.reset}`)
+          }
+          break
+        }
+
+        case 'note': {
+          const action = subArgs[0]
+          if (!action) {
+            writeError('seq note: missing action (add|del)')
+            return
+          }
+
+          const clip = sequencer.activeClip
+          if (!clip) {
+            writeError('seq note: no active clip')
+            return
+          }
+
+          switch (action) {
+            case 'add': {
+              const freq = parseFloat(subArgs[1])
+              const amp = parseFloat(subArgs[2]) ?? 0.5
+              const dur = parseFloat(subArgs[3]) ?? 0.5
+              if (isNaN(freq)) {
+                writeError('seq note add: missing frequency')
+                return
+              }
+              const note = sequencer.addNote(freq, isNaN(amp) ? 0.5 : amp, isNaN(dur) ? 0.5 : dur)
+              if (note) {
+                writeln(`Added note: ${C.cyan}${note.frequency.toFixed(1)}Hz${C.reset} at t=${note.startTime.toFixed(3)}`)
+              }
+              break
+            }
+
+            case 'del':
+            case 'delete':
+            case 'rm': {
+              const id = subArgs[1]
+              if (!id) {
+                writeError('seq note del: missing note ID')
+                return
+              }
+              const note = clip.notes.find(n => n.id.startsWith(id))
+              if (!note) {
+                writeError(`seq note del: no note matching '${id}'`)
+                return
+              }
+              sequencer.removeNote(note.id)
+              writeln(`Deleted note ${note.id.slice(0, 6)}`)
+              break
+            }
+
+            default:
+              writeError(`seq note: unknown action '${action}'`)
+          }
+          break
+        }
+
+        // ── Files ────────────────────────────────────
+        case 'save': {
+          const clip = sequencer.activeClip
+          if (!clip) {
+            writeError('seq save: no active clip')
+            return
+          }
+          const path = subArgs[0] || clip.filePath
+          if (!path) {
+            writeError('seq save: no file path (use seq save <path>)')
+            return
+          }
+          try {
+            sequencer.saveClipToFile(clip.id, path)
+            writeln(`Saved ${C.green}${path}${C.reset}`)
+          } catch (e) {
+            writeError(`seq save: ${e}`)
+          }
+          break
+        }
+
+        case 'load': {
+          const path = subArgs[0]
+          if (!path) {
+            writeError('seq load: missing file path')
+            return
+          }
+          // Resolve path
+          const absPath = path.startsWith('/') ? path : (cwd.value === '/' ? '/' + path : cwd.value + '/' + path)
+          const project = useProjectStore()
+          const file = project.files.find(f => f.path === absPath || f.path === path)
+          if (!file) {
+            writeError(`seq load: file not found '${path}'`)
+            return
+          }
+          try {
+            const clip = sequencer.loadClipFromFile(file.path, file.content)
+            if (clip) {
+              sequencer.setActiveClip(clip.id)
+              writeln(`Loaded ${C.green}${clip.name}${C.reset} (${clip.notes.length} notes)`)
+            }
+          } catch (e) {
+            writeError(`seq load: ${e}`)
+          }
+          break
+        }
+
+        // ── Info ─────────────────────────────────────
+        case 'status': {
+          const transportIcon = sequencer.transport === 'playing'
+            ? `${C.green}▶${C.reset}`
+            : sequencer.transport === 'paused'
+              ? `${C.yellow}❚❚${C.reset}`
+              : `${C.dim}■${C.reset}`
+
+          writeln(`${C.bold}Sequencer Status${C.reset}`)
+          writeln('')
+          writeln(`  Transport: ${transportIcon} ${sequencer.transport}`)
+          writeln(`  Position: ${formatTime(sequencer.playheadPosition)} (${formatBeats(sequencer.playheadPosition)})`)
+          writeln(`  BPM: ${C.cyan}${sequencer.bpm}${C.reset}`)
+          writeln(`  Loop: ${sequencer.loopEnabled ? `${C.green}ON${C.reset} (${formatTime(sequencer.loopStart)}-${formatTime(sequencer.loopEnd)})` : `${C.dim}OFF${C.reset}`}`)
+          writeln(`  Snap: ${sequencer.snapMode}`)
+          writeln(`  View: ${sequencer.viewMode}`)
+          writeln(`  Edit: ${sequencer.editMode}`)
+          writeln('')
+          writeln(`  Tracks: ${sequencer.arrangementTracks.length}`)
+          writeln(`  Clips: ${sequencer.clips.length}`)
+          writeln(`  Active clip: ${sequencer.activeClip ? sequencer.activeClip.name : `${C.dim}none${C.reset}`}`)
+          break
+        }
+
+        case 'synths': {
+          const synths = sequencer.detectedSynthClasses
+          if (synths.length === 0) {
+            writeln(`${C.dim}No synths detected${C.reset}`)
+            writeln(`Compile a project with SynthGUIManager to detect synths`)
+            return
+          }
+          writeln(`${C.bold}Detected Synths${C.reset} (${synths.length})`)
+          writeln('')
+          for (const synth of synths) {
+            writeln(`  ${C.cyan}${synth.name}${C.reset}`)
+            if (synth.params.length > 0) {
+              const paramStr = synth.params.map(p => p.name).join(', ')
+              writeln(`    ${C.dim}Params: ${paramStr}${C.reset}`)
+            }
+          }
+          break
+        }
+
+        default:
+          writeError(`seq: unknown subcommand '${sub}'`)
+          writeln(`Run ${C.green}seq${C.reset} for usage`)
+      }
+    },
   }
 
   // ── Detailed help for individual commands ───────────────────────────────
@@ -1756,6 +2309,29 @@ export const useTerminalStore = defineStore('terminal', () => {
   Show command history.
   ${C.dim}-c${C.reset}  Clear history
   ${C.dim}N${C.reset}   Show last N entries`,
+    seq: `${C.bold}seq${C.reset} <subcommand> [args]
+  Control the sequencer. Run ${C.dim}seq${C.reset} for full usage.
+
+  ${C.cyan}Transport:${C.reset}
+    ${C.dim}play, stop, pause${C.reset}  Control playback
+    ${C.dim}seek <time>${C.reset}        Jump to position
+
+  ${C.cyan}Settings:${C.reset}
+    ${C.dim}bpm [val]${C.reset}          Get/set tempo
+    ${C.dim}loop [on|off]${C.reset}      Toggle loop
+    ${C.dim}snap [mode]${C.reset}        Set snap grid
+
+  ${C.cyan}Tracks:${C.reset}
+    ${C.dim}tracks${C.reset}             List all tracks
+    ${C.dim}track add|del|mute|solo${C.reset}
+
+  ${C.cyan}Clips:${C.reset}
+    ${C.dim}clips${C.reset}              List all clips
+    ${C.dim}clip new|sel|del|info${C.reset}
+
+  ${C.cyan}Info:${C.reset}
+    ${C.dim}status${C.reset}             Show sequencer state
+    ${C.dim}synths${C.reset}             List detected synths`,
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
