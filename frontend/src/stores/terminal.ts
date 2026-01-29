@@ -461,6 +461,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     const parts = beforeCursor.split(/\s+/)
     const isFirstWord = parts.length <= 1
     const partial = parts[parts.length - 1] || ''
+    const cmd = parts[0]?.toLowerCase() || ''
 
     let candidates: string[]
 
@@ -470,6 +471,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       const allAliases = Object.keys(aliases.value)
       const all = [...new Set([...allCmds, ...allAliases])]
       candidates = all.filter(c => c.startsWith(partial)).sort()
+    } else if (cmd === 'seq') {
+      // Complete seq subcommands
+      candidates = completeSeqCommand(parts, partial)
     } else {
       // Complete file/folder paths
       candidates = completePath(partial)
@@ -536,6 +540,101 @@ export const useTerminalStore = defineStore('terminal', () => {
         return base.startsWith(filePart)
       })
       .map(name => prefix + name)
+  }
+
+  function completeSeqCommand(parts: string[], partial: string): string[] {
+    const sequencer = useSequencerStore()
+
+    // seq subcommands
+    const seqSubcommands = [
+      'play', 'stop', 'pause', 'seek',
+      'bpm', 'loop', 'loop-range', 'snap',
+      'tracks', 'track',
+      'clips', 'clip',
+      'notes', 'note',
+      'save', 'load',
+      'status', 'synths',
+    ]
+
+    // Track actions
+    const trackActions = ['add', 'del', 'delete', 'rm', 'mute', 'solo']
+
+    // Clip actions
+    const clipActions = ['new', 'create', 'sel', 'select', 'del', 'delete', 'rm', 'info']
+
+    // Note actions
+    const noteActions = ['add', 'del', 'delete', 'rm']
+
+    // Snap modes
+    const snapModes = ['none', 'beat', 'bar', '1/4', '1/8', '1/16']
+
+    // Loop options
+    const loopOptions = ['on', 'off']
+
+    const wordIndex = parts.length - 1  // 0-indexed position we're completing
+
+    if (wordIndex === 1) {
+      // Completing first seq subcommand
+      return seqSubcommands.filter(c => c.startsWith(partial)).sort()
+    }
+
+    const subCmd = parts[1]?.toLowerCase() || ''
+
+    if (wordIndex === 2) {
+      // Completing second argument after subcommand
+      switch (subCmd) {
+        case 'track':
+          return trackActions.filter(a => a.startsWith(partial)).sort()
+        case 'clip':
+          return clipActions.filter(a => a.startsWith(partial)).sort()
+        case 'note':
+          return noteActions.filter(a => a.startsWith(partial)).sort()
+        case 'snap':
+          return snapModes.filter(m => m.startsWith(partial)).sort()
+        case 'loop':
+          return loopOptions.filter(o => o.startsWith(partial)).sort()
+        case 'load':
+          // Complete .synthSequence files
+          return completePath(partial).filter(p =>
+            p.endsWith('.synthSequence') || p.endsWith('/')
+          )
+        default:
+          return []
+      }
+    }
+
+    if (wordIndex === 3) {
+      const action = parts[2]?.toLowerCase() || ''
+
+      // seq track add <synth>
+      if (subCmd === 'track' && action === 'add') {
+        const synths = sequencer.detectedSynthClasses.map(s => s.name)
+        return synths.filter(s => s.startsWith(partial)).sort()
+      }
+
+      // seq track del/mute/solo <index> - complete with track indices
+      if (subCmd === 'track' && ['del', 'delete', 'rm', 'mute', 'solo'].includes(action)) {
+        const indices = sequencer.arrangementTracks.map((_, i) => String(i))
+        return indices.filter(i => i.startsWith(partial))
+      }
+
+      // seq clip sel/del <id> - complete with clip IDs
+      if (subCmd === 'clip' && ['sel', 'select', 'del', 'delete', 'rm'].includes(action)) {
+        const ids = sequencer.clips.map(c => c.id.slice(0, 8))
+        return ids.filter(id => id.startsWith(partial))
+      }
+
+      // seq note del <id> - complete with note IDs
+      if (subCmd === 'note' && ['del', 'delete', 'rm'].includes(action)) {
+        const clip = sequencer.activeClip
+        if (clip) {
+          const ids = clip.notes.map(n => n.id.slice(0, 6))
+          return ids.filter(id => id.startsWith(partial))
+        }
+      }
+    }
+
+    return []
   }
 
   function applyCompletion(candidate: string) {
