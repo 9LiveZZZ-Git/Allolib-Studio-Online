@@ -46,16 +46,33 @@ const consoleHeightStyle = computed(() => ({
 }))
 
 const handleRun = async () => {
-  // Get all files from the project for compilation
-  const files = editorRef.value?.getFilesForCompilation() || []
-  if (files.length === 0) {
-    appStore.log('[ERROR] No files to compile')
-    return
+  let files: Array<{ name: string; content: string }> = []
+  let mainFile: string
+
+  if (settingsStore.compiler.runMode === 'file') {
+    // Run active file only
+    const activeFile = projectStore.activeFile
+    if (!activeFile) {
+      appStore.log('[ERROR] No active file to compile')
+      return
+    }
+    files = [{ name: activeFile.path, content: activeFile.content }]
+    mainFile = activeFile.path
+    appStore.log(`[INFO] Compiling single file: ${activeFile.path}`)
+  } else {
+    // Run project (all files)
+    files = editorRef.value?.getFilesForCompilation() || []
+    mainFile = projectStore.mainFilePath
+    if (files.length === 0) {
+      appStore.log('[ERROR] No files to compile')
+      return
+    }
+    appStore.log(`[INFO] Compiling project (${files.length} files)`)
   }
 
   // Clear previous errors before compiling
   editorRef.value?.clearDiagnostics()
-  await appStore.compile(files, projectStore.mainFilePath)
+  await appStore.compile(files, mainFile)
 
   // If there are diagnostics (errors/warnings), show them in the editor
   if (appStore.diagnostics.length > 0) {

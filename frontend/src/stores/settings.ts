@@ -24,6 +24,7 @@ export interface CompilerSettings {
   optimization: 'O0' | 'O1' | 'O2' | 'O3' | 'Os'
   debugInfo: boolean
   warnings: boolean
+  runMode: 'project' | 'file'  // 'project' = all files, 'file' = active file only
 }
 
 export interface DisplaySettings {
@@ -62,6 +63,7 @@ export const useSettingsStore = defineStore('settings', () => {
     optimization: 'O2',
     debugInfo: false,
     warnings: true,
+    runMode: 'project',
   })
 
   // Display settings
@@ -135,6 +137,7 @@ export const useSettingsStore = defineStore('settings', () => {
       optimization: 'O2',
       debugInfo: false,
       warnings: true,
+      runMode: 'project',
     }
     saveSettings()
   }

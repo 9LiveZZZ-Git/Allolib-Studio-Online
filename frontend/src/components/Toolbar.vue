@@ -48,6 +48,9 @@ const emit = defineEmits<{
 // File menu state
 const showFileMenu = ref(false)
 
+// Run menu state
+const showRunMenu = ref(false)
+
 function closeFileMenu() {
   showFileMenu.value = false
 }
@@ -372,17 +375,71 @@ function getPlatformBadgeClass(platform: string) {
       ></div>
     </div>
 
-    <!-- Run/Stop Button -->
-    <button
-      v-if="status === 'idle' || status === 'error'"
-      class="px-4 py-1.5 bg-green-600 hover:bg-green-700 rounded text-sm font-medium transition-colors flex items-center gap-2"
-      @click="emit('run')"
-    >
-      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-        <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-      </svg>
-      Run
-    </button>
+    <!-- Run/Stop Button with dropdown -->
+    <div class="relative flex" v-if="status === 'idle' || status === 'error'">
+      <button
+        class="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded-l text-sm font-medium transition-colors flex items-center gap-2"
+        @click="emit('run')"
+      >
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+        </svg>
+        {{ settings.compiler.runMode === 'project' ? 'Run Project' : 'Run File' }}
+      </button>
+      <button
+        class="px-1.5 py-1.5 bg-green-600 hover:bg-green-700 rounded-r border-l border-green-700 transition-colors"
+        @click="showRunMenu = !showRunMenu"
+      >
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      <!-- Run Menu Dropdown -->
+      <div
+        v-if="showRunMenu"
+        class="absolute left-0 top-full mt-1 w-48 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1"
+      >
+        <button
+          @click="settings.compiler.runMode = 'project'; showRunMenu = false"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+          :class="{ 'text-allolib-blue': settings.compiler.runMode === 'project' }"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          <span>Run Project</span>
+          <svg v-if="settings.compiler.runMode === 'project'" class="w-4 h-4 ml-auto text-green-400" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <button
+          @click="settings.compiler.runMode = 'file'; showRunMenu = false"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+          :class="{ 'text-allolib-blue': settings.compiler.runMode === 'file' }"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span>Run Active File</span>
+          <svg v-if="settings.compiler.runMode === 'file'" class="w-4 h-4 ml-auto text-green-400" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <div class="border-t border-editor-border my-1"></div>
+        <div class="px-4 py-2 text-xs text-gray-500">
+          <strong>Project:</strong> Compiles all source files<br>
+          <strong>File:</strong> Compiles only active file
+        </div>
+      </div>
+
+      <!-- Click outside to close -->
+      <div
+        v-if="showRunMenu"
+        class="fixed inset-0 z-40"
+        @click="showRunMenu = false"
+      ></div>
+    </div>
     <button
       v-else-if="status === 'running'"
       class="px-4 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium transition-colors flex items-center gap-2"

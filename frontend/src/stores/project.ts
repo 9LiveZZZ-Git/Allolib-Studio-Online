@@ -255,6 +255,55 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  /**
+   * Add a new file or update an existing file's content.
+   * Used for loading examples and importing files.
+   */
+  function addOrUpdateFile(path: string, content: string) {
+    const existingFile = project.value.files.find((f) => f.path === path)
+    if (existingFile) {
+      // Update existing file
+      existingFile.content = content
+      existingFile.isDirty = false
+      existingFile.updatedAt = Date.now()
+      project.value.updatedAt = Date.now()
+    } else {
+      // Create new file
+      const name = path.includes('/') ? path.substring(path.lastIndexOf('/') + 1) : path
+
+      // Create any necessary folders
+      if (path.includes('/')) {
+        const folderPath = path.substring(0, path.lastIndexOf('/'))
+        const folderParts = folderPath.split('/')
+        let currentPath = ''
+        for (const part of folderParts) {
+          currentPath = currentPath ? `${currentPath}/${part}` : part
+          if (!project.value.folders.some((f) => f.path === currentPath)) {
+            project.value.folders.push({
+              name: part,
+              path: currentPath,
+              isExpanded: true,
+              createdAt: Date.now(),
+            })
+          }
+        }
+      }
+
+      const newFile: ProjectFile = {
+        name,
+        path,
+        content,
+        isMain: false,
+        isDirty: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+
+      project.value.files.push(newFile)
+      project.value.updatedAt = Date.now()
+    }
+  }
+
   function getFileContent(path: string): string | undefined {
     const file = project.value.files.find((f) => f.path === path)
     return file?.content
@@ -647,6 +696,7 @@ f 1 2 3
     // Actions
     setActiveFile,
     updateFileContent,
+    addOrUpdateFile,
     getFileContent,
     getFileByPath,
     createFile,
