@@ -1036,6 +1036,387 @@ export const useTerminalStore = defineStore('terminal', () => {
         return 440 * Math.pow(2, (midi - 69) / 12)
       },
 
+      // ─── Lattice / Just Intonation utilities ───────────────────────────────
+      lattice: {
+        /**
+         * Parse a ratio string to a number.
+         * Accepts: "5/4", "3:2", "1.5", "3/2*5/4" (compound)
+         */
+        ratio: (str: string): number => {
+          str = str.trim()
+          // Handle compound ratios with * (e.g., "3/2*5/4")
+          if (str.includes('*')) {
+            return str.split('*').map(s => parseSingleRatio(s.trim())).reduce((a, b) => a * b, 1)
+          }
+          return parseSingleRatio(str)
+
+          function parseSingleRatio(s: string): number {
+            // Handle fraction: 5/4 or 5:4
+            const fracMatch = s.match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) {
+              return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            }
+            // Handle decimal
+            const num = parseFloat(s)
+            return isNaN(num) ? 1 : num
+          }
+        },
+
+        /**
+         * Convert ratio to frequency with given base frequency.
+         */
+        freq: (ratio: string | number, base = 440): number => {
+          const r = typeof ratio === 'string' ? parseSingleRatio(ratio) : ratio
+          return base * r
+
+          function parseSingleRatio(s: string): number {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            const num = parseFloat(s)
+            return isNaN(num) ? 1 : num
+          }
+        },
+
+        /**
+         * Get lattice coordinates (i, j) for a ratio (5-limit approximation).
+         * Returns { i, j, ratio, label } where ratio = 3^i * 5^j (octave-reduced)
+         */
+        coords: (ratio: string | number): { i: number; j: number; ratio: number; label: string } => {
+          const r = typeof ratio === 'string' ? parseRatio(ratio) : ratio
+          // Octave reduce
+          let reduced = r
+          while (reduced >= 2) reduced /= 2
+          while (reduced < 1) reduced *= 2
+
+          // Find best (i, j) match within reasonable range
+          let bestI = 0, bestJ = 0, bestDiff = Math.abs(reduced - 1)
+          for (let i = -4; i <= 4; i++) {
+            for (let j = -3; j <= 3; j++) {
+              let testRatio = Math.pow(3, i) * Math.pow(5, j)
+              while (testRatio >= 2) testRatio /= 2
+              while (testRatio < 1) testRatio *= 2
+              const diff = Math.abs(testRatio - reduced)
+              if (diff < bestDiff) {
+                bestDiff = diff
+                bestI = i
+                bestJ = j
+              }
+            }
+          }
+
+          let finalRatio = Math.pow(3, bestI) * Math.pow(5, bestJ)
+          while (finalRatio >= 2) finalRatio /= 2
+          while (finalRatio < 1) finalRatio *= 2
+
+          return {
+            i: bestI,
+            j: bestJ,
+            ratio: finalRatio,
+            label: ratioToLabel(bestI, bestJ),
+          }
+
+          function parseRatio(s: string): number {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            return parseFloat(s) || 1
+          }
+
+          function ratioToLabel(i: number, j: number): string {
+            // Common ratios
+            const known: Record<string, string> = {
+              '0,0': '1/1', '1,0': '3/2', '-1,0': '4/3', '0,1': '5/4', '0,-1': '8/5',
+              '1,1': '15/8', '-1,1': '5/3', '1,-1': '6/5', '-1,-1': '16/15',
+              '2,0': '9/8', '-2,0': '16/9', '0,2': '25/16', '2,1': '45/32',
+            }
+            return known[`${i},${j}`] || `3^${i}*5^${j}`
+          }
+        },
+
+        /**
+         * Parse a string of ratios into an array of numbers.
+         * Accepts: "1/1 5/4 3/2 2/1" or "1:1, 5:4, 3:2" (space or comma separated)
+         */
+        parseRatios: (str: string): number[] => {
+          return str.split(/[\s,]+/).filter(Boolean).map(s => {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            return parseFloat(s) || 1
+          })
+        },
+
+        /**
+         * Create a sequence from ratio strings with a rhythm pattern.
+         * @param ratios - Space/comma separated ratio strings: "1/1 5/4 3/2 2/1"
+         * @param rhythm - Array of durations in beats: [1, 0.5, 0.5, 2] or string "1 0.5 0.5 2"
+         * @param opts - { base: 440, amp: 0.5, clipId: string, startTime: 0 }
+         */
+        sequence: (
+          ratios: string | number[],
+          rhythm: string | number[],
+          opts: { base?: number; amp?: number; clipId?: string; startTime?: number } = {}
+        ): { notes: Array<{ freq: number; time: number; dur: number; ratio: string }> } => {
+          const { base = 440, amp = 0.5, clipId, startTime = 0 } = opts
+
+          // Parse ratios
+          const ratioArr = typeof ratios === 'string'
+            ? ratios.split(/[\s,]+/).filter(Boolean)
+            : ratios.map(String)
+          const ratioNums = ratioArr.map(s => {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            return parseFloat(s) || 1
+          })
+
+          // Parse rhythm
+          const rhythmArr = typeof rhythm === 'string'
+            ? rhythm.split(/[\s,]+/).filter(Boolean).map(Number)
+            : rhythm
+
+          // Build notes
+          const notes: Array<{ freq: number; time: number; dur: number; ratio: string }> = []
+          let time = startTime
+          const beatDur = 60 / sequencer.bpm  // seconds per beat
+
+          for (let i = 0; i < ratioNums.length; i++) {
+            const r = ratioNums[i]
+            const dur = (rhythmArr[i % rhythmArr.length] || 1) * beatDur
+            const freq = base * r
+            notes.push({ freq, time, dur, ratio: ratioArr[i] })
+
+            // Add to sequencer if clipId provided
+            if (clipId) {
+              const clip = sequencer.clips.find(c => c.id === clipId)
+              if (clip) {
+                clip.notes.push({
+                  id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  frequency: freq,
+                  amplitude: amp,
+                  startTime: time,
+                  duration: dur,
+                  params: [],
+                })
+              }
+            }
+
+            time += dur
+          }
+
+          return { notes }
+        },
+
+        /**
+         * Create a sequence with random rhythm from ratios.
+         * @param ratios - Space/comma separated ratio strings
+         * @param opts - { base, amp, clipId, minDur, maxDur, startTime }
+         */
+        randomSequence: (
+          ratios: string | number[],
+          opts: { base?: number; amp?: number; clipId?: string; minDur?: number; maxDur?: number; startTime?: number } = {}
+        ): { notes: Array<{ freq: number; time: number; dur: number; ratio: string }> } => {
+          const { base = 440, amp = 0.5, clipId, minDur = 0.25, maxDur = 2, startTime = 0 } = opts
+
+          // Parse ratios
+          const ratioArr = typeof ratios === 'string'
+            ? ratios.split(/[\s,]+/).filter(Boolean)
+            : ratios.map(String)
+          const ratioNums = ratioArr.map(s => {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            return parseFloat(s) || 1
+          })
+
+          // Build notes with random durations
+          const notes: Array<{ freq: number; time: number; dur: number; ratio: string }> = []
+          let time = startTime
+          const beatDur = 60 / sequencer.bpm
+
+          // Quantization grid (common subdivisions)
+          const grid = [0.25, 0.5, 0.75, 1, 1.5, 2]
+          const validGrid = grid.filter(d => d >= minDur && d <= maxDur)
+
+          for (let i = 0; i < ratioNums.length; i++) {
+            const r = ratioNums[i]
+            const durBeats = validGrid[Math.floor(Math.random() * validGrid.length)] || 1
+            const dur = durBeats * beatDur
+            const freq = base * r
+            notes.push({ freq, time, dur, ratio: ratioArr[i] })
+
+            if (clipId) {
+              const clip = sequencer.clips.find(c => c.id === clipId)
+              if (clip) {
+                clip.notes.push({
+                  id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  frequency: freq,
+                  amplitude: amp,
+                  startTime: time,
+                  duration: dur,
+                  params: [],
+                })
+              }
+            }
+
+            time += dur
+          }
+
+          return { notes }
+        },
+
+        /**
+         * Create a chord (simultaneous notes) from ratios.
+         * @param ratios - Space/comma separated ratio strings
+         * @param opts - { base, amp, clipId, time, dur }
+         */
+        chord: (
+          ratios: string | number[],
+          opts: { base?: number; amp?: number; clipId?: string; time?: number; dur?: number } = {}
+        ): { notes: Array<{ freq: number; ratio: string }> } => {
+          const { base = 440, amp = 0.5, clipId, time = 0, dur = 1 } = opts
+
+          // Parse ratios
+          const ratioArr = typeof ratios === 'string'
+            ? ratios.split(/[\s,]+/).filter(Boolean)
+            : ratios.map(String)
+          const ratioNums = ratioArr.map(s => {
+            const fracMatch = s.trim().match(/^(\d+)\s*[/:]\s*(\d+)$/)
+            if (fracMatch) return parseInt(fracMatch[1]) / parseInt(fracMatch[2])
+            return parseFloat(s) || 1
+          })
+
+          const beatDur = 60 / sequencer.bpm
+          const durSec = dur * beatDur
+          const timeSec = time * beatDur
+
+          const notes: Array<{ freq: number; ratio: string }> = []
+          for (let i = 0; i < ratioNums.length; i++) {
+            const r = ratioNums[i]
+            const freq = base * r
+            notes.push({ freq, ratio: ratioArr[i] })
+
+            if (clipId) {
+              const clip = sequencer.clips.find(c => c.id === clipId)
+              if (clip) {
+                clip.notes.push({
+                  id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  frequency: freq,
+                  amplitude: amp,
+                  startTime: timeSec,
+                  duration: durSec,
+                  params: [],
+                })
+              }
+            }
+          }
+
+          return { notes }
+        },
+
+        /**
+         * Create a sequence from lattice coordinate path.
+         * @param path - Array of [i, j] coordinates or string "0,0 1,0 1,1 0,1"
+         * @param rhythm - Array of durations or string
+         * @param opts - { base, amp, clipId, startTime }
+         */
+        path: (
+          path: string | Array<[number, number]>,
+          rhythm: string | number[] = [1],
+          opts: { base?: number; amp?: number; clipId?: string; startTime?: number } = {}
+        ): { notes: Array<{ freq: number; time: number; dur: number; i: number; j: number }> } => {
+          const { base = 440, amp = 0.5, clipId, startTime = 0 } = opts
+
+          // Parse path
+          const coords: Array<[number, number]> = typeof path === 'string'
+            ? path.split(/[\s;]+/).filter(Boolean).map(s => {
+                const parts = s.split(',').map(Number)
+                return [parts[0] || 0, parts[1] || 0] as [number, number]
+              })
+            : path
+
+          // Parse rhythm
+          const rhythmArr = typeof rhythm === 'string'
+            ? rhythm.split(/[\s,]+/).filter(Boolean).map(Number)
+            : rhythm
+
+          // Build notes
+          const notes: Array<{ freq: number; time: number; dur: number; i: number; j: number }> = []
+          let time = startTime
+          const beatDur = 60 / sequencer.bpm
+
+          for (let idx = 0; idx < coords.length; idx++) {
+            const [i, j] = coords[idx]
+            // Ratio = 3^i * 5^j, octave reduced
+            let ratio = Math.pow(3, i) * Math.pow(5, j)
+            while (ratio >= 2) ratio /= 2
+            while (ratio < 1) ratio *= 2
+
+            const dur = (rhythmArr[idx % rhythmArr.length] || 1) * beatDur
+            const freq = base * ratio
+            notes.push({ freq, time, dur, i, j })
+
+            if (clipId) {
+              const clip = sequencer.clips.find(c => c.id === clipId)
+              if (clip) {
+                clip.notes.push({
+                  id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  frequency: freq,
+                  amplitude: amp,
+                  startTime: time,
+                  duration: dur,
+                  params: [],
+                })
+              }
+            }
+
+            time += dur
+          }
+
+          return { notes }
+        },
+
+        /**
+         * Common just intonation intervals for reference
+         */
+        intervals: {
+          unison: '1/1',
+          minorSecond: '16/15',
+          majorSecond: '9/8',
+          minorThird: '6/5',
+          majorThird: '5/4',
+          perfectFourth: '4/3',
+          tritone: '45/32',
+          perfectFifth: '3/2',
+          minorSixth: '8/5',
+          majorSixth: '5/3',
+          minorSeventh: '9/5',
+          majorSeventh: '15/8',
+          octave: '2/1',
+        },
+
+        /**
+         * Common just intonation scales
+         */
+        scales: {
+          major: '1/1 9/8 5/4 4/3 3/2 5/3 15/8 2/1',
+          minor: '1/1 9/8 6/5 4/3 3/2 8/5 9/5 2/1',
+          pentatonic: '1/1 9/8 5/4 3/2 5/3 2/1',
+          chromatic: '1/1 16/15 9/8 6/5 5/4 4/3 45/32 3/2 8/5 5/3 9/5 15/8 2/1',
+        },
+
+        /**
+         * Common just intonation chords
+         */
+        chords: {
+          majorTriad: '1/1 5/4 3/2',
+          minorTriad: '1/1 6/5 3/2',
+          major7: '1/1 5/4 3/2 15/8',
+          minor7: '1/1 6/5 3/2 9/5',
+          dom7: '1/1 5/4 3/2 9/5',
+          dim: '1/1 6/5 45/32',
+          aug: '1/1 5/4 25/16',
+          sus4: '1/1 4/3 3/2',
+          sus2: '1/1 9/8 3/2',
+        },
+      },
+
       // JSON helpers
       JSON,
       parse: JSON.parse,
@@ -3450,6 +3831,20 @@ ${s.body.join('\n')}
     ${C.dim}ftom(freq)${C.reset}            Frequency to MIDI
     ${C.dim}noteToFreq("C4")${C.reset}      Note name to freq
 
+  ${C.cyan}Lattice / Just Intonation:${C.reset}
+    ${C.dim}lattice.ratio("5/4")${C.reset}  Parse ratio to number
+    ${C.dim}lattice.freq("3/2", 440)${C.reset}  Ratio to Hz
+    ${C.dim}lattice.coords("5/4")${C.reset}   Get (i,j) coords
+    ${C.dim}lattice.parseRatios("1/1 5/4 3/2")${C.reset}
+    ${C.dim}lattice.sequence(ratios, rhythm, {clipId})${C.reset}
+    ${C.dim}lattice.randomSequence(ratios, {clipId})${C.reset}
+    ${C.dim}lattice.chord(ratios, {clipId, time, dur})${C.reset}
+    ${C.dim}lattice.path("0,0 1,0 1,1", rhythm)${C.reset}
+    ${C.dim}lattice.intervals.*${C.reset}    JI interval ratios
+    ${C.dim}lattice.scales.*${C.reset}       JI scale ratios
+    ${C.dim}lattice.chords.*${C.reset}       JI chord ratios
+    Use ${C.green}help lattice${C.reset} for full documentation
+
   ${C.cyan}Math:${C.reset}
     ${C.dim}Math.*${C.reset}                Standard Math object
     ${C.dim}random(min, max)${C.reset}      Random float
@@ -3487,6 +3882,83 @@ ${s.body.join('\n')}
 
   Scripts are saved to localStorage and persist
   across sessions.`,
+    lattice: `${C.bold}Lattice / Just Intonation API${C.reset}
+
+  Create sequences using 5-limit just intonation ratios.
+  Ratios use primes 2, 3, 5: ratio = 2^k * 3^i * 5^j
+
+  ${C.cyan}Parsing Ratios:${C.reset}
+    ${C.dim}lattice.ratio("5/4")${C.reset}         → 1.25
+    ${C.dim}lattice.ratio("3:2")${C.reset}         → 1.5
+    ${C.dim}lattice.ratio("3/2*5/4")${C.reset}     → 1.875 (compound)
+    ${C.dim}lattice.parseRatios("1/1 5/4 3/2")${C.reset} → [1, 1.25, 1.5]
+
+  ${C.cyan}Frequency Conversion:${C.reset}
+    ${C.dim}lattice.freq("5/4", 440)${C.reset}     → 550
+    ${C.dim}lattice.freq("3/2", 220)${C.reset}     → 330
+
+  ${C.cyan}Lattice Coordinates:${C.reset}
+    ${C.dim}lattice.coords("5/4")${C.reset}        → {i:0, j:1, ratio:1.25}
+    ${C.dim}lattice.coords("3/2")${C.reset}        → {i:1, j:0, ratio:1.5}
+    (i = power of 3, j = power of 5)
+
+  ${C.cyan}Creating Sequences:${C.reset}
+    ${C.dim}lattice.sequence("1/1 5/4 3/2 2/1", "1 0.5 0.5 2", {${C.reset}
+    ${C.dim}  base: 440, amp: 0.5, clipId: "clip-xxx"${C.reset}
+    ${C.dim}})${C.reset}
+    - ratios: space/comma separated ratio strings
+    - rhythm: array/string of beat durations
+    - opts: base freq, amplitude, clip to add notes to
+
+  ${C.cyan}Random Rhythm Sequences:${C.reset}
+    ${C.dim}lattice.randomSequence("1/1 5/4 3/2", {${C.reset}
+    ${C.dim}  minDur: 0.25, maxDur: 2, clipId: "..."${C.reset}
+    ${C.dim}})${C.reset}
+    - Generates random rhythms from grid [0.25, 0.5, 0.75, 1, 1.5, 2]
+
+  ${C.cyan}Creating Chords:${C.reset}
+    ${C.dim}lattice.chord("1/1 5/4 3/2", {${C.reset}
+    ${C.dim}  base: 440, time: 0, dur: 2, clipId: "..."${C.reset}
+    ${C.dim}})${C.reset}
+    - All notes play simultaneously at given time
+
+  ${C.cyan}Lattice Path Sequences:${C.reset}
+    ${C.dim}lattice.path("0,0 1,0 1,1 0,1", "1 1 1 2", {${C.reset}
+    ${C.dim}  base: 440, clipId: "..."${C.reset}
+    ${C.dim}})${C.reset}
+    - Coords as "i,j" pairs (3^i * 5^j, octave-reduced)
+    - 0,0 = unison, 1,0 = fifth, 0,1 = major third
+
+  ${C.cyan}Built-in Intervals:${C.reset}  lattice.intervals.*
+    ${C.dim}unison: 1/1, majorThird: 5/4, perfectFifth: 3/2${C.reset}
+    ${C.dim}minorThird: 6/5, perfectFourth: 4/3, octave: 2/1${C.reset}
+
+  ${C.cyan}Built-in Scales:${C.reset}  lattice.scales.*
+    ${C.dim}major:     "1/1 9/8 5/4 4/3 3/2 5/3 15/8 2/1"${C.reset}
+    ${C.dim}minor:     "1/1 9/8 6/5 4/3 3/2 8/5 9/5 2/1"${C.reset}
+    ${C.dim}pentatonic: "1/1 9/8 5/4 3/2 5/3 2/1"${C.reset}
+
+  ${C.cyan}Built-in Chords:${C.reset}  lattice.chords.*
+    ${C.dim}majorTriad: "1/1 5/4 3/2"${C.reset}
+    ${C.dim}minorTriad: "1/1 6/5 3/2"${C.reset}
+    ${C.dim}major7: "1/1 5/4 3/2 15/8"${C.reset}
+
+  ${C.cyan}Examples:${C.reset}
+    ${C.dim}// Play JI major scale${C.reset}
+    ${C.dim}js lattice.sequence(lattice.scales.major, "1", {base:220, clipId:"c1"})${C.reset}
+
+    ${C.dim}// Random rhythm pentatonic${C.reset}
+    ${C.dim}js lattice.randomSequence(lattice.scales.pentatonic, {clipId:"c1"})${C.reset}
+
+    ${C.dim}// Major chord${C.reset}
+    ${C.dim}js lattice.chord(lattice.chords.majorTriad, {base:220, clipId:"c1"})${C.reset}
+
+    ${C.dim}// Walk the lattice: unison→fifth→maj3rd+fifth→maj3rd${C.reset}
+    ${C.dim}js lattice.path("0,0 1,0 1,1 0,1", "1 1 1 2", {clipId:"c1"})${C.reset}
+
+    ${C.dim}// Define a function for easy reuse${C.reset}
+    ${C.dim}fn ji js { lattice.sequence($1, $2 || "1", {clipId: seq.activeClip?.id}) }${C.reset}
+    ${C.dim}ji "1/1 5/4 3/2 2/1" "1 0.5 0.5 2"${C.reset}`,
     source: `${C.bold}source${C.reset} <file> [args]
   Execute commands from a script file.
 
