@@ -53,11 +53,27 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 
 ## Quick Start
 
+### Desktop App (Recommended)
+
+Download the standalone desktop application from [GitHub Releases](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases):
+
+| Platform | Download |
+|----------|----------|
+| Windows | `AlloLib-Studio-Setup-x.x.x.exe` |
+| macOS (Intel) | `AlloLib-Studio-x.x.x-x64.dmg` |
+| macOS (Apple Silicon) | `AlloLib-Studio-x.x.x-arm64.dmg` |
+| Linux | `AlloLib-Studio-x.x.x.AppImage` |
+
+The desktop app:
+- Runs locally with no internet required (after download)
+- Automatically checks for updates
+- Bundles the backend compilation server
+
 ### Online Demo
 
 Visit the hosted version (coming soon) or run locally:
 
-### Run Locally
+### Run Locally (Development)
 
 ```bash
 # Clone the repository
@@ -176,6 +192,10 @@ allolib-studio-online/
 │       └── utils/           # Tone lattice math, synth detection, .synthSequence parser
 ├── backend/                 # Node.js compilation server
 │   └── docker/              # Emscripten container
+├── desktop/                 # Electron desktop application
+│   ├── src/                 # Main process, preload, menu
+│   ├── scripts/             # Build scripts for all platforms
+│   └── resources/           # App icons
 ├── allolib/                 # AlloLib C++ library (cloned separately)
 └── allolib-wasm/            # WASM build configuration & compatibility headers
 ```
@@ -201,6 +221,39 @@ npm run dev:frontend    # Start frontend only
 
 ```bash
 npm run build
+```
+
+### Build Desktop App
+
+To build the desktop application from source:
+
+```bash
+# Install dependencies
+npm install
+cd desktop && npm install && cd ..
+
+# Build for your platform
+npm run desktop:dist:win    # Windows
+npm run desktop:dist:mac    # macOS
+npm run desktop:dist:linux  # Linux
+
+# Output in desktop/release/
+```
+
+Or use the build scripts:
+
+**Windows (PowerShell):**
+```powershell
+cd desktop
+.\scripts\setup.ps1
+.\scripts\build-local.ps1 -Target all
+```
+
+**macOS/Linux:**
+```bash
+cd desktop
+chmod +x scripts/build-local.sh
+./scripts/build-local.sh --target all
 ```
 
 ## Technical Details
