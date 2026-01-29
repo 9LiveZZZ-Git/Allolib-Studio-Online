@@ -4,6 +4,7 @@ import { AllolibRuntime } from '@/services/runtime'
 import type { AppStatus } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import AnalysisPanel from './AnalysisPanel.vue'
+import PopoutVisualizer from './PopoutVisualizer.vue'
 
 const settings = useSettingsStore()
 const isStudioFocus = computed(() => settings.display.studioFocus)
@@ -28,18 +29,52 @@ const emit = defineEmits<{
 const canvasRef = ref<HTMLCanvasElement>()
 const containerRef = ref<HTMLDivElement>()
 const viewerRef = ref<HTMLDivElement>()
+const runtimeRef = ref<AllolibRuntime | null>(null)
 let runtime: AllolibRuntime | null = null
+
+// Recording controls
+const showRecordingControls = ref(false)
+const popoutWindow = ref<Window | null>(null)
+const isPopoutMode = ref(false)
 
 onMounted(() => {
   window.addEventListener('resize', handleResize)
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('message', handlePopoutMessage)
   handleResize()
 })
+
+// Handle messages from popout window
+function handlePopoutMessage(event: MessageEvent) {
+  if (event.data.type === 'record-toggle') {
+    // Toggle recording in the PopoutVisualizer component
+    // For now, just toggle the recording controls to show
+    showRecordingControls.value = true
+  } else if (event.data.type === 'screenshot') {
+    // Trigger screenshot from popout
+    if (canvasRef.value) {
+      const dataUrl = canvasRef.value.toDataURL('image/png')
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const filename = `allolib-screenshot_${timestamp}.png`
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    }
+  }
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('message', handlePopoutMessage)
   runtime?.destroy()
+  // Close popout window if open
+  if (popoutWindow.value && !popoutWindow.value.closed) {
+    popoutWindow.value.close()
+  }
 })
 
 function handleKeydown(e: KeyboardEvent) {
@@ -74,6 +109,7 @@ watch(() => props.jsUrl, async (newUrl) => {
         onError: (text) => emit('log', text),
         onExit: (code) => emit('log', `[INFO] Exit code: ${code}`),
       })
+      runtimeRef.value = runtime
 
       // Apply limiter settings before loading (will be used when audio chain is created)
       runtime.configureLimiter({
@@ -125,6 +161,150 @@ function handleResize() {
     runtime?.resize()
   }
 }
+
+// Get audio context from runtime (for recording)
+const audioContext = computed(() => {
+  return runtimeRef.value?.getAudioContext?.() || null
+})
+
+// Toggle recording controls panel
+function toggleRecordingControls() {
+  showRecordingControls.value = !showRecordingControls.value
+}
+
+// Handle popout - opens visualizer in new window
+function handlePopout() {
+  if (!canvasRef.value) return
+
+  const width = 1280
+  const height = 720 + 150 // Canvas + controls
+  const left = (screen.width - width) / 2
+  const top = (screen.height - height) / 2
+
+  const features = [
+    `width=${width}`,
+    `height=${height}`,
+    `left=${left}`,
+    `top=${top}`,
+    'menubar=no',
+    'toolbar=no',
+    'location=no',
+    'status=no',
+    'resizable=yes',
+  ].join(',')
+
+  popoutWindow.value = window.open('', 'AlloLib Visualizer', features)
+
+  if (popoutWindow.value) {
+    isPopoutMode.value = true
+    setupPopoutWindow(popoutWindow.value)
+  }
+}
+
+// Setup the popout window with necessary content
+function setupPopoutWindow(win: Window) {
+  if (!canvasRef.value) return
+
+  // Write the HTML structure
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>AlloLib Studio - Visualizer</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a2e; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+        .container { display: flex; flex-direction: column; height: 100vh; }
+        .header { padding: 12px 16px; background: #16213e; display: flex; align-items: center; justify-content: space-between; }
+        .title { font-size: 14px; font-weight: 500; }
+        .canvas-container { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; }
+        #popout-canvas { max-width: 100%; max-height: 100%; }
+        .controls { padding: 12px 16px; background: #16213e; display: flex; gap: 12px; align-items: center; }
+        button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+        .btn-record { background: #dc2626; color: white; }
+        .btn-record:hover { background: #b91c1c; }
+        .btn-stop { background: #dc2626; color: white; }
+        .btn-screenshot { background: #374151; color: #d1d5db; }
+        .btn-screenshot:hover { background: #4b5563; }
+        .status { margin-left: auto; font-size: 12px; color: #9ca3af; }
+        .recording { color: #ef4444; display: flex; align-items: center; gap: 6px; }
+        .recording-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <span class="title">AlloLib Studio - Visualizer</span>
+          <span id="size-display">1280 x 720</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="popout-canvas"></canvas>
+        </div>
+        <div class="controls">
+          <button id="btn-record" class="btn-record">
+            <span style="width:10px;height:10px;border-radius:50%;background:currentColor"></span>
+            Record
+          </button>
+          <button id="btn-screenshot" class="btn-screenshot">
+            Screenshot
+          </button>
+          <div id="status" class="status">Ready</div>
+        </div>
+      </div>
+      <script>
+        // Message parent window for actions
+        document.getElementById('btn-record').addEventListener('click', () => {
+          window.opener.postMessage({ type: 'record-toggle' }, '*');
+        });
+        document.getElementById('btn-screenshot').addEventListener('click', () => {
+          window.opener.postMessage({ type: 'screenshot' }, '*');
+        });
+        window.addEventListener('message', (e) => {
+          if (e.data.type === 'recording-status') {
+            const btn = document.getElementById('btn-record');
+            const status = document.getElementById('status');
+            if (e.data.isRecording) {
+              btn.innerHTML = '<span style="width:10px;height:10px;background:currentColor"></span> Stop';
+              status.innerHTML = '<span class="recording"><span class="recording-dot"></span>Recording ' + e.data.duration + '</span>';
+            } else {
+              btn.innerHTML = '<span style="width:10px;height:10px;border-radius:50%;background:currentColor"></span> Record';
+              status.textContent = 'Ready';
+            }
+          }
+        });
+      <\/script>
+    </body>
+    </html>
+  `)
+  win.document.close()
+
+  // Copy canvas content to popout
+  const popoutCanvas = win.document.getElementById('popout-canvas') as HTMLCanvasElement
+  if (popoutCanvas && canvasRef.value) {
+    const ctx = popoutCanvas.getContext('2d')
+    if (ctx) {
+      // Set up canvas mirroring
+      const mirrorCanvas = () => {
+        if (win.closed) {
+          isPopoutMode.value = false
+          return
+        }
+        popoutCanvas.width = canvasRef.value!.width
+        popoutCanvas.height = canvasRef.value!.height
+        ctx.drawImage(canvasRef.value!, 0, 0)
+        requestAnimationFrame(mirrorCanvas)
+      }
+      mirrorCanvas()
+    }
+  }
+
+  // Handle window close
+  win.addEventListener('beforeunload', () => {
+    isPopoutMode.value = false
+    popoutWindow.value = null
+  })
+}
 </script>
 
 <template>
@@ -140,6 +320,28 @@ function handleResize() {
           <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
           Audio
         </span>
+        <!-- Recording controls button -->
+        <button
+          @click="toggleRecordingControls"
+          class="p-1 rounded transition-colors"
+          :class="showRecordingControls ? 'bg-red-600/30 text-red-400 hover:bg-red-600/40' : 'hover:bg-gray-700 text-gray-400'"
+          title="Recording Controls"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+          </svg>
+        </button>
+        <!-- Popout button -->
+        <button
+          @click="handlePopout"
+          class="p-1 rounded transition-colors hover:bg-gray-700 text-gray-400"
+          title="Open in new window"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </button>
         <!-- Studio Focus button -->
         <button
           @click="toggleStudioFocus"
@@ -160,6 +362,17 @@ function handleResize() {
         </button>
       </div>
     </div>
+
+    <!-- Recording Controls Panel -->
+    <PopoutVisualizer
+      v-if="showRecordingControls"
+      :canvas="canvasRef || null"
+      :audio-context="audioContext"
+      :is-running="status === 'running'"
+      @close="showRecordingControls = false"
+      @popout="handlePopout"
+      class="absolute top-10 right-2 z-50"
+    />
 
     <!-- Main content area with canvas and audio panel -->
     <div class="flex-1 flex flex-col overflow-hidden">

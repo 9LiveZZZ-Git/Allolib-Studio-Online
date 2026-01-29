@@ -563,6 +563,20 @@ export class AllolibRuntime {
     return this.module
   }
 
+  /**
+   * Get the audio context for external use (e.g., recording)
+   */
+  getAudioContext(): AudioContext | null {
+    return window.alloAudioContext
+  }
+
+  /**
+   * Get the audio worklet node for external use (e.g., recording)
+   */
+  getAudioWorkletNode(): AudioWorkletNode | null {
+    return window.alloWorkletNode
+  }
+
   destroy(): void {
     this.stop()
     this.cleanup()

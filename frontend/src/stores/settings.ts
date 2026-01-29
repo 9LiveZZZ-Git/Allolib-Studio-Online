@@ -34,6 +34,7 @@ export interface DisplaySettings {
   consoleHeight: number
   analysisPanelHeight: number
   sequencerHeight: number
+  defaultPointSize: number
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -74,6 +75,7 @@ export const useSettingsStore = defineStore('settings', () => {
     consoleHeight: 200,
     analysisPanelHeight: 200,
     sequencerHeight: 300,
+    defaultPointSize: 1.0,
   })
 
   // Load settings from localStorage
@@ -150,6 +152,7 @@ export const useSettingsStore = defineStore('settings', () => {
       consoleHeight: 200,
       analysisPanelHeight: 200,
       sequencerHeight: 300,
+      defaultPointSize: 1.0,
     }
     saveSettings()
   }

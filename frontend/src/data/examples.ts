@@ -118,6 +118,11 @@ export const categoryGroups: CategoryGroup[] = [
           { id: 'particles', title: 'Particle Systems' },
           { id: 'physics', title: 'Physics' },
           { id: 'agents', title: 'Agent-Based' },
+          { id: 'raymarching', title: 'Ray Marching' },
+          { id: 'fluids', title: 'Fluid & Smoke' },
+          { id: 'life', title: 'Artificial Life' },
+          { id: 'cellular', title: 'Cellular Automata' },
+          { id: 'procedural', title: 'Procedural Generation' },
         ],
       },
       {
@@ -2915,6 +2920,10 @@ public:
     Particle particles[NUM_PARTICLES];
     Mesh mesh;
 
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 5.0f;
+
     void onCreate() override {
         mesh.primitive(Mesh::POINTS);
 
@@ -2936,6 +2945,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         for (int i = 0; i < NUM_PARTICLES; ++i) {
             Particle& p = particles[i];
             p.vel.y -= dt * 2.0f; // Gravity
@@ -2966,8 +2986,19 @@ public:
         g.meshColor();
         g.draw(mesh);
     }
+
+    bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down
 ALLOLIB_WEB_MAIN(ParticleSystem)
 `,
   },
@@ -3116,6 +3147,10 @@ public:
     double phase = 0;
     float amplitude = 0.2f;
 
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 5.0f;
+
     void onCreate() override {
         curve.primitive(Mesh::LINE_STRIP);
         nav().pos(0, 0, 5);
@@ -3123,6 +3158,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         phase += dt;
 
         // Rebuild curve
@@ -3160,6 +3206,7 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
         if (k.key() >= '1' && k.key() <= '9') {
             int n = k.key() - '0';
             if (k.shift()) {
@@ -3170,8 +3217,14 @@ public:
         }
         return true;
     }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down. 1-9 change freqA, Shift+1-9 change freqB
 ALLOLIB_WEB_MAIN(Lissajous)
 `,
   },
@@ -3199,6 +3252,10 @@ public:
     float branchAngle = 25.0f;
     float lengthRatio = 0.7f;
     double time = 0;
+
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 5.0f;
 
     void onCreate() override {
         tree.primitive(Mesh::LINES);
@@ -3238,6 +3295,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         time += dt;
         buildTree();
     }
@@ -3249,6 +3317,7 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
         if (k.key() >= '1' && k.key() <= '9') {
             maxDepth = k.key() - '0' + 3;
         }
@@ -3261,8 +3330,14 @@ public:
         buildTree();
         return true;
     }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down. 1-9 change depth, +/- change angle
 ALLOLIB_WEB_MAIN(FractalTree)
 `,
   },
@@ -5949,7 +6024,7 @@ public:
 
         // Set up basic lighting
         g.lighting(true);
-        g.light().pos(5, 5, 5);
+        Light light; light.pos(5,5,5); g.light(light);
 
         // Convert HSV to RGB for color
         float h = hue.get();
@@ -6033,6 +6108,336 @@ ALLOLIB_MAIN(ParameterDemoApp)
   // SIMULATION - Particle Systems
   // ==========================================================================
   {
+    id: 'sim-point-test',
+    title: 'Point Rendering Test',
+    description: 'Simple test to verify point primitives render correctly',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Point Rendering Test
+ * Minimal test for WebGL2 point rendering
+ */
+
+#include "al_WebApp.hpp"
+
+using namespace al;
+
+class PointTest : public WebApp {
+public:
+    Mesh points;
+
+    void onCreate() override {
+        // Create simple colored points in a grid
+        points.primitive(Mesh::POINTS);
+
+        for (int y = -5; y <= 5; y++) {
+            for (int x = -5; x <= 5; x++) {
+                points.vertex(x * 0.2f, y * 0.2f, 0);
+                // Bright solid colors (no alpha)
+                float r = (x + 5) / 10.0f;
+                float g = (y + 5) / 10.0f;
+                float b = 1.0f;
+                points.color(r, g, b, 1.0f);  // Full opacity
+            }
+        }
+
+        nav().pos(0, 0, 4);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.1f);
+
+        // Simple rendering - no blending, no depth test
+        g.blending(false);
+        g.depthTesting(false);
+
+        g.pointSize(10);  // Large points
+        g.meshColor();
+        g.draw(points);
+    }
+};
+
+ALLOLIB_WEB_MAIN(PointTest)
+`,
+  },
+  {
+    id: 'sim-andromeda-galaxy',
+    title: 'Andromeda Galaxy (M31)',
+    description: 'Realistic simulation of the Andromeda Galaxy with spiral arms, central bulge, dust lanes, and companion galaxies M32 and M110',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Andromeda Galaxy (M31) - Realistic Simulation
+ *
+ * Models the key features of the Andromeda Galaxy:
+ * - Central bulge: Dense, spheroidal, older yellow/orange stars
+ * - Disk: Flattened exponential profile
+ * - Spiral arms: Two main logarithmic spirals with younger blue stars
+ * - Dust lanes: Dark regions along inner edges of spiral arms
+ * - Stellar halo: Sparse, old red stars
+ * - Companion galaxies: M32 (compact) and M110 (dwarf elliptical)
+ * - Inclination: ~77 degrees from face-on (as seen from Earth)
+ *
+ * Use WASD + Q/E to navigate
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+#include <cmath>
+
+using namespace al;
+
+class AndromedaGalaxy : public WebApp {
+public:
+    Mesh galaxy;
+    Mesh companions;
+    double time = 0;
+
+    // Galaxy parameters (scaled for visualization)
+    const float GALAXY_RADIUS = 4.0f;
+    const float BULGE_RADIUS = 0.8f;
+    const float DISK_HEIGHT = 0.1f;
+    const float INCLINATION = 77.0f;
+    const int NUM_STARS = 80000;
+    const int NUM_BULGE_STARS = 15000;
+    const int NUM_HALO_STARS = 5000;
+
+    // Spiral arm parameters
+    const float SPIRAL_A = 0.3f;
+    const float SPIRAL_B = 0.15f;
+    const int NUM_ARMS = 2;
+    const float PI_F = 3.14159265358979f;
+
+    rnd::Random<> rng;
+
+    void onCreate() override {
+        galaxy.primitive(Mesh::POINTS);
+        companions.primitive(Mesh::POINTS);
+
+        generateBulge();
+        generateDisk();
+        generateHalo();
+        generateCompanions();
+
+        nav().pos(0, 2, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    float bulgeProfile(float r) {
+        float re = BULGE_RADIUS * 0.5f;
+        return exp(-7.67f * (pow(r / re, 0.25f) - 1.0f));
+    }
+
+    float diskProfile(float r) {
+        float rd = GALAXY_RADIUS * 0.3f;
+        return exp(-r / rd);
+    }
+
+    float spiralAngle(float r, int arm) {
+        float baseAngle = (2.0f * PI_F * arm) / NUM_ARMS;
+        return baseAngle + SPIRAL_A * log(1.0f + r / SPIRAL_B);
+    }
+
+    void generateBulge() {
+        for (int i = 0; i < NUM_BULGE_STARS; i++) {
+            float u = rng.uniform();
+            float r = BULGE_RADIUS * pow(u, 0.5f);
+
+            if (rng.uniform() > bulgeProfile(r) * 2.0f) {
+                i--;
+                continue;
+            }
+
+            float theta = rng.uniform(0.0f, 2.0f * PI_F);
+            float phi = acos(2.0f * rng.uniform() - 1.0f);
+            float flattenY = 0.7f;
+
+            float x = r * sin(phi) * cos(theta);
+            float y = r * sin(phi) * sin(theta) * flattenY;
+            float z = r * cos(phi);
+
+            galaxy.vertex(x, y, z);
+
+            float age = rng.uniform(0.7f, 1.0f);
+            float temp = 0.3f + age * 0.4f;
+            galaxy.color(1.0f, 0.8f * temp + 0.2f, 0.3f * temp, 0.9f);
+        }
+    }
+
+    void generateDisk() {
+        for (int i = 0; i < NUM_STARS; i++) {
+            float u = rng.uniform();
+            float r = -GALAXY_RADIUS * 0.3f * log(1.0f - u * 0.99f);
+            r = fmin(r, GALAXY_RADIUS);
+
+            float baseTheta = rng.uniform(0.0f, 2.0f * PI_F);
+            bool inArm = false;
+            float armInfluence = 0.0f;
+
+            for (int arm = 0; arm < NUM_ARMS; arm++) {
+                float armAngle = spiralAngle(r, arm);
+                float angleDiff = baseTheta - armAngle;
+
+                while (angleDiff > PI_F) angleDiff -= 2.0f * PI_F;
+                while (angleDiff < -PI_F) angleDiff += 2.0f * PI_F;
+
+                float armWidth = 0.3f + 0.2f * (r / GALAXY_RADIUS);
+
+                if (fabs(angleDiff) < armWidth) {
+                    inArm = true;
+                    armInfluence = 1.0f - fabs(angleDiff) / armWidth;
+                    baseTheta = armAngle + angleDiff * 0.5f;
+                    break;
+                }
+            }
+
+            float theta = baseTheta + rng.uniform(-0.15f, 0.15f);
+            float zScale = DISK_HEIGHT * (1.0f + r / GALAXY_RADIUS);
+            float z = rng.gaussian() * zScale;
+
+            float x = r * cos(theta);
+            float y = r * sin(theta);
+
+            galaxy.vertex(x, y, z);
+
+            float brightness = diskProfile(r) * 0.5f + 0.5f;
+
+            if (inArm && r > BULGE_RADIUS * 0.5f) {
+                float blue = 0.6f + armInfluence * 0.4f;
+                float starType = rng.uniform();
+
+                if (starType < 0.1f) {
+                    galaxy.color(0.7f, 0.85f, 1.0f, brightness);
+                } else if (starType < 0.3f) {
+                    galaxy.color(0.85f, 0.9f, 1.0f, brightness * 0.9f);
+                } else {
+                    galaxy.color(0.9f, 0.9f, blue, brightness * 0.8f);
+                }
+            } else {
+                float yellow = 0.8f - r / GALAXY_RADIUS * 0.3f;
+                galaxy.color(1.0f, 0.85f * yellow + 0.15f, 0.5f * yellow, brightness * 0.7f);
+            }
+
+            if (inArm && r > BULGE_RADIUS) {
+                float dustProb = 0.3f * armInfluence * (1.0f - r / GALAXY_RADIUS);
+                if (rng.uniform() < dustProb) {
+                    auto& c = galaxy.colors().back();
+                    c.r *= 0.3f;
+                    c.g *= 0.25f;
+                    c.b *= 0.2f;
+                }
+            }
+        }
+    }
+
+    void generateHalo() {
+        for (int i = 0; i < NUM_HALO_STARS; i++) {
+            float u = rng.uniform();
+            float r = GALAXY_RADIUS * 0.5f * pow(u, -0.33f);
+            r = fmin(r, GALAXY_RADIUS * 2.0f);
+
+            if (r < BULGE_RADIUS) {
+                i--;
+                continue;
+            }
+
+            float theta = rng.uniform(0.0f, 2.0f * PI_F);
+            float phi = acos(2.0f * rng.uniform() - 1.0f);
+
+            float x = r * sin(phi) * cos(theta);
+            float y = r * sin(phi) * sin(theta);
+            float z = r * cos(phi);
+
+            galaxy.vertex(x, y, z);
+
+            float dim = 0.3f + 0.2f * rng.uniform();
+            galaxy.color(1.0f * dim, 0.6f * dim, 0.4f * dim, 0.5f);
+        }
+    }
+
+    void generateCompanions() {
+        // M32 - Compact elliptical
+        Vec3f m32Pos(1.8f, -0.3f, 0.5f);
+        int m32Stars = 2000;
+        float m32Radius = 0.25f;
+
+        for (int i = 0; i < m32Stars; i++) {
+            float r = m32Radius * pow(rng.uniform(), 0.5f);
+            float theta = rng.uniform(0.0f, 2.0f * PI_F);
+            float phi = acos(2.0f * rng.uniform() - 1.0f);
+
+            float x = m32Pos.x + r * sin(phi) * cos(theta);
+            float y = m32Pos.y + r * sin(phi) * sin(theta) * 0.8f;
+            float z = m32Pos.z + r * cos(phi);
+
+            companions.vertex(x, y, z);
+
+            float bright = 0.6f + 0.4f * (1.0f - r / m32Radius);
+            companions.color(1.0f * bright, 0.85f * bright, 0.6f * bright, 0.8f);
+        }
+
+        // M110 - Dwarf elliptical
+        Vec3f m110Pos(-2.5f, 1.0f, -0.5f);
+        int m110Stars = 1500;
+        float m110Radius = 0.4f;
+
+        for (int i = 0; i < m110Stars; i++) {
+            float r = m110Radius * pow(rng.uniform(), 0.4f);
+            float theta = rng.uniform(0.0f, 2.0f * PI_F);
+            float phi = acos(2.0f * rng.uniform() - 1.0f);
+
+            float x = m110Pos.x + r * sin(phi) * cos(theta) * 1.5f;
+            float y = m110Pos.y + r * sin(phi) * sin(theta);
+            float z = m110Pos.z + r * cos(phi);
+
+            companions.vertex(x, y, z);
+
+            float bright = 0.4f + 0.3f * (1.0f - r / m110Radius);
+            companions.color(1.0f * bright, 0.8f * bright, 0.65f * bright, 0.6f);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.0f, 0.0f, 0.02f);
+
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+        g.pointSize(1);  // Small points for realistic star field
+
+        g.pushMatrix();
+        g.rotate(INCLINATION, 1, 0, 0);
+        g.rotate(time * 2.0, 0, 0, 1);
+
+        g.meshColor();
+        g.draw(galaxy);
+        g.draw(companions);
+
+        g.popMatrix();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        float moveSpeed = 0.3f;
+        switch (k.key()) {
+            case 'w': nav().pos() += nav().uf() * moveSpeed; break;
+            case 's': nav().pos() -= nav().uf() * moveSpeed; break;
+            case 'a': nav().pos() -= nav().ur() * moveSpeed; break;
+            case 'd': nav().pos() += nav().ur() * moveSpeed; break;
+            case 'q': nav().pos() -= nav().uu() * moveSpeed; break;
+            case 'e': nav().pos() += nav().uu() * moveSpeed; break;
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(AndromedaGalaxy)
+`,
+  },
+  {
     id: 'sim-particle-fountain',
     title: 'Particle Fountain',
     description: 'Simple particle system with fountain-like emission',
@@ -6111,6 +6516,8 @@ class ParticleFountain : public WebApp {
 public:
     Emitter<8000> emitter;
     Mesh mesh;
+    bool keys[256] = {false};
+    float moveSpeed = 5.0f;
 
     void onCreate() override {
         nav().pos(4, 0, 8);
@@ -6118,6 +6525,18 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement (WASD + QE)
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         emitter.update<40>();
 
         mesh.reset();
@@ -6141,6 +6560,16 @@ public:
         g.pointSize(4);
         g.meshColor();
         g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
     }
 };
 
@@ -6193,6 +6622,8 @@ public:
     Star stars[NUM_STARS];
     Mesh mesh;
     float rotation = 0;
+    bool keys[256] = {false};
+    float moveSpeed = 5.0f;
 
     void onCreate() override {
         // Initialize stars with random orbits
@@ -6213,6 +6644,18 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement (WASD + QE)
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         rotation += dt * 0.1;
 
         // Update all stars
@@ -6249,6 +6692,16 @@ public:
         g.meshColor();
         g.draw(mesh);
         g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
     }
 };
 
@@ -6290,6 +6743,10 @@ public:
 
     Mesh mesh;
 
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 3.0f;
+
     void onCreate() override {
         // Initialize wave array to zero
         for (int i = 0; i < Nx * Ny * 2; ++i) wave[i] = 0;
@@ -6306,6 +6763,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         int zprev = 1 - zcurr;
 
         // Add random droplets
@@ -6370,8 +6838,19 @@ public:
         g.draw(mesh);
         g.popMatrix();
     }
+
+    bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down
 ALLOLIB_WEB_MAIN(WaveEquation)
 `,
   },
@@ -6418,6 +6897,10 @@ public:
     float restLength = 0.15f;
     Vec3f gravity{0, -2.0f, 0};
 
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 3.0f;
+
     void onCreate() override {
         // Initialize grid of points
         for (int y = 0; y < HEIGHT; ++y) {
@@ -6449,6 +6932,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         float step = 0.002f;  // Fixed timestep for stability
         int steps = int(dt / step) + 1;
 
@@ -6531,6 +7025,7 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
         if (k.key() == ' ') {
             // Apply random impulse
             for (int i = 0; i < WIDTH * HEIGHT; ++i) {
@@ -6545,11 +7040,15 @@ public:
         }
         return true;
     }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down. SPACE to shake the mesh!
 ALLOLIB_WEB_MAIN(SpringMesh)
-
-// Press SPACE to shake the mesh!
 `,
   },
 
@@ -6595,6 +7094,10 @@ public:
     Boid boids[NUM_BOIDS];
     Mesh heads, tails, box;
 
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 3.0f;
+
     void onCreate() override {
         // Create boundary box
         box.primitive(Mesh::LINE_LOOP);
@@ -6621,6 +7124,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         // Boid-boid interactions
         for (int i = 0; i < NUM_BOIDS - 1; ++i) {
             for (int j = i + 1; j < NUM_BOIDS; ++j) {
@@ -6708,16 +7222,21 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
         if (k.key() == 'r' || k.key() == 'R') {
             resetBoids();
         }
         return true;
     }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down. R to reset the flock!
 ALLOLIB_WEB_MAIN(FlockingBoids)
-
-// Press R to reset the flock!
 `,
   },
   {
@@ -6757,6 +7276,10 @@ public:
 
     Vec2f nestPos{GRID_SIZE/2.0f, GRID_SIZE/2.0f};
     Mesh trailMesh, antMesh, foodMesh;
+
+    // Camera control
+    bool keys[256] = {false};
+    float moveSpeed = 3.0f;
 
     void onCreate() override {
         // Initialize pheromones and food
@@ -6798,6 +7321,17 @@ public:
     }
 
     void onAnimate(double dt) override {
+        // Camera movement
+        Vec3d forward = nav().uf();
+        Vec3d right = nav().ur();
+        Vec3d up = Vec3d(0, 1, 0);
+        if (keys['W'] || keys['w']) nav().pos() += forward * moveSpeed * dt;
+        if (keys['S'] || keys['s']) nav().pos() -= forward * moveSpeed * dt;
+        if (keys['A'] || keys['a']) nav().pos() -= right * moveSpeed * dt;
+        if (keys['D'] || keys['d']) nav().pos() += right * moveSpeed * dt;
+        if (keys['Q'] || keys['q']) nav().pos() -= up * moveSpeed * dt;
+        if (keys['E'] || keys['e']) nav().pos() += up * moveSpeed * dt;
+
         // Evaporate pheromones
         for (int y = 0; y < GRID_SIZE; ++y) {
             for (int x = 0; x < GRID_SIZE; ++x) {
@@ -6957,9 +7491,4773 @@ public:
         g.pointSize(10);
         g.draw(nest);
     }
+
+    bool onKeyDown(const Keyboard& k) override {
+        keys[k.key()] = true;
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        keys[k.key()] = false;
+        return true;
+    }
 };
 
+// Use WASD to move camera, Q/E for up/down
 ALLOLIB_WEB_MAIN(AntTrails)
+`,
+  },
+
+  {
+    id: 'agents-predator-prey',
+    title: 'Predator-Prey',
+    description: 'Ecosystem simulation with predators hunting prey',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * Predator-Prey Ecosystem
+ * Features: Energy, hunting, reproduction, death
+ * Controls: Space = pause, P = add prey, H = add predator
+ */
+#include "al_playground_compat.hpp"
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+using namespace al;
+
+struct Agent { Vec2f pos,vel; float energy,size; int type; bool alive; };
+
+class PredatorPrey : public WebApp {
+public:
+    std::vector<Agent> agents;
+    Mesh mesh; bool running=true;
+    float worldSize=3.0f;
+    rnd::Random<> rng;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        for(int i=0;i<60;i++) spawn(0);
+        for(int i=0;i<10;i++) spawn(1);
+        nav().pos(0,0,8);
+    }
+
+    void spawn(int type) {
+        Agent a; a.type=type;
+        a.pos=Vec2f(rng.uniformS(),rng.uniformS())*worldSize*0.9f;
+        a.vel=Vec2f(rng.uniformS(),rng.uniformS())*0.5f;
+        a.energy=(type==0)?50.0f:80.0f;
+        a.size=(type==0)?0.08f:0.12f;
+        a.alive=true;
+        agents.push_back(a);
+    }
+
+    void onAnimate(double dt) override {
+        if(!running) return;
+
+        for(auto& a:agents){
+            if(!a.alive) continue;
+            a.energy-=dt*(a.type==0?3.0f:5.0f);
+
+            if(a.type==1){
+                Agent* nearest=nullptr; float minD=999;
+                for(auto& b:agents){
+                    if(!b.alive||b.type!=0) continue;
+                    float d=(a.pos-b.pos).mag();
+                    if(d<minD){minD=d;nearest=&b;}
+                }
+                if(nearest&&minD<2.0f){
+                    Vec2f dir=(nearest->pos-a.pos).normalize();
+                    a.vel+=dir*dt*3.0f;
+                    if(minD<a.size+nearest->size){
+                        a.energy+=30.0f;
+                        nearest->alive=false;
+                    }
+                }
+            }
+
+            a.vel+=Vec2f(rng.uniformS(),rng.uniformS())*dt*2.0f;
+            a.vel*=0.95f;
+            float maxSpd=(a.type==0)?1.5f:2.0f;
+            if(a.vel.mag()>maxSpd) a.vel=a.vel.normalize()*maxSpd;
+            a.pos+=a.vel*dt;
+
+            if(a.pos.x>worldSize){a.pos.x=worldSize;a.vel.x*=-0.5f;}
+            if(a.pos.x<-worldSize){a.pos.x=-worldSize;a.vel.x*=-0.5f;}
+            if(a.pos.y>worldSize){a.pos.y=worldSize;a.vel.y*=-0.5f;}
+            if(a.pos.y<-worldSize){a.pos.y=-worldSize;a.vel.y*=-0.5f;}
+
+            float thresh=(a.type==0)?100.0f:150.0f;
+            int maxPop=(a.type==0)?100:20;
+            int count=0;for(auto& b:agents)if(b.alive&&b.type==a.type)count++;
+            if(a.energy>thresh&&count<maxPop){
+                a.energy*=0.5f;
+                spawn(a.type);
+                agents.back().pos=a.pos+Vec2f(rng.uniformS(),rng.uniformS())*0.2f;
+            }
+
+            if(a.energy<=0) a.alive=false;
+        }
+
+        if(rng.prob(0.01)){spawn(0);}
+
+        agents.erase(std::remove_if(agents.begin(),agents.end(),[](const Agent& a){return !a.alive;}),agents.end());
+
+        mesh.reset();
+        for(auto& a:agents){
+            mesh.vertex(a.pos.x,a.pos.y,0);
+            if(a.type==0) mesh.color(0.3f,0.9f,0.4f,fmin(1.0f,a.energy/50.0f));
+            else mesh.color(0.9f,0.3f,0.2f,fmin(1.0f,a.energy/80.0f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.03f,0.05f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(8);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')running=!running;
+        if(k.key()=='p')for(int i=0;i<5;i++)spawn(0);
+        if(k.key()=='h')spawn(1);
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(PredatorPrey)
+`,
+  },
+
+  {
+    id: 'agents-school-fish',
+    title: '3D Fish School',
+    description: '3D boids simulation of schooling fish',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * 3D Fish Schooling
+ * Features: 3D boids with cohesion, separation, alignment
+ * Controls: WASD/QE = move camera
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Fish { Vec3f pos,vel; float phase; };
+
+class FishSchool : public WebApp {
+public:
+    static const int NUM=200;
+    Fish fish[NUM];
+    Mesh mesh;
+    rnd::Random<> rng;
+    bool keys[256];
+    float time=0;
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        mesh.primitive(Mesh::POINTS);
+        for(int i=0;i<NUM;i++){
+            fish[i].pos=Vec3f(rng.uniformS(),rng.uniformS(),rng.uniformS())*3.0f;
+            fish[i].vel=Vec3f(rng.uniformS(),rng.uniformS(),rng.uniformS())*0.5f;
+            fish[i].phase=rng.uniform()*6.28f;
+        }
+        nav().pos(0,0,12);
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf;
+        float spd=5.0f*dtf;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<NUM;i++){
+            Vec3f sep,ali,coh; int count=0;
+
+            for(int j=0;j<NUM;j++){
+                if(i==j)continue;
+                Vec3f diff=fish[i].pos-fish[j].pos;
+                float d=diff.mag();
+                if(d<2.0f){
+                    sep+=diff.normalize()/(d+0.1f);
+                    ali+=fish[j].vel;
+                    coh+=fish[j].pos;
+                    count++;
+                }
+            }
+
+            if(count>0){
+                ali/=(float)count; coh/=(float)count;
+                fish[i].vel+=sep*0.05f;
+                fish[i].vel+=(ali-fish[i].vel)*0.02f;
+                fish[i].vel+=(coh-fish[i].pos)*0.01f;
+            }
+
+            Vec3f center=-fish[i].pos;
+            if(fish[i].pos.mag()>5.0f) fish[i].vel+=center.normalize()*0.1f;
+
+            float maxSpd=2.0f;
+            if(fish[i].vel.mag()>maxSpd) fish[i].vel=fish[i].vel.normalize()*maxSpd;
+            if(fish[i].vel.mag()<0.5f) fish[i].vel=fish[i].vel.normalize()*0.5f;
+
+            fish[i].pos+=fish[i].vel*dtf;
+        }
+
+        mesh.reset();
+        for(int i=0;i<NUM;i++){
+            mesh.vertex(fish[i].pos);
+            float h=fmodf(fish[i].phase+time*0.5f,6.28f)/6.28f;
+            mesh.color(HSV(0.55f+h*0.1f,0.7f,0.9f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.05f,0.1f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(5);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=true;return true;}
+    bool onKeyUp(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=false;return true;}
+};
+
+ALLOLIB_WEB_MAIN(FishSchool)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Procedural Generation
+  // ==========================================================================
+  {
+    id: 'proc-noise-gallery',
+    title: 'Noise Gallery',
+    description: 'Interactive gallery of Perlin, FBM, and turbulence noise functions',
+    category: 'simulation',
+    subcategory: 'procedural',
+    code: `/**
+ * Noise Gallery - Procedural Noise Functions
+ * Controls: 1-4 = noise type, +/- = scale, WASD = pan
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+namespace noise {
+    static const int p[512] = {151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180,151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180};
+    inline float fade(float t) { return t*t*t*(t*(t*6.0f-15.0f)+10.0f); }
+    inline float lerp(float t, float a, float b) { return a + t*(b-a); }
+    inline float grad(int hash, float x, float y, float z) {
+        int h = hash & 15; float u = h<8?x:y, v = h<4?y:(h==12||h==14?x:z);
+        return ((h&1)?-u:u)+((h&2)?-v:v);
+    }
+    float perlin(float x, float y, float z) {
+        int X=(int)floor(x)&255, Y=(int)floor(y)&255, Z=(int)floor(z)&255;
+        x-=floor(x); y-=floor(y); z-=floor(z);
+        float u=fade(x), v=fade(y), w=fade(z);
+        int A=p[X]+Y, AA=p[A]+Z, AB=p[A+1]+Z, B=p[X+1]+Y, BA=p[B]+Z, BB=p[B+1]+Z;
+        return lerp(w,lerp(v,lerp(u,grad(p[AA],x,y,z),grad(p[BA],x-1,y,z)),lerp(u,grad(p[AB],x,y-1,z),grad(p[BB],x-1,y-1,z))),lerp(v,lerp(u,grad(p[AA+1],x,y,z-1),grad(p[BA+1],x-1,y,z-1)),lerp(u,grad(p[AB+1],x,y-1,z-1),grad(p[BB+1],x-1,y-1,z-1))));
+    }
+    float fbm(float x, float y, float z, int oct=4) {
+        float v=0,a=0.5f,f=1.0f; for(int i=0;i<oct;i++){v+=a*perlin(x*f,y*f,z*f);f*=2;a*=0.5f;} return v;
+    }
+    float turbulence(float x, float y, float z, int oct=4) {
+        float v=0,a=0.5f,f=1.0f; for(int i=0;i<oct;i++){v+=a*fabs(perlin(x*f,y*f,z*f));f*=2;a*=0.5f;} return v;
+    }
+    float ridged(float x, float y, float z, int oct=4) {
+        float v=0,a=0.5f,f=1.0f,pr=1.0f; for(int i=0;i<oct;i++){float n=1.0f-fabs(perlin(x*f,y*f,z*f));n*=n;v+=n*a*pr;pr=n;f*=2;a*=0.5f;} return v;
+    }
+}
+
+class NoiseGallery : public WebApp {
+public:
+    Mesh plane; float scale=4.0f, offX=0, offY=0; int type=0; float time=0;
+    const int res=100; bool keys[256];
+
+    void onCreate() override { memset(keys,0,sizeof(keys)); plane.primitive(Mesh::POINTS); nav().pos(0,0,2); }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf; float pan=0.5f*dtf;
+        if(keys[(int)'w'])offY+=pan; if(keys[(int)'s'])offY-=pan; if(keys[(int)'a'])offX-=pan; if(keys[(int)'d'])offX+=pan;
+        plane.reset(); float step=2.0f/res;
+        for(int y=0;y<res;y++) for(int x=0;x<res;x++) {
+            float px=-1.0f+x*step, py=-1.0f+y*step;
+            float nx=(px+offX)*scale, ny=(py+offY)*scale, nz=time*0.3f, n;
+            switch(type){case 0:n=noise::perlin(nx,ny,nz)*0.5f+0.5f;break;case 1:n=noise::fbm(nx,ny,nz)*0.5f+0.5f;break;case 2:n=noise::turbulence(nx,ny,nz);break;default:n=noise::ridged(nx,ny,nz)*0.5f;}
+            plane.vertex(px,py,n*0.3f); plane.color(n,n*0.8f,1.0f-n*0.5f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f); g.depthTesting(true); g.pointSize(3);
+        g.pushMatrix(); g.rotate(30,1,0,0); g.meshColor(); g.draw(plane); g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key();if(key>=0&&key<256)keys[key]=true;
+        if(key>='1'&&key<='4')type=key-'1';
+        if(key=='+'||key=='=')scale*=1.2f; if(key=='-')scale/=1.2f;
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override { int key=k.key();if(key>=0&&key<256)keys[key]=false; return true; }
+};
+
+ALLOLIB_WEB_MAIN(NoiseGallery)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Ray Marching
+  // ==========================================================================
+  {
+    id: 'rm-sphere-basic',
+    title: 'Basic Sphere SDF',
+    description: 'Introduction to ray marching with a sphere signed distance function',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Basic Ray Marching - Sphere SDF
+ * Controls: WASD = rotate, Q/E = zoom
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+const char* rmVert = R"(#version 300 es
+precision highp float;
+layout(location = 0) in vec3 position;
+out vec2 uv;
+void main() { uv = position.xy; gl_Position = vec4(position, 1.0); }
+)";
+
+const char* rmFrag = R"(#version 300 es
+precision highp float;
+in vec2 uv; out vec4 fragColor;
+uniform float time; uniform vec2 resolution; uniform vec3 camPos;
+
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+float scene(vec3 p) {
+    vec3 sp = vec3(sin(time)*0.5, 0.0, cos(time)*0.5);
+    return min(sdSphere(p-sp, 1.0), p.y+1.0);
+}
+vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.001, 0.0);
+    return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));
+}
+float march(vec3 ro, vec3 rd) {
+    float d = 0.0;
+    for (int i = 0; i < 100; i++) { float ds = scene(ro + rd * d); d += ds; if (d > 100.0 || ds < 0.001) break; }
+    return d;
+}
+void main() {
+    vec2 p = uv; p.x *= resolution.x / resolution.y;
+    vec3 ro = camPos, fwd = normalize(-ro), right = normalize(cross(vec3(0,1,0), fwd)), up = cross(fwd, right);
+    vec3 rd = normalize(fwd + p.x * right + p.y * up);
+    float d = march(ro, rd);
+    vec3 col = mix(vec3(0.1,0.1,0.2), vec3(0.4,0.6,0.9), uv.y * 0.5 + 0.5);
+    if (d < 100.0) {
+        vec3 pos = ro + rd * d, n = calcNormal(pos), light = normalize(vec3(2,5,-3));
+        float diff = max(dot(n, light), 0.0), spec = pow(max(dot(reflect(-light, n), -rd), 0.0), 32.0);
+        col = vec3(0.2,0.5,0.8) * (diff * 0.8 + 0.2) + vec3(1) * spec * 0.5;
+    }
+    fragColor = vec4(pow(col, vec3(0.4545)), 1.0);
+}
+)";
+
+class RayMarchSphere : public WebApp {
+public:
+    ShaderProgram shader; Mesh quad;
+    float camDist=5.0f, angleX=0.3f, angleY=0.0f; double time=0;
+
+    void onCreate() override {
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0); quad.vertex(1,-1,0); quad.vertex(-1,1,0); quad.vertex(1,1,0);
+        shader.compile(rmVert, rmFrag);
+    }
+    void onAnimate(double dt) override { time+=dt; angleY+=dt*0.2f; }
+    void onDraw(Graphics& g) override {
+        g.clear(0); g.depthTesting(false);
+        float cx=camDist*sin(angleY)*cos(angleX), cy=camDist*sin(angleX)+1.0f, cz=camDist*cos(angleY)*cos(angleX);
+        shader.begin();
+        shader.uniform("time",(float)time); shader.uniform("resolution",(float)width(),(float)height());
+        shader.uniform("camPos",cx,cy,cz);
+        g.draw(quad); shader.end();
+    }
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='w')angleX+=0.1f; if(k.key()=='s')angleX-=0.1f;
+        if(k.key()=='a')angleY-=0.1f; if(k.key()=='d')angleY+=0.1f;
+        if(k.key()=='q')camDist=fmax(2.0f,camDist-0.5f); if(k.key()=='e')camDist=fmin(20.0f,camDist+0.5f);
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(RayMarchSphere)
+`,
+  },
+
+  {
+    id: 'rm-csg-operations',
+    title: 'CSG Operations',
+    description: 'Constructive Solid Geometry: union, intersection, and difference of shapes',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Ray Marching - CSG Operations
+ * Controls: 1-4 = switch operation
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+const char* csgVert = R"(#version 300 es
+precision highp float;
+layout(location=0)in vec3 position;out vec2 uv;
+void main(){uv=position.xy;gl_Position=vec4(position,1.0);}
+)";
+
+const char* csgFrag = R"(#version 300 es
+precision highp float;
+in vec2 uv;out vec4 fragColor;
+uniform float time;uniform vec2 resolution;uniform int mode;
+
+float sdSphere(vec3 p,float r){return length(p)-r;}
+float sdBox(vec3 p,vec3 b){vec3 d=abs(p)-b;return min(max(d.x,max(d.y,d.z)),0.0)+length(max(d,0.0));}
+float opU(float a,float b){return min(a,b);}
+float opI(float a,float b){return max(a,b);}
+float opS(float a,float b){return max(-a,b);}
+float opSU(float a,float b,float k){float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0);return mix(b,a,h)-k*h*(1.0-h);}
+
+float scene(vec3 p){
+    float a=time*0.5;mat2 r=mat2(cos(a),-sin(a),sin(a),cos(a));p.xz=r*p.xz;
+    float sp=sdSphere(p-vec3(0.3,0,0),0.8),bx=sdBox(p-vec3(-0.3,0,0),vec3(0.6));
+    if(mode==0)return opU(sp,bx);if(mode==1)return opI(sp,bx);
+    if(mode==2)return opS(sp,bx);return opSU(sp,bx,0.3);
+}
+vec3 norm(vec3 p){vec2 e=vec2(0.001,0);return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));}
+float march(vec3 ro,vec3 rd){float d=0.0;for(int i=0;i<100;i++){float ds=scene(ro+rd*d);d+=ds;if(d>50.0||ds<0.001)break;}return d;}
+
+void main(){
+    vec2 p=uv;p.x*=resolution.x/resolution.y;
+    vec3 ro=vec3(0,0,4),rd=normalize(vec3(p,-1.5));
+    float d=march(ro,rd);
+    vec3 col=vec3(0.1,0.1,0.15);
+    if(d<50.0){
+        vec3 pos=ro+rd*d,n=norm(pos),l=normalize(vec3(1,2,1));
+        float df=max(dot(n,l),0.0),sp=pow(max(dot(reflect(-l,n),-rd),0.0),32.0);
+        col=vec3(0.2,0.6,0.9)*(df*0.7+0.3)+vec3(1)*sp*0.5;
+    }
+    fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+}
+)";
+
+class CSGOps : public WebApp {
+public:
+    ShaderProgram shader;Mesh quad;int mode=0;double time=0;
+
+    void onCreate() override {
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        shader.compile(csgVert,csgFrag);
+    }
+    void onAnimate(double dt) override {time+=dt;}
+    void onDraw(Graphics& g) override {
+        g.clear(0);g.depthTesting(false);
+        shader.begin();
+        shader.uniform("time",(float)time);
+        shader.uniform("resolution",(float)width(),(float)height());
+        shader.uniform("mode",mode);
+        g.draw(quad);shader.end();
+    }
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()>='1'&&k.key()<='4')mode=k.key()-'1';
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(CSGOps)
+`,
+  },
+
+  {
+    id: 'rm-infinite-repetition',
+    title: 'Infinite Repetition',
+    description: 'Infinite grid of shapes using domain repetition',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Ray Marching - Infinite Repetition
+ * Controls: WASD = move camera
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+const char* repVert = R"(#version 300 es
+precision highp float;
+layout(location=0)in vec3 position;out vec2 uv;
+void main(){uv=position.xy;gl_Position=vec4(position,1.0);}
+)";
+
+const char* repFrag = R"(#version 300 es
+precision highp float;
+in vec2 uv;out vec4 fragColor;
+uniform float time;uniform vec2 resolution;uniform vec3 camPos;
+
+float sdSphere(vec3 p,float r){return length(p)-r;}
+float sdBox(vec3 p,vec3 b){vec3 d=abs(p)-b;return min(max(d.x,max(d.y,d.z)),0.0)+length(max(d,0.0));}
+
+vec3 rep(vec3 p,vec3 c){return mod(p+0.5*c,c)-0.5*c;}
+
+float scene(vec3 p){
+    vec3 rp=rep(p,vec3(4.0));
+    float sp=sdSphere(rp,0.5+0.2*sin(p.x*0.5+time)*sin(p.z*0.5+time));
+    float bx=sdBox(rp,vec3(0.3));
+    return min(sp,bx);
+}
+
+vec3 norm(vec3 p){vec2 e=vec2(0.001,0);return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));}
+
+float march(vec3 ro,vec3 rd){
+    float d=0.0;
+    for(int i=0;i<100;i++){float ds=scene(ro+rd*d);d+=ds;if(d>100.0||ds<0.001)break;}
+    return d;
+}
+
+void main(){
+    vec2 p=uv;p.x*=resolution.x/resolution.y;
+    vec3 ro=camPos;
+    vec3 fwd=normalize(vec3(sin(time*0.2),0,-cos(time*0.2)));
+    vec3 right=normalize(cross(vec3(0,1,0),fwd));
+    vec3 up=cross(fwd,right);
+    vec3 rd=normalize(fwd+p.x*right+p.y*up);
+
+    float d=march(ro,rd);
+    vec3 col=vec3(0.02,0.02,0.05);
+
+    if(d<100.0){
+        vec3 pos=ro+rd*d;
+        vec3 n=norm(pos);
+        vec3 l=normalize(vec3(1,2,1));
+        float df=max(dot(n,l),0.0);
+        float sp=pow(max(dot(reflect(-l,n),-rd),0.0),32.0);
+        vec3 base=vec3(0.5+0.5*sin(pos.x*0.5),0.5+0.5*sin(pos.y*0.5),0.5+0.5*sin(pos.z*0.5));
+        col=base*(df*0.7+0.2)+vec3(1)*sp*0.3;
+        col*=exp(-d*0.03);
+    }
+    fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+}
+)";
+
+class InfiniteRep : public WebApp {
+public:
+    ShaderProgram shader;Mesh quad;
+    Vec3f camPos;float time=0;
+    bool keys[256];
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        shader.compile(repVert,repFrag);
+        camPos=Vec3f(0,0,0);
+    }
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf;
+        float spd=5.0f*dtf;
+        if(keys[(int)'w'])camPos.z-=spd;if(keys[(int)'s'])camPos.z+=spd;
+        if(keys[(int)'a'])camPos.x-=spd;if(keys[(int)'d'])camPos.x+=spd;
+        if(keys[(int)'q'])camPos.y-=spd;if(keys[(int)'e'])camPos.y+=spd;
+    }
+    void onDraw(Graphics& g) override {
+        g.clear(0);g.depthTesting(false);
+        shader.begin();
+        shader.uniform("time",time);
+        shader.uniform("resolution",(float)width(),(float)height());
+        shader.uniform("camPos",camPos.x,camPos.y,camPos.z);
+        g.draw(quad);shader.end();
+    }
+    bool onKeyDown(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=true;return true;}
+    bool onKeyUp(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=false;return true;}
+};
+
+ALLOLIB_WEB_MAIN(InfiniteRep)
+`,
+  },
+
+  {
+    id: 'rm-mandelbulb',
+    title: 'Mandelbulb Fractal',
+    description: '3D Mandelbrot-like fractal rendered with ray marching',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Ray Marching - Mandelbulb Fractal
+ * Controls: WASD = rotate, Q/E = zoom, +/- = power
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+const char* mbVert = R"(#version 300 es
+precision highp float;
+layout(location=0)in vec3 position;out vec2 uv;
+void main(){uv=position.xy;gl_Position=vec4(position,1.0);}
+)";
+
+const char* mbFrag = R"(#version 300 es
+precision highp float;
+in vec2 uv;out vec4 fragColor;
+uniform float time;uniform vec2 resolution;uniform vec3 camPos;uniform float power;
+
+float mandelbulb(vec3 p){
+    vec3 z=p;float dr=1.0,r=0.0;
+    for(int i=0;i<15;i++){
+        r=length(z);if(r>2.0)break;
+        float theta=acos(z.z/r)*power;
+        float phi=atan(z.y,z.x)*power;
+        float zr=pow(r,power);
+        dr=pow(r,power-1.0)*power*dr+1.0;
+        z=zr*vec3(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta))+p;
+    }
+    return 0.5*log(r)*r/dr;
+}
+
+vec3 norm(vec3 p){vec2 e=vec2(0.0005,0);return normalize(vec3(mandelbulb(p+e.xyy)-mandelbulb(p-e.xyy),mandelbulb(p+e.yxy)-mandelbulb(p-e.yxy),mandelbulb(p+e.yyx)-mandelbulb(p-e.yyx)));}
+
+float march(vec3 ro,vec3 rd){
+    float d=0.0;
+    for(int i=0;i<200;i++){float ds=mandelbulb(ro+rd*d);d+=ds;if(d>4.0||ds<0.0001)break;}
+    return d;
+}
+
+void main(){
+    vec2 p=uv;p.x*=resolution.x/resolution.y;
+    vec3 ro=camPos;
+    vec3 fwd=normalize(-ro);
+    vec3 right=normalize(cross(vec3(0,1,0),fwd));
+    vec3 up=cross(fwd,right);
+    vec3 rd=normalize(fwd+p.x*right+p.y*up);
+
+    float d=march(ro,rd);
+    vec3 col=vec3(0.02,0.02,0.04);
+
+    if(d<4.0){
+        vec3 pos=ro+rd*d;
+        vec3 n=norm(pos);
+        vec3 l=normalize(vec3(1,1,-1));
+        float df=max(dot(n,l),0.0);
+        float ao=1.0-float(d)*0.2;
+        col=vec3(0.6,0.4,0.8)*(df*0.6+0.4)*ao;
+        col+=vec3(0.2,0.1,0.3)*pow(1.0-abs(dot(n,-rd)),2.0);
+    }
+    fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+}
+)";
+
+class Mandelbulb : public WebApp {
+public:
+    ShaderProgram shader;Mesh quad;
+    float camDist=2.5f,angleX=0.3f,angleY=0.0f,power=8.0f;
+    double time=0;
+
+    void onCreate() override {
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        shader.compile(mbVert,mbFrag);
+    }
+    void onAnimate(double dt) override {time+=dt;angleY+=dt*0.1f;}
+    void onDraw(Graphics& g) override {
+        g.clear(0);g.depthTesting(false);
+        float cx=camDist*sin(angleY)*cos(angleX);
+        float cy=camDist*sin(angleX);
+        float cz=camDist*cos(angleY)*cos(angleX);
+        shader.begin();
+        shader.uniform("time",(float)time);
+        shader.uniform("resolution",(float)width(),(float)height());
+        shader.uniform("camPos",cx,cy,cz);
+        shader.uniform("power",power);
+        g.draw(quad);shader.end();
+    }
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='w')angleX+=0.1f;if(k.key()=='s')angleX-=0.1f;
+        if(k.key()=='a')angleY-=0.1f;if(k.key()=='d')angleY+=0.1f;
+        if(k.key()=='q')camDist=fmax(1.0f,camDist-0.2f);
+        if(k.key()=='e')camDist=fmin(5.0f,camDist+0.2f);
+        if(k.key()=='+'||k.key()=='=')power+=0.5f;
+        if(k.key()=='-')power=fmax(2.0f,power-0.5f);
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Mandelbulb)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Cellular Automata
+  // ==========================================================================
+  {
+    id: 'ca-game-of-life',
+    title: "Conway's Game of Life",
+    description: 'Classic cellular automaton with birth and death rules',
+    category: 'simulation',
+    subcategory: 'cellular',
+    code: `/**
+ * Conway's Game of Life
+ * Controls: Space = pause, R = randomize, C = clear, +/- = speed
+ */
+#include "al_playground_compat.hpp"
+#include <cstring>
+
+using namespace al;
+
+class GameOfLife : public WebApp {
+public:
+    static const int W=128, H=128;
+    bool grid[H][W], next[H][W];
+    Mesh mesh; bool running=true; double timer=0, stepTime=0.1;
+    rnd::Random<> rng;
+
+    void onCreate() override { mesh.primitive(Mesh::POINTS); randomize(); nav().pos(0,0,2.5f); }
+
+    void randomize() { for(int y=0;y<H;y++) for(int x=0;x<W;x++) grid[y][x]=rng.prob(0.3); }
+
+    int neighbors(int cx, int cy) {
+        int c=0; for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++) {
+            if(dx==0&&dy==0)continue; if(grid[(cy+dy+H)%H][(cx+dx+W)%W])c++;
+        } return c;
+    }
+
+    void step() {
+        for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
+            int n=neighbors(x,y); next[y][x]=grid[y][x]?(n==2||n==3):(n==3);
+        }
+        memcpy(grid,next,sizeof(grid));
+    }
+
+    void onAnimate(double dt) override {
+        if(running){timer+=dt; if(timer>=stepTime){step();timer=0;}}
+        mesh.reset(); float scale=2.0f/W;
+        for(int y=0;y<H;y++) for(int x=0;x<W;x++) if(grid[y][x]){
+            mesh.vertex((x-W/2.0f)*scale,(y-H/2.0f)*scale,0);
+            mesh.color(HSV(neighbors(x,y)/8.0f*0.3f,0.8f,1.0f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f); g.blending(true); g.blendAdd(); g.depthTesting(false);
+        g.pointSize(4); g.meshColor(); g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')running=!running; if(k.key()=='r')randomize();
+        if(k.key()=='c')memset(grid,0,sizeof(grid));
+        if(k.key()=='+'||k.key()=='=')stepTime=fmax(0.01,stepTime-0.02); if(k.key()=='-')stepTime+=0.02;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(GameOfLife)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Particles (Weather)
+  // ==========================================================================
+  {
+    id: 'particles-rain',
+    title: 'Rain System',
+    description: 'Falling rain with streaks and ground splashes',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Rain Particle System
+ * Controls: WASD/QE = move, +/- = wind
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Drop { Vec3f pos, vel; float len; };
+struct Splash { Vec3f pos; float life; };
+
+class RainSystem : public WebApp {
+public:
+    static const int MAX_DROPS=3000, MAX_SPLASH=500;
+    Drop drops[MAX_DROPS]; Splash splashes[MAX_SPLASH]; int nextSplash=0;
+    Mesh rainMesh, splashMesh;
+    float wind=0, groundY=-2.0f;
+    rnd::Random<> rng; bool keys[256];
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        rainMesh.primitive(Mesh::LINES); splashMesh.primitive(Mesh::POINTS);
+        for(int i=0;i<MAX_DROPS;i++) resetDrop(drops[i],true);
+        for(int i=0;i<MAX_SPLASH;i++) splashes[i].life=0;
+        nav().pos(0,1,8);
+    }
+
+    void resetDrop(Drop& d, bool randY=false) {
+        d.pos=Vec3f(rng.uniform(-8.0f,8.0f),randY?rng.uniform(-5.0f,12.0f):rng.uniform(8.0f,12.0f),rng.uniform(-8.0f,8.0f));
+        d.vel=Vec3f(wind,-15.0f+rng.uniform(-2.0f,0.0f),0); d.len=rng.uniform(0.1f,0.3f);
+    }
+
+    void splash(Vec3f p) { Splash& s=splashes[nextSplash]; s.pos=Vec3f(p.x,groundY+0.01f,p.z); s.life=1.0f; nextSplash=(nextSplash+1)%MAX_SPLASH; }
+
+    void onAnimate(double dt) override {
+        float spd=5.0f*(float)dt;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd; if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd; if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd; if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<MAX_DROPS;i++){
+            Drop& d=drops[i]; d.vel.x=wind+rng.uniform(-0.5f,0.5f); d.pos+=d.vel*(float)dt;
+            if(d.pos.y<groundY){splash(d.pos);resetDrop(d);}
+        }
+        for(int i=0;i<MAX_SPLASH;i++) if(splashes[i].life>0) splashes[i].life-=(float)dt*3.0f;
+
+        rainMesh.reset();
+        for(int i=0;i<MAX_DROPS;i++){
+            Drop& d=drops[i]; Vec3f dir=d.vel.normalized()*d.len;
+            float a=fmax(0.1f,1.0f-fabs(d.pos.z)/10.0f)*0.6f;
+            rainMesh.vertex(d.pos); rainMesh.color(0.7f,0.8f,1.0f,a);
+            rainMesh.vertex(d.pos+dir); rainMesh.color(0.7f,0.8f,1.0f,0.0f);
+        }
+        splashMesh.reset();
+        for(int i=0;i<MAX_SPLASH;i++) if(splashes[i].life>0){
+            splashMesh.vertex(splashes[i].pos); splashMesh.color(0.8f,0.9f,1.0f,splashes[i].life*0.8f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.03f,0.05f); g.blending(true); g.blendTrans(); g.depthTesting(false);
+        Mesh ground; ground.primitive(Mesh::TRIANGLE_STRIP);
+        ground.vertex(-10,groundY,-10); ground.color(0.1f,0.1f,0.12f);
+        ground.vertex(10,groundY,-10); ground.color(0.1f,0.1f,0.12f);
+        ground.vertex(-10,groundY,10); ground.color(0.05f,0.05f,0.07f);
+        ground.vertex(10,groundY,10); ground.color(0.05f,0.05f,0.07f);
+        g.draw(ground);
+        g.meshColor(); g.draw(rainMesh); g.pointSize(3); g.draw(splashMesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='+'||k.key()=='=')wind+=1.0f; if(k.key()=='-')wind-=1.0f;
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true; }
+};
+
+ALLOLIB_WEB_MAIN(RainSystem)
+`,
+  },
+
+  {
+    id: 'particles-snow',
+    title: 'Snowfall',
+    description: 'Gentle snowfall with wind drift and wobble',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Snowfall Particle System
+ * Controls: WASD/QE = move, +/- = wind
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Flake { Vec3f pos; float phase, speed, wobble; };
+
+class SnowSystem : public WebApp {
+public:
+    static const int NUM=5000;
+    Flake flakes[NUM]; Mesh mesh;
+    float wind=0, groundY=-3.0f; float time=0;
+    rnd::Random<> rng; bool keys[256];
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        mesh.primitive(Mesh::POINTS);
+        for(int i=0;i<NUM;i++) reset(flakes[i],true);
+        nav().pos(0,0,6);
+    }
+
+    void reset(Flake& f, bool randY=false) {
+        f.pos=Vec3f(rng.uniform(-10.0f,10.0f),randY?rng.uniform(groundY,10.0f):rng.uniform(8.0f,15.0f),rng.uniform(-10.0f,10.0f));
+        f.phase=rng.uniform(0.0f,6.28f); f.speed=rng.uniform(0.5f,1.5f); f.wobble=rng.uniform(0.3f,1.0f);
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf; float spd=3.0f*dtf;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd; if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd; if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd; if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<NUM;i++){
+            Flake& f=flakes[i];
+            f.pos.y-=f.speed*dtf;
+            f.pos.x+=sinf(time*2.0f+f.phase)*f.wobble*dtf+wind*dtf;
+            f.pos.z+=cosf(time*1.5f+f.phase*0.7f)*f.wobble*0.5f*dtf;
+            if(f.pos.y<groundY) reset(f);
+        }
+
+        mesh.reset(); Vec3f cam=nav().pos();
+        for(int i=0;i<NUM;i++){
+            Flake& f=flakes[i]; mesh.vertex(f.pos);
+            float a=fmax(0.1f,fmin(1.0f,1.0f-(f.pos-cam).mag()/20.0f))*0.8f;
+            mesh.color(0.9f,0.95f,1.0f,a);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.03f,0.08f); g.blending(true); g.depthTesting(false);
+        Mesh ground; ground.primitive(Mesh::TRIANGLE_STRIP);
+        ground.vertex(-15,groundY,-15); ground.color(0.3f,0.35f,0.4f);
+        ground.vertex(15,groundY,-15); ground.color(0.3f,0.35f,0.4f);
+        ground.vertex(-15,groundY,15); ground.color(0.15f,0.18f,0.22f);
+        ground.vertex(15,groundY,15); ground.color(0.15f,0.18f,0.22f);
+        g.blendTrans(); g.draw(ground);
+        g.blendAdd(); g.pointSize(3); g.meshColor(); g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='+'||k.key()=='=')wind+=0.5f; if(k.key()=='-')wind-=0.5f;
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true; }
+};
+
+ALLOLIB_WEB_MAIN(SnowSystem)
+`,
+  },
+
+  {
+    id: 'particles-fire',
+    title: 'Fire Simulation',
+    description: 'Realistic fire with temperature-based color and turbulence',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Fire Particle System
+ * Features: Temperature-based color, turbulent rise, embers
+ * Controls: WASD/QE = move, +/- = intensity
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Ember { Vec3f pos,vel; float temp,life,maxLife; };
+
+class FireSystem : public WebApp {
+public:
+    static const int MAX=3000;
+    Ember embers[MAX]; Mesh mesh;
+    float intensity=1.0f;
+    float time=0;
+    rnd::Random<> rng;
+    bool keys[256];
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        mesh.primitive(Mesh::POINTS);
+        for(int i=0;i<MAX;i++) reset(embers[i]);
+        nav().pos(0,1,5);
+    }
+
+    void reset(Ember& e) {
+        float a=rng.uniform()*6.28f,r=rng.uniform()*0.3f*intensity;
+        e.pos=Vec3f(cosf(a)*r,-1.5f,sinf(a)*r);
+        e.vel=Vec3f(rng.uniformS()*0.3f,2.0f+rng.uniform()*2.0f,rng.uniformS()*0.3f);
+        e.temp=1.0f;
+        e.maxLife=0.5f+rng.uniform()*1.5f;
+        e.life=e.maxLife;
+    }
+
+    Vec3f turbulence(Vec3f p,float t) {
+        return Vec3f(sinf(p.y*3.0f+t*2.0f)*0.5f,0,cosf(p.y*2.5f+t*1.5f)*0.5f);
+    }
+
+    Color tempToColor(float t) {
+        if(t>0.8f) return Color(1.0f,0.9f,0.5f,t);
+        if(t>0.5f) return Color(1.0f,0.5f,0.1f,t);
+        if(t>0.2f) return Color(0.8f,0.2f,0.0f,t*0.8f);
+        return Color(0.3f,0.1f,0.1f,t*0.5f);
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf;
+        float spd=3.0f*dtf;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<MAX;i++){
+            Ember& e=embers[i];
+            e.life-=dtf;
+            if(e.life<=0){reset(e);continue;}
+
+            float lifeRatio=e.life/e.maxLife;
+            e.temp=lifeRatio;
+            e.vel+=turbulence(e.pos,time)*dtf*2.0f;
+            e.vel.y+=dtf*(1.0f+e.temp*3.0f);
+            e.vel*=0.98f;
+            e.pos+=e.vel*dtf;
+        }
+
+        mesh.reset();
+        for(int i=0;i<MAX;i++){
+            Ember& e=embers[i];
+            if(e.life>0){
+                mesh.vertex(e.pos);
+                mesh.color(tempToColor(e.temp));
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.01f,0.02f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(4);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='+'||k.key()=='=')intensity=fmin(3.0f,intensity+0.2f);
+        if(k.key()=='-')intensity=fmax(0.2f,intensity-0.2f);
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {int key=k.key(); if(key>=0&&key<256)keys[key]=false;return true;}
+};
+
+ALLOLIB_WEB_MAIN(FireSystem)
+`,
+  },
+
+  {
+    id: 'particles-smoke',
+    title: 'Smoke Plume',
+    description: 'Rising smoke with buoyancy and turbulent diffusion',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Smoke Particle System
+ * Features: Buoyancy, turbulent spread, alpha fading
+ * Controls: WASD/QE = move
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Puff { Vec3f pos,vel; float life,maxLife,size; };
+
+class SmokeSystem : public WebApp {
+public:
+    static const int MAX=2000;
+    Puff puffs[MAX]; Mesh mesh;
+    float time=0;
+    rnd::Random<> rng;
+    bool keys[256];
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        mesh.primitive(Mesh::POINTS);
+        for(int i=0;i<MAX;i++) reset(puffs[i]);
+        nav().pos(0,2,6);
+    }
+
+    void reset(Puff& p) {
+        float a=rng.uniform()*6.28f,r=rng.uniform()*0.2f;
+        p.pos=Vec3f(cosf(a)*r,-2.0f,sinf(a)*r);
+        p.vel=Vec3f(rng.uniformS()*0.2f,1.0f+rng.uniform(),rng.uniformS()*0.2f);
+        p.maxLife=2.0f+rng.uniform()*2.0f;
+        p.life=p.maxLife;
+        p.size=0.1f+rng.uniform()*0.1f;
+    }
+
+    Vec3f noise3(Vec3f p,float t) {
+        return Vec3f(sinf(p.y*2.0f+t)*cosf(p.z*3.0f+t),0,cosf(p.y*2.5f+t)*sinf(p.x*2.0f+t));
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf;
+        float spd=3.0f*dtf;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<MAX;i++){
+            Puff& p=puffs[i];
+            p.life-=dtf;
+            if(p.life<=0){reset(p);continue;}
+
+            float age=1.0f-p.life/p.maxLife;
+            p.vel+=noise3(p.pos,time)*dtf*0.8f;
+            p.vel.y+=dtf*(0.5f+age*0.5f);
+            p.vel.x+=sinf(time*0.5f+p.pos.y)*dtf*0.3f;
+            p.vel*=0.98f;
+            p.pos+=p.vel*dtf;
+            p.size+=dtf*0.1f;
+        }
+
+        mesh.reset();
+        for(int i=0;i<MAX;i++){
+            Puff& p=puffs[i];
+            if(p.life>0){
+                mesh.vertex(p.pos);
+                float a=(p.life/p.maxLife)*0.4f;
+                float g=0.3f+0.2f*(1.0f-p.life/p.maxLife);
+                mesh.color(g,g,g+0.05f,a);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f,0.07f,0.1f);
+        g.blending(true);g.blendTrans();g.depthTesting(false);
+        g.pointSize(6);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {int key=k.key(); if(key>=0&&key<256)keys[key]=true;return true;}
+    bool onKeyUp(const Keyboard& k) override {int key=k.key(); if(key>=0&&key<256)keys[key]=false;return true;}
+};
+
+ALLOLIB_WEB_MAIN(SmokeSystem)
+`,
+  },
+
+  {
+    id: 'particles-attractor',
+    title: 'Strange Attractors',
+    description: 'Lorenz and Rossler chaotic attractors visualized with particles',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Strange Attractors
+ * Controls: 1 = Lorenz, 2 = Rossler, WASD = rotate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+class Attractors : public WebApp {
+public:
+    static const int NUM=10000;
+    Vec3f points[NUM];
+    Mesh mesh,trail;
+    int type=0;
+    float angleX=0.3f,angleY=0;
+    double time=0;
+
+    // Lorenz parameters
+    float sigma=10.0f,rho=28.0f,beta=8.0f/3.0f;
+    // Rossler parameters
+    float a=0.2f,b=0.2f,c=5.7f;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        trail.primitive(Mesh::LINE_STRIP);
+        reset();
+        nav().pos(0,0,80);
+    }
+
+    void reset() {
+        for(int i=0;i<NUM;i++){
+            points[i]=Vec3f(
+                (float)(i%100)/100.0f*0.1f+0.1f,
+                (float)((i/100)%100)/100.0f*0.1f+0.1f,
+                (float)(i/10000)*0.1f+0.1f
+            );
+        }
+    }
+
+    Vec3f lorenz(Vec3f p) {
+        return Vec3f(sigma*(p.y-p.x),p.x*(rho-p.z)-p.y,p.x*p.y-beta*p.z);
+    }
+
+    Vec3f rossler(Vec3f p) {
+        return Vec3f(-p.y-p.z,p.x+a*p.y,b+p.z*(p.x-c));
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        angleY+=dt*0.1f;
+
+        float step=0.01f;
+        for(int i=0;i<NUM;i++){
+            Vec3f d=(type==0)?lorenz(points[i]):rossler(points[i]);
+            points[i]+=d*step;
+        }
+
+        mesh.reset();trail.reset();
+        for(int i=0;i<NUM;i++){
+            Vec3f p=points[i];
+            if(type==1)p*=2.0f;
+            mesh.vertex(p);
+            float h=fmod((float)i/NUM+time*0.1f,1.0f);
+            mesh.color(HSV(h,0.8f,1.0f));
+            if(i<1000){trail.vertex(p);trail.color(HSV(h,0.8f,0.5f));}
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+
+        g.pushMatrix();
+        g.rotate(angleX*57.3f,1,0,0);
+        g.rotate(angleY*57.3f,0,1,0);
+        if(type==0)g.translate(-0,-0,-25);
+
+        g.pointSize(1);g.meshColor();g.draw(mesh);
+        g.draw(trail);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='1'){type=0;reset();}
+        if(k.key()=='2'){type=1;reset();}
+        if(k.key()=='w')angleX+=0.1f;if(k.key()=='s')angleX-=0.1f;
+        if(k.key()=='a')angleY-=0.1f;if(k.key()=='d')angleY+=0.1f;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Attractors)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Artificial Life
+  // ==========================================================================
+  {
+    id: 'life-plants-2d',
+    title: 'L-System Plants',
+    description: 'Procedural plant generation using L-system grammar rules',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * L-System Plants
+ * Controls: 1-4 = plant types, Space = regenerate, +/- = iterations
+ */
+#include "al_playground_compat.hpp"
+#include <string>
+#include <stack>
+#include <cmath>
+
+using namespace al;
+
+struct Turtle { Vec2f pos; float angle; };
+
+class LSystemPlants : public WebApp {
+public:
+    Mesh mesh; std::string axiom, rules[26], current;
+    int iterations=4, plantType=0; float angle=25.0f, len=0.02f;
+
+    void onCreate() override { mesh.primitive(Mesh::LINES); setPlant(0); nav().pos(0,0,2); }
+
+    void setPlant(int type) {
+        plantType=type; for(int i=0;i<26;i++)rules[i]="";
+        switch(type){
+            case 0:axiom="F";rules['F'-'A']="FF+[+F-F-F]-[-F+F+F]";angle=22.5f;len=0.015f;iterations=4;break;
+            case 1:axiom="X";rules['X'-'A']="F+[[X]-X]-F[-FX]+X";rules['F'-'A']="FF";angle=25.0f;len=0.012f;iterations=5;break;
+            case 2:axiom="X";rules['X'-'A']="F-[[X]+X]+F[+FX]-X";rules['F'-'A']="FF";angle=22.5f;len=0.01f;iterations=5;break;
+            case 3:axiom="F";rules['F'-'A']="F[+F]F[-F][F]";angle=20.0f;len=0.03f;iterations=4;break;
+        }
+        generate();
+    }
+
+    void generate() {
+        current=axiom;
+        for(int i=0;i<iterations;i++){
+            std::string next="";
+            for(char c:current) next+=(c>='A'&&c<='Z'&&rules[c-'A'].length()>0)?rules[c-'A']:std::string(1,c);
+            current=next;
+        }
+        buildMesh();
+    }
+
+    void buildMesh() {
+        mesh.reset(); std::stack<Turtle> stack;
+        Turtle t; t.pos=Vec2f(0,-0.8f); t.angle=90.0f;
+        const float PI_F=3.14159265f;
+        for(char c:current){
+            if(c=='F'){
+                Vec2f np=t.pos+Vec2f(cos(t.angle*PI_F/180.0f),sin(t.angle*PI_F/180.0f))*len;
+                float h=(t.pos.y+0.8f)/1.6f;
+                Color col(0.3f+h*0.2f,0.5f+h*0.4f,0.2f);
+                mesh.vertex(t.pos.x,t.pos.y,0); mesh.color(col);
+                mesh.vertex(np.x,np.y,0); mesh.color(col);
+                t.pos=np;
+            } else if(c=='+')t.angle+=angle;
+            else if(c=='-')t.angle-=angle;
+            else if(c=='[')stack.push(t);
+            else if(c==']'&&!stack.empty()){t=stack.top();stack.pop();}
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f,0.08f,0.1f); g.blending(true); g.blendTrans(); g.depthTesting(false);
+        g.meshColor(); g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()>='1'&&k.key()<='4') setPlant(k.key()-'1');
+        if(k.key()==' ') generate();
+        if(k.key()=='+'||k.key()=='='){iterations++;generate();}
+        if(k.key()=='-'&&iterations>1){iterations--;generate();}
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(LSystemPlants)
+`,
+  },
+
+  {
+    id: 'life-creatures-simple',
+    title: 'Simple Creatures',
+    description: 'Artificial life: creatures wander, eat, and reproduce',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * Simple Creatures - Artificial Life
+ * Controls: Space = pause, F = add food, C = add creature
+ */
+#include "al_playground_compat.hpp"
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+using namespace al;
+
+struct Creature { Vec2f pos, vel; float energy, hue, turnTimer; bool alive; };
+struct Food { Vec2f pos; float energy; bool active; };
+
+class SimpleCreatures : public WebApp {
+public:
+    std::vector<Creature> creatures;
+    std::vector<Food> foods;
+    Mesh cMesh, fMesh;
+    bool running=true; float worldSize=2.0f;
+    rnd::Random<> rng;
+
+    void onCreate() override {
+        cMesh.primitive(Mesh::POINTS); fMesh.primitive(Mesh::POINTS);
+        for(int i=0;i<20;i++) spawn(Vec2f(rng.uniformS(),rng.uniformS())*worldSize*0.8f);
+        for(int i=0;i<50;i++) addFood();
+        nav().pos(0,0,4);
+    }
+
+    void spawn(Vec2f p) {
+        Creature c; c.pos=p; c.vel=Vec2f(rng.uniformS(),rng.uniformS())*0.3f;
+        c.energy=50+rng.uniform()*50; c.hue=rng.uniform(); c.turnTimer=0; c.alive=true;
+        creatures.push_back(c);
+    }
+
+    void addFood() {
+        Food f; f.pos=Vec2f(rng.uniformS(),rng.uniformS())*worldSize*0.9f;
+        f.energy=20+rng.uniform()*30; f.active=true;
+        foods.push_back(f);
+    }
+
+    void onAnimate(double dt) override {
+        if(!running) return;
+        if(rng.prob(0.02)) addFood();
+
+        for(auto& c:creatures){
+            if(!c.alive) continue;
+            c.energy-=dt*5.0f; c.turnTimer-=dt;
+            if(c.turnTimer<=0){
+                float a=rng.uniformS();
+                c.vel=Vec2f(c.vel.x*cos(a)-c.vel.y*sin(a),c.vel.x*sin(a)+c.vel.y*cos(a));
+                c.turnTimer=rng.uniform(0.5f,2.0f);
+            }
+            c.pos+=c.vel*dt;
+            if(c.pos.x>worldSize)c.pos.x-=worldSize*2; if(c.pos.x<-worldSize)c.pos.x+=worldSize*2;
+            if(c.pos.y>worldSize)c.pos.y-=worldSize*2; if(c.pos.y<-worldSize)c.pos.y+=worldSize*2;
+
+            for(auto& f:foods) if(f.active&&(c.pos-f.pos).mag()<0.05f){c.energy+=f.energy;f.active=false;}
+
+            if(c.energy>150&&creatures.size()<100){
+                c.energy*=0.5f;
+                spawn(c.pos+Vec2f(rng.uniformS(),rng.uniformS())*0.1f);
+            }
+            if(c.energy<=0) c.alive=false;
+        }
+
+        creatures.erase(std::remove_if(creatures.begin(),creatures.end(),[](const Creature& c){return !c.alive;}),creatures.end());
+        foods.erase(std::remove_if(foods.begin(),foods.end(),[](const Food& f){return !f.active;}),foods.end());
+
+        cMesh.reset();
+        for(auto& c:creatures){cMesh.vertex(c.pos.x,c.pos.y,0);cMesh.color(HSV(c.hue,0.8f,fmin(1.0f,c.energy/100.0f)));}
+        fMesh.reset();
+        for(auto& f:foods) if(f.active){fMesh.vertex(f.pos.x,f.pos.y,0);fMesh.color(0.2f,0.8f,0.3f,0.8f);}
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.02f,0.05f); g.blending(true); g.blendAdd(); g.depthTesting(false);
+        g.pointSize(4); g.meshColor(); g.draw(fMesh);
+        g.pointSize(8); g.draw(cMesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ') running=!running;
+        if(k.key()=='f') for(int i=0;i<10;i++) addFood();
+        if(k.key()=='c') spawn(Vec2f(rng.uniformS(),rng.uniformS())*worldSize*0.8f);
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SimpleCreatures)
+`,
+  },
+
+  {
+    id: 'life-aquarium',
+    title: '3D Aquarium',
+    description: 'Underwater scene with fish, plants, and bubbles',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * 3D Aquarium - Artificial Life
+ * Features: Fish, seaweed, bubbles
+ * Controls: WASD/QE = move camera
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct AquaFish { Vec3f pos,vel; float size,phase,hue; };
+struct Bubble { Vec3f pos; float size,speed; };
+struct Weed { Vec3f base; float height,phase; };
+
+class Aquarium : public WebApp {
+public:
+    static const int FISH=30,BUBBLES=50,WEEDS=20;
+    AquaFish fish[FISH]; Bubble bubbles[BUBBLES]; Weed weeds[WEEDS];
+    Mesh fishMesh,bubbleMesh,weedMesh;
+    rnd::Random<> rng;
+    bool keys[256];
+    float time=0;
+
+    void onCreate() override {
+        memset(keys,0,sizeof(keys));
+        fishMesh.primitive(Mesh::POINTS);
+        bubbleMesh.primitive(Mesh::POINTS);
+        weedMesh.primitive(Mesh::LINES);
+
+        for(int i=0;i<FISH;i++){
+            fish[i].pos=Vec3f(rng.uniformS()*4,rng.uniform(-1.5f,1.5f),rng.uniformS()*2);
+            fish[i].vel=Vec3f(rng.uniformS(),0,rng.uniformS())*0.5f;
+            fish[i].size=0.1f+rng.uniform()*0.1f;
+            fish[i].phase=rng.uniform()*6.28f;
+            fish[i].hue=rng.uniform()*0.3f;
+        }
+        for(int i=0;i<BUBBLES;i++) resetBubble(bubbles[i]);
+        for(int i=0;i<WEEDS;i++){
+            weeds[i].base=Vec3f(rng.uniformS()*4,-2,rng.uniformS()*2);
+            weeds[i].height=0.5f+rng.uniform()*1.0f;
+            weeds[i].phase=rng.uniform()*6.28f;
+        }
+        nav().pos(0,0,8);
+    }
+
+    void resetBubble(Bubble& b) {
+        b.pos=Vec3f(rng.uniformS()*4,-2,rng.uniformS()*2);
+        b.size=0.02f+rng.uniform()*0.03f;
+        b.speed=0.5f+rng.uniform()*0.5f;
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        time+=dtf;
+        float spd=3.0f*dtf;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+
+        for(int i=0;i<FISH;i++){
+            AquaFish& f=fish[i];
+            f.vel.y=sinf(time*2+f.phase)*0.3f;
+            f.vel+=Vec3f(rng.uniformS(),0,rng.uniformS())*dtf;
+            f.vel*=0.98f;
+            if(f.vel.mag()>1.5f)f.vel=f.vel.normalize()*1.5f;
+            f.pos+=f.vel*dtf;
+            if(f.pos.x>4){f.pos.x=4;f.vel.x*=-1;}
+            if(f.pos.x<-4){f.pos.x=-4;f.vel.x*=-1;}
+            if(f.pos.y>2){f.pos.y=2;f.vel.y*=-1;}
+            if(f.pos.y<-1.5f){f.pos.y=-1.5f;f.vel.y*=-1;}
+            if(f.pos.z>2){f.pos.z=2;f.vel.z*=-1;}
+            if(f.pos.z<-2){f.pos.z=-2;f.vel.z*=-1;}
+        }
+
+        for(int i=0;i<BUBBLES;i++){
+            bubbles[i].pos.y+=bubbles[i].speed*dtf;
+            bubbles[i].pos.x+=sinf(time*3+i)*dtf*0.2f;
+            if(bubbles[i].pos.y>2) resetBubble(bubbles[i]);
+        }
+
+        fishMesh.reset();
+        for(int i=0;i<FISH;i++){
+            fishMesh.vertex(fish[i].pos);
+            fishMesh.color(HSV(fish[i].hue,0.8f,0.9f));
+        }
+
+        bubbleMesh.reset();
+        for(int i=0;i<BUBBLES;i++){
+            bubbleMesh.vertex(bubbles[i].pos);
+            bubbleMesh.color(0.7f,0.9f,1.0f,0.5f);
+        }
+
+        weedMesh.reset();
+        for(int i=0;i<WEEDS;i++){
+            Weed& w=weeds[i];
+            float sway=sinf(time*1.5f+w.phase)*0.3f;
+            int segs=8;
+            for(int j=0;j<segs;j++){
+                float t1=(float)j/(float)segs,t2=(float)(j+1)/(float)segs;
+                Vec3f p1=w.base+Vec3f(sway*t1*t1,t1*w.height,0);
+                Vec3f p2=w.base+Vec3f(sway*t2*t2,t2*w.height,0);
+                weedMesh.vertex(p1);weedMesh.color(0.1f,0.4f+t1*0.3f,0.2f);
+                weedMesh.vertex(p2);weedMesh.color(0.1f,0.4f+t2*0.3f,0.2f);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.08f,0.15f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.meshColor();g.draw(weedMesh);
+        g.pointSize(3);g.draw(bubbleMesh);
+        g.pointSize(8);g.draw(fishMesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=true;return true;}
+    bool onKeyUp(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=false;return true;}
+};
+
+ALLOLIB_WEB_MAIN(Aquarium)
+`,
+  },
+
+  {
+    id: 'life-slime-mold',
+    title: 'Slime Mold',
+    description: 'Physarum polycephalum simulation with emergent network patterns',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * Slime Mold (Physarum) Simulation
+ * Features: Agent-based trail following, emergent networks
+ * Controls: Space = pause, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+struct Particle { float x,y,angle; };
+
+class SlimeMold : public WebApp {
+public:
+    static const int SIZE=200,NUM=5000;
+    float trail[SIZE][SIZE];
+    Particle particles[NUM];
+    Mesh mesh,trailMesh;
+    bool running=true;
+    rnd::Random<> rng;
+    const float PI_F=3.14159265f;
+
+    float sensorAngle=0.4f,sensorDist=9.0f,turnSpeed=0.3f,moveSpeed=1.0f;
+    float decayRate=0.9f,diffuseRate=0.2f;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        trailMesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,3);
+    }
+
+    void reset() {
+        memset(trail,0,sizeof(trail));
+        for(int i=0;i<NUM;i++){
+            float a=rng.uniform()*2*PI_F,r=rng.uniform()*SIZE*0.3f;
+            particles[i].x=SIZE/2+cos(a)*r;
+            particles[i].y=SIZE/2+sin(a)*r;
+            particles[i].angle=rng.uniform()*2*PI_F;
+        }
+    }
+
+    float sense(Particle& p, float angleOffset) {
+        float a=p.angle+angleOffset;
+        int sx=(int)(p.x+cos(a)*sensorDist)%SIZE;
+        int sy=(int)(p.y+sin(a)*sensorDist)%SIZE;
+        if(sx<0)sx+=SIZE;if(sy<0)sy+=SIZE;
+        return trail[sy][sx];
+    }
+
+    void onAnimate(double dt) override {
+        if(!running) return;
+
+        for(int i=0;i<NUM;i++){
+            Particle& p=particles[i];
+            float fwd=sense(p,0);
+            float left=sense(p,sensorAngle);
+            float right=sense(p,-sensorAngle);
+
+            if(fwd>left&&fwd>right){}
+            else if(fwd<left&&fwd<right) p.angle+=turnSpeed*(rng.prob(0.5)?1:-1);
+            else if(left>right) p.angle+=turnSpeed;
+            else if(right>left) p.angle-=turnSpeed;
+
+            p.x+=cos(p.angle)*moveSpeed;
+            p.y+=sin(p.angle)*moveSpeed;
+            if(p.x<0)p.x+=SIZE;if(p.x>=SIZE)p.x-=SIZE;
+            if(p.y<0)p.y+=SIZE;if(p.y>=SIZE)p.y-=SIZE;
+
+            int ix=(int)p.x,iy=(int)p.y;
+            trail[iy][ix]=fmin(1.0f,trail[iy][ix]+0.1f);
+        }
+
+        float newTrail[SIZE][SIZE];
+        for(int y=0;y<SIZE;y++){
+            for(int x=0;x<SIZE;x++){
+                float sum=0;
+                for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+                    int nx=(x+dx+SIZE)%SIZE,ny=(y+dy+SIZE)%SIZE;
+                    sum+=trail[ny][nx];
+                }
+                newTrail[y][x]=fmax(0.0f,(trail[y][x]*(1-diffuseRate)+sum/9*diffuseRate)*decayRate);
+            }
+        }
+        memcpy(trail,newTrail,sizeof(trail));
+
+        trailMesh.reset();
+        float scale=2.0f/SIZE;
+        for(int y=0;y<SIZE;y+=2)for(int x=0;x<SIZE;x+=2){
+            if(trail[y][x]>0.01f){
+                trailMesh.vertex((x-SIZE/2)*scale,(y-SIZE/2)*scale,0);
+                float v=trail[y][x];
+                trailMesh.color(v*0.5f,v*0.9f,v*0.3f,v);
+            }
+        }
+
+        mesh.reset();
+        for(int i=0;i<NUM;i++){
+            Particle& p=particles[i];
+            mesh.vertex((p.x-SIZE/2)*scale,(p.y-SIZE/2)*scale,0.01f);
+            mesh.color(1.0f,1.0f,0.8f,0.3f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(2);g.meshColor();g.draw(trailMesh);
+        g.pointSize(1);g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')running=!running;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SlimeMold)
+`,
+  },
+
+  {
+    id: 'ca-reaction-diffusion',
+    title: 'Reaction-Diffusion',
+    description: 'Gray-Scott model creating organic patterns',
+    category: 'simulation',
+    subcategory: 'cellular',
+    code: `/**
+ * Reaction-Diffusion (Gray-Scott)
+ * Features: Two-chemical system, organic patterns
+ * Controls: Space = pause, R = reset, 1-4 = presets
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class ReactionDiffusion : public WebApp {
+public:
+    static const int SIZE=128;
+    float A[SIZE][SIZE],B[SIZE][SIZE];
+    float nextA[SIZE][SIZE],nextB[SIZE][SIZE];
+    Mesh mesh;
+    bool running=true;
+    float dA=1.0f,dB=0.5f,feed=0.055f,kill=0.062f;
+    rnd::Random<> rng;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,2.5f);
+    }
+
+    void reset() {
+        for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){A[y][x]=1.0f;B[y][x]=0.0f;}
+        for(int i=0;i<10;i++){
+            int cx=rng.uniform()*SIZE,cy=rng.uniform()*SIZE;
+            for(int dy=-5;dy<=5;dy++)for(int dx=-5;dx<=5;dx++){
+                int nx=(cx+dx+SIZE)%SIZE,ny=(cy+dy+SIZE)%SIZE;
+                if(dx*dx+dy*dy<25){B[ny][nx]=1.0f;}
+            }
+        }
+    }
+
+    void setPreset(int p) {
+        switch(p){
+            case 0:feed=0.055f;kill=0.062f;break;
+            case 1:feed=0.0367f;kill=0.0649f;break;
+            case 2:feed=0.025f;kill=0.06f;break;
+            case 3:feed=0.078f;kill=0.061f;break;
+        }
+        reset();
+    }
+
+    float laplacian(float g[SIZE][SIZE],int x,int y) {
+        float sum=g[(y-1+SIZE)%SIZE][x]+g[(y+1)%SIZE][x]+g[y][(x-1+SIZE)%SIZE]+g[y][(x+1)%SIZE];
+        sum+=0.05f*(g[(y-1+SIZE)%SIZE][(x-1+SIZE)%SIZE]+g[(y-1+SIZE)%SIZE][(x+1)%SIZE]+g[(y+1)%SIZE][(x-1+SIZE)%SIZE]+g[(y+1)%SIZE][(x+1)%SIZE]);
+        return sum*0.2f-g[y][x];
+    }
+
+    void onAnimate(double dt) override {
+        if(!running)return;
+
+        for(int i=0;i<4;i++){
+            for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+                float a=A[y][x],b=B[y][x];
+                float abb=a*b*b;
+                nextA[y][x]=a+dA*laplacian(A,x,y)-abb+feed*(1-a);
+                nextB[y][x]=b+dB*laplacian(B,x,y)+abb-(kill+feed)*b;
+                nextA[y][x]=fmax(0.0f,fmin(1.0f,nextA[y][x]));
+                nextB[y][x]=fmax(0.0f,fmin(1.0f,nextB[y][x]));
+            }
+            memcpy(A,nextA,sizeof(A));
+            memcpy(B,nextB,sizeof(B));
+        }
+
+        mesh.reset();
+        float scale=2.0f/SIZE;
+        for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            mesh.vertex((x-SIZE/2)*scale,(y-SIZE/2)*scale,0);
+            float v=1.0f-A[y][x]+B[y][x];
+            mesh.color(v*0.3f,v*0.6f,v*0.9f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(4);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')running=!running;
+        if(k.key()=='r')reset();
+        if(k.key()>='1'&&k.key()<='4')setPreset(k.key()-'1');
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ReactionDiffusion)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Ray Marching (Advanced)
+  // ==========================================================================
+  {
+    id: 'rm-terrain',
+    title: 'Ray Marched Terrain',
+    description: 'Procedural terrain with noise-based heightmap',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Ray Marched Terrain
+ * Features: Noise heightmap, adaptive stepping, fog
+ * Controls: WASD+QE navigation, mouse look
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <string>
+
+using namespace al;
+
+class RayMarchTerrain : public WebApp {
+public:
+    ShaderProgram shader;
+    Mesh quad;
+    float time=0;
+
+    const char* vert = R"(#version 300 es
+        layout(location=0) in vec3 position;
+        out vec2 vUV;
+        void main(){
+            vUV=position.xy*0.5+0.5;
+            gl_Position=vec4(position,1.0);
+        }
+    )";
+
+    const char* frag = R"(#version 300 es
+        precision highp float;
+        in vec2 vUV;
+        out vec4 fragColor;
+        uniform float uTime;
+        uniform vec2 uRes;
+        uniform vec3 uCamPos;
+        uniform mat4 uCamMat;
+
+        // Hash and noise functions
+        float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+        float noise(vec2 p){
+            vec2 i=floor(p),f=fract(p);
+            f=f*f*(3.0-2.0*f);
+            return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+                       mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+        }
+        float fbm(vec2 p){
+            float v=0.0,a=0.5;
+            for(int i=0;i<6;i++){v+=a*noise(p);p*=2.0;a*=0.5;}
+            return v;
+        }
+
+        float terrain(vec3 p){
+            // Add subtle water wave animation using uTime
+            float h=fbm(p.xz*0.3)*2.0+fbm(p.xz*0.7)*0.5;
+            if(h<0.3) h+=sin(p.x*2.0+uTime)*0.05*smoothstep(0.3,0.0,h);
+            return p.y-h;
+        }
+
+        vec3 calcNormal(vec3 p){
+            vec2 e=vec2(0.01,0);
+            return normalize(vec3(
+                terrain(p+e.xyy)-terrain(p-e.xyy),
+                terrain(p+e.yxy)-terrain(p-e.yxy),
+                terrain(p+e.yyx)-terrain(p-e.yyx)));
+        }
+
+        float march(vec3 ro,vec3 rd,out vec3 hitP){
+            float t=0.0;
+            for(int i=0;i<100;i++){
+                hitP=ro+rd*t;
+                float d=terrain(hitP);
+                if(d<0.01)return t;
+                t+=d*0.5;
+                if(t>100.0)break;
+            }
+            return -1.0;
+        }
+
+        void main(){
+            vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
+            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
+            vec3 ro=uCamPos;
+
+            vec3 hitP;
+            float t=march(ro,rd,hitP);
+
+            vec3 col=vec3(0.4,0.6,0.9)-rd.y*0.3; // sky
+
+            if(t>0.0){
+                vec3 n=calcNormal(hitP);
+                vec3 sun=normalize(vec3(0.8,0.4,0.2));
+                float diff=max(dot(n,sun),0.0);
+                float ao=1.0-hitP.y*0.1;
+
+                // Grass/rock colors
+                float slope=1.0-n.y;
+                vec3 grass=vec3(0.2,0.5,0.1);
+                vec3 rock=vec3(0.4,0.35,0.3);
+                vec3 snow=vec3(0.95,0.95,1.0);
+                vec3 mat=mix(grass,rock,smoothstep(0.3,0.7,slope));
+                if(hitP.y>2.5)mat=mix(mat,snow,smoothstep(2.5,3.5,hitP.y));
+
+                col=mat*(0.3+0.7*diff)*ao;
+
+                // Fog
+                float fog=1.0-exp(-t*0.02);
+                col=mix(col,vec3(0.5,0.6,0.7),fog);
+            }
+
+            fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+        }
+    )";
+
+    bool keys[256]={};
+    float yaw=0,pitch=0;
+    bool dragging=false;
+    int lastX=0,lastY=0;
+
+    void onCreate() override {
+        shader.compile(vert,frag);
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
+        quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        nav().pos(0,3,5);
+        memset(keys,0,sizeof(keys));
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        // WASD+QE movement
+        float spd=5.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0);
+        shader.use();
+        shader.uniform("uTime",time);
+        shader.uniform("uRes",(float)width(),(float)height());
+        Vec3f pos=nav().pos();
+        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+        // Construct inverse view matrix from nav direction vectors
+        nav().updateDirectionVectors();
+        Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
+        float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
+        shader.uniform("uCamMat",Matrix4f(vm));
+        g.draw(quad);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key();
+        if(key>=0&&key<256)keys[key]=true;
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key();
+        if(key>=0&&key<256)keys[key]=false;
+        return true;
+    }
+    bool onMouseDown(const Mouse& m) override {
+        dragging=true; lastX=m.x(); lastY=m.y();
+        return true;
+    }
+    bool onMouseUp(const Mouse& m) override {
+        dragging=false;
+        return true;
+    }
+    bool onMouseDrag(const Mouse& m) override {
+        if(dragging){
+            float dx=(m.x()-lastX)*0.005f;
+            float dy=(m.y()-lastY)*0.005f;
+            yaw-=dx; pitch-=dy;
+            pitch=fmax(-1.5f,fmin(1.5f,pitch));
+            // Update nav orientation from yaw/pitch
+            Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
+            Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
+            Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
+            lastX=m.x(); lastY=m.y();
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(RayMarchTerrain)
+`,
+  },
+
+  {
+    id: 'rm-volumetric-clouds',
+    title: 'Volumetric Clouds',
+    description: 'Ray marched volumetric clouds with light scattering',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Volumetric Clouds
+ * Features: Density sampling, light scattering, god rays
+ * Controls: WASD+QE navigation
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+class VolumetricClouds : public WebApp {
+public:
+    ShaderProgram shader;
+    Mesh quad;
+    float time=0;
+    bool keys[256]={};
+    float yaw=0,pitch=0;
+    bool dragging=false;
+    int lastX=0,lastY=0;
+
+    const char* vert = R"(#version 300 es
+        layout(location=0) in vec3 position;
+        void main(){gl_Position=vec4(position,1.0);}
+    )";
+
+    const char* frag = R"(#version 300 es
+        precision highp float;
+        out vec4 fragColor;
+        uniform float uTime;
+        uniform vec2 uRes;
+        uniform vec3 uCamPos;
+        uniform mat4 uCamMat;
+
+        float hash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
+
+        float noise(vec3 p){
+            vec3 i=floor(p),f=fract(p);
+            f=f*f*(3.0-2.0*f);
+            return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),
+                           mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+                       mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                           mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
+        }
+
+        float fbm(vec3 p){
+            float v=0.0,a=0.5;
+            vec3 shift=vec3(100);
+            for(int i=0;i<5;i++){
+                v+=a*noise(p);
+                p=p*2.0+shift;
+                a*=0.5;
+            }
+            return v;
+        }
+
+        float cloudDensity(vec3 p){
+            float h=(p.y-5.0)*0.2;
+            if(h<0.0||h>1.0)return 0.0;
+            float shape=fbm(p*0.3+vec3(uTime*0.1,0,uTime*0.05));
+            float edge=smoothstep(0.0,0.3,h)*smoothstep(1.0,0.7,h);
+            return max(0.0,(shape-0.4)*edge*2.0);
+        }
+
+        vec3 lightMarch(vec3 p,vec3 sunDir){
+            float density=0.0;
+            float stepSize=0.5;
+            for(int i=0;i<6;i++){
+                density+=cloudDensity(p)*stepSize;
+                p+=sunDir*stepSize;
+            }
+            return exp(-density*vec3(0.6,0.7,0.9)*0.8);
+        }
+
+        vec4 cloudMarch(vec3 ro,vec3 rd){
+            vec3 sunDir=normalize(vec3(0.5,0.3,0.5));
+            float tmin=max(0.0,(5.0-ro.y)/rd.y);
+            float tmax=(15.0-ro.y)/rd.y;
+            if(tmax<tmin)return vec4(0);
+
+            float t=tmin;
+            vec3 col=vec3(0);
+            float transmit=1.0;
+            float stepSize=0.3;
+
+            for(int i=0;i<64;i++){
+                if(t>tmax||transmit<0.01)break;
+                vec3 p=ro+rd*t;
+                float d=cloudDensity(p);
+                if(d>0.01){
+                    vec3 light=lightMarch(p,sunDir);
+                    vec3 ambient=vec3(0.4,0.5,0.6);
+                    col+=transmit*d*stepSize*(light*vec3(1.0,0.95,0.8)+ambient);
+                    transmit*=exp(-d*stepSize*1.5);
+                }
+                t+=stepSize;
+            }
+            return vec4(col,1.0-transmit);
+        }
+
+        void main(){
+            vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
+            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
+            vec3 ro=uCamPos;
+
+            // Sky gradient
+            vec3 sky=mix(vec3(0.5,0.7,1.0),vec3(0.2,0.4,0.8),rd.y*0.5+0.5);
+
+            // Sun
+            vec3 sunDir=normalize(vec3(0.5,0.3,0.5));
+            float sun=pow(max(dot(rd,sunDir),0.0),64.0);
+            sky+=vec3(1.0,0.9,0.6)*sun;
+
+            // Clouds
+            vec4 clouds=cloudMarch(ro,rd);
+            vec3 col=mix(sky,clouds.rgb,clouds.a);
+
+            // Ground
+            if(rd.y<0.0){
+                float t=-ro.y/rd.y;
+                vec3 ground=vec3(0.2,0.3,0.1);
+                float fog=1.0-exp(-t*0.01);
+                col=mix(ground,sky,fog);
+            }
+
+            fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+        }
+    )";
+
+    void onCreate() override {
+        shader.compile(vert,frag);
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
+        quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        nav().pos(0,8,0);
+        memset(keys,0,sizeof(keys));
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        float spd=5.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0);
+        shader.use();
+        shader.uniform("uTime",time);
+        shader.uniform("uRes",(float)width(),(float)height());
+        Vec3f pos=nav().pos();
+        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+        nav().updateDirectionVectors();
+        Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
+        float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
+        shader.uniform("uCamMat",Matrix4f(vm));
+        g.draw(quad);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
+    }
+    bool onMouseDown(const Mouse& m) override {
+        dragging=true; lastX=m.x(); lastY=m.y(); return true;
+    }
+    bool onMouseUp(const Mouse& m) override { dragging=false; return true; }
+    bool onMouseDrag(const Mouse& m) override {
+        if(dragging){
+            float dx=(m.x()-lastX)*0.005f, dy=(m.y()-lastY)*0.005f;
+            yaw-=dx; pitch-=dy; pitch=fmax(-1.5f,fmin(1.5f,pitch));
+            Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
+            Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
+            Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
+            lastX=m.x(); lastY=m.y();
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(VolumetricClouds)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Fluid & Smoke
+  // ==========================================================================
+  {
+    id: 'fluid-simple-2d',
+    title: 'Simple 2D Fluid',
+    description: 'Navier-Stokes fluid simulation on a grid',
+    category: 'simulation',
+    subcategory: 'fluids',
+    code: `/**
+ * Simple 2D Fluid Simulation
+ * Features: Navier-Stokes, advection, diffusion
+ * Controls: Click/drag to add dye and force
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class SimpleFluid2D : public WebApp {
+public:
+    static const int N=64;
+    float vx[N][N],vy[N][N],vx0[N][N],vy0[N][N];
+    float dens[N][N],dens0[N][N];
+    Mesh mesh;
+    float visc=0.0001f,diff=0.0001f,dt=0.1f;
+    bool mouseDown=false;
+    float mx=0,my=0,pmx=0,pmy=0;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        memset(vx,0,sizeof(vx));memset(vy,0,sizeof(vy));
+        memset(dens,0,sizeof(dens));
+        nav().pos(0,0,2);
+    }
+
+    int IX(int x,int y){return ((x+N)%N)+((y+N)%N)*N;}
+
+    void diffuse(float x[N][N],float x0[N][N],float diff,int b){
+        float a=dt*diff*N*N;
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                x[j][i]=(x0[j][i]+a*(x[j][i-1]+x[j][i+1]+x[j-1][i]+x[j+1][i]))/(1+4*a);
+            }
+        }
+    }
+
+    void advect(float d[N][N],float d0[N][N],float u[N][N],float v[N][N]){
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            float x=i-dt*N*u[j][i];
+            float y=j-dt*N*v[j][i];
+            x=fmax(0.5f,fmin(N-1.5f,x));
+            y=fmax(0.5f,fmin(N-1.5f,y));
+            int i0=(int)x,j0=(int)y;
+            float s1=x-i0,s0=1-s1,t1=y-j0,t0=1-t1;
+            d[j][i]=s0*(t0*d0[j0][i0]+t1*d0[j0+1][i0])+s1*(t0*d0[j0][i0+1]+t1*d0[j0+1][i0+1]);
+        }
+    }
+
+    void project(){
+        float div[N][N],p[N][N];
+        memset(p,0,sizeof(p));
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            div[j][i]=-0.5f*(vx[j][i+1]-vx[j][i-1]+vy[j+1][i]-vy[j-1][i])/N;
+        }
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                p[j][i]=(div[j][i]+p[j][i-1]+p[j][i+1]+p[j-1][i]+p[j+1][i])/4;
+            }
+        }
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            vx[j][i]-=0.5f*N*(p[j][i+1]-p[j][i-1]);
+            vy[j][i]-=0.5f*N*(p[j+1][i]-p[j-1][i]);
+        }
+    }
+
+    void velStep(){
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        diffuse(vx,vx0,visc,1);diffuse(vy,vy0,visc,2);
+        project();
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        advect(vx,vx0,vx0,vy0);advect(vy,vy0,vx0,vy0);
+        project();
+    }
+
+    void densStep(){
+        memcpy(dens0,dens,sizeof(dens));
+        diffuse(dens,dens0,diff,0);
+        memcpy(dens0,dens,sizeof(dens));
+        advect(dens,dens0,vx,vy);
+    }
+
+    void onAnimate(double dt_) override {
+        if(mouseDown){
+            int i=(int)((mx+1)*0.5f*N);
+            int j=(int)((my+1)*0.5f*N);
+            i=std::max(1,std::min(N-2,i));
+            j=std::max(1,std::min(N-2,j));
+            dens[j][i]+=10.0f;
+            vx[j][i]+=(mx-pmx)*50;
+            vy[j][i]+=(my-pmy)*50;
+        }
+        pmx=mx;pmy=my;
+        velStep();densStep();
+
+        mesh.reset();
+        float scale=2.0f/N;
+        for(int j=0;j<N;j++)for(int i=0;i<N;i++){
+            mesh.vertex((i-N/2)*scale,(j-N/2)*scale,0);
+            float d=fmin(1.0f,dens[j][i]);
+            mesh.color(d*0.2f,d*0.5f,d);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(6);g.meshColor();g.draw(mesh);
+    }
+
+    bool onMouseDown(const Mouse& m) override {
+        mouseDown=true;
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        pmx=mx;pmy=my;
+        return true;
+    }
+    bool onMouseUp(const Mouse& m) override {mouseDown=false;return true;}
+    bool onMouseDrag(const Mouse& m) override {
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SimpleFluid2D)
+`,
+  },
+
+  {
+    id: 'fluid-smoke-2d',
+    title: '2D Smoke Simulation',
+    description: 'Smoke with buoyancy and vorticity confinement',
+    category: 'simulation',
+    subcategory: 'fluids',
+    code: `/**
+ * 2D Smoke Simulation
+ * Features: Buoyancy, vorticity confinement, temperature
+ * Controls: Space = toggle source, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class Smoke2D : public WebApp {
+public:
+    static const int N=80;
+    float vx[N][N],vy[N][N],temp[N][N],smoke[N][N];
+    float vx0[N][N],vy0[N][N],temp0[N][N],smoke0[N][N];
+    Mesh mesh;
+    bool sourceOn=true;
+    float dt=0.05f;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,2);
+    }
+
+    void reset(){
+        memset(vx,0,sizeof(vx));memset(vy,0,sizeof(vy));
+        memset(temp,0,sizeof(temp));memset(smoke,0,sizeof(smoke));
+    }
+
+    void diffuse(float x[N][N],float x0[N][N],float diff){
+        float a=dt*diff*N*N;
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                x[j][i]=(x0[j][i]+a*(x[j][i-1]+x[j][i+1]+x[j-1][i]+x[j+1][i]))/(1+4*a);
+            }
+        }
+    }
+
+    void advect(float d[N][N],float d0[N][N]){
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            float x=i-dt*N*vx[j][i];
+            float y=j-dt*N*vy[j][i];
+            x=fmax(0.5f,fmin(N-1.5f,x));
+            y=fmax(0.5f,fmin(N-1.5f,y));
+            int i0=(int)x,j0=(int)y;
+            float s1=x-i0,s0=1-s1,t1=y-j0,t0=1-t1;
+            d[j][i]=s0*(t0*d0[j0][i0]+t1*d0[j0+1][i0])+s1*(t0*d0[j0][i0+1]+t1*d0[j0+1][i0+1]);
+        }
+    }
+
+    void project(){
+        float div[N][N],p[N][N];
+        memset(p,0,sizeof(p));
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            div[j][i]=-0.5f*(vx[j][i+1]-vx[j][i-1]+vy[j+1][i]-vy[j-1][i])/N;
+        }
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                p[j][i]=(div[j][i]+p[j][i-1]+p[j][i+1]+p[j-1][i]+p[j+1][i])/4;
+            }
+        }
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            vx[j][i]-=0.5f*N*(p[j][i+1]-p[j][i-1]);
+            vy[j][i]-=0.5f*N*(p[j+1][i]-p[j-1][i]);
+        }
+    }
+
+    void vorticity(){
+        float curl[N][N];
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            curl[j][i]=0.5f*((vy[j][i+1]-vy[j][i-1])-(vx[j+1][i]-vx[j-1][i]));
+        }
+        float eps=0.5f;
+        for(int j=2;j<N-2;j++)for(int i=2;i<N-2;i++){
+            float dx=fabs(curl[j][i+1])-fabs(curl[j][i-1]);
+            float dy=fabs(curl[j+1][i])-fabs(curl[j-1][i]);
+            float len=sqrtf(dx*dx+dy*dy)+1e-5f;
+            dx/=len;dy/=len;
+            vx[j][i]+=eps*dt*dy*curl[j][i];
+            vy[j][i]-=eps*dt*dx*curl[j][i];
+        }
+    }
+
+    void buoyancy(){
+        float buoy=1.0f,ambTemp=0.0f;
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            vy[j][i]+=dt*buoy*(temp[j][i]-ambTemp);
+        }
+    }
+
+    void onAnimate(double dt_) override {
+        // Add source
+        if(sourceOn){
+            int cx=N/2;
+            for(int dx=-3;dx<=3;dx++){
+                smoke[5][cx+dx]+=0.3f;
+                temp[5][cx+dx]+=0.5f;
+            }
+        }
+
+        // Velocity step
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        diffuse(vx,vx0,0.0001f);diffuse(vy,vy0,0.0001f);
+        project();
+        vorticity();
+        buoyancy();
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        advect(vx,vx0);advect(vy,vy0);
+        project();
+
+        // Smoke and temp step
+        memcpy(smoke0,smoke,sizeof(smoke));
+        memcpy(temp0,temp,sizeof(temp));
+        diffuse(smoke,smoke0,0.0001f);
+        diffuse(temp,temp0,0.0002f);
+        memcpy(smoke0,smoke,sizeof(smoke));
+        memcpy(temp0,temp,sizeof(temp));
+        advect(smoke,smoke0);
+        advect(temp,temp0);
+
+        // Decay
+        for(int j=0;j<N;j++)for(int i=0;i<N;i++){
+            smoke[j][i]*=0.995f;
+            temp[j][i]*=0.99f;
+        }
+
+        mesh.reset();
+        float scale=2.0f/N;
+        for(int j=0;j<N;j++)for(int i=0;i<N;i++){
+            mesh.vertex((i-N/2)*scale,(j-N/2)*scale,0);
+            float s=fmin(1.0f,smoke[j][i]);
+            float t=fmin(1.0f,temp[j][i]*0.5f);
+            mesh.color(s*0.8f+t*0.2f,s*0.8f,s*0.9f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(5);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')sourceOn=!sourceOn;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Smoke2D)
+`,
+  },
+
+  {
+    id: 'fluid-ink-drops',
+    title: 'Ink in Water',
+    description: 'Multiple colored ink drops dispersing in water',
+    category: 'simulation',
+    subcategory: 'fluids',
+    code: `/**
+ * Ink in Water
+ * Features: Multiple dye colors, turbulent mixing
+ * Controls: Click to add ink, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class InkDrops : public WebApp {
+public:
+    static const int N=80;
+    float vx[N][N],vy[N][N];
+    float r[N][N],g[N][N],b[N][N];
+    float vx0[N][N],vy0[N][N];
+    float r0[N][N],g0[N][N],b0[N][N];
+    Mesh mesh;
+    rnd::Random<> rng;
+    int colorIdx=0;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,2);
+    }
+
+    void reset(){
+        memset(vx,0,sizeof(vx));memset(vy,0,sizeof(vy));
+        memset(r,0,sizeof(r));memset(g,0,sizeof(g));memset(b,0,sizeof(b));
+    }
+
+    void diffuse(float x[N][N],float x0[N][N],float diff){
+        float a=0.05f*diff*N*N;
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                x[j][i]=(x0[j][i]+a*(x[j][i-1]+x[j][i+1]+x[j-1][i]+x[j+1][i]))/(1+4*a);
+            }
+        }
+    }
+
+    void advect(float d[N][N],float d0[N][N]){
+        float dt=0.05f;
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            float x=i-dt*N*vx[j][i];
+            float y=j-dt*N*vy[j][i];
+            x=fmax(0.5f,fmin(N-1.5f,x));
+            y=fmax(0.5f,fmin(N-1.5f,y));
+            int i0=(int)x,j0=(int)y;
+            float s1=x-i0,s0=1-s1,t1=y-j0,t0=1-t1;
+            d[j][i]=s0*(t0*d0[j0][i0]+t1*d0[j0+1][i0])+s1*(t0*d0[j0][i0+1]+t1*d0[j0+1][i0+1]);
+        }
+    }
+
+    void project(){
+        float div[N][N],p[N][N];
+        memset(p,0,sizeof(p));
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            div[j][i]=-0.5f*(vx[j][i+1]-vx[j][i-1]+vy[j+1][i]-vy[j-1][i])/N;
+        }
+        for(int k=0;k<4;k++){
+            for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+                p[j][i]=(div[j][i]+p[j][i-1]+p[j][i+1]+p[j-1][i]+p[j+1][i])/4;
+            }
+        }
+        for(int j=1;j<N-1;j++)for(int i=1;i<N-1;i++){
+            vx[j][i]-=0.5f*N*(p[j][i+1]-p[j][i-1]);
+            vy[j][i]-=0.5f*N*(p[j+1][i]-p[j-1][i]);
+        }
+    }
+
+    void addInk(int ci,int cj,float dr,float dg,float db){
+        for(int dj=-3;dj<=3;dj++)for(int di=-3;di<=3;di++){
+            int i=ci+di,j=cj+dj;
+            if(i>0&&i<N-1&&j>0&&j<N-1){
+                float dist=sqrtf(di*di+dj*dj);
+                if(dist<4){
+                    float amt=(4-dist)/4*0.5f;
+                    r[j][i]+=dr*amt;
+                    g[j][i]+=dg*amt;
+                    b[j][i]+=db*amt;
+                    vy[j][i]+=(rng.uniform()-0.5f)*2;
+                    vx[j][i]+=(rng.uniform()-0.5f)*2;
+                }
+            }
+        }
+    }
+
+    void onAnimate(double dt) override {
+        // Velocity step
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        diffuse(vx,vx0,0.0001f);diffuse(vy,vy0,0.0001f);
+        project();
+        memcpy(vx0,vx,sizeof(vx));memcpy(vy0,vy,sizeof(vy));
+        advect(vx,vx0);advect(vy,vy0);
+        project();
+
+        // Dye step
+        memcpy(r0,r,sizeof(r));memcpy(g0,g,sizeof(g));memcpy(b0,b,sizeof(b));
+        diffuse(r,r0,0.0002f);diffuse(g,g0,0.0002f);diffuse(b,b0,0.0002f);
+        memcpy(r0,r,sizeof(r));memcpy(g0,g,sizeof(g));memcpy(b0,b,sizeof(b));
+        advect(r,r0);advect(g,g0);advect(b,b0);
+
+        // Decay
+        for(int j=0;j<N;j++)for(int i=0;i<N;i++){
+            r[j][i]*=0.998f;g[j][i]*=0.998f;b[j][i]*=0.998f;
+            vx[j][i]*=0.99f;vy[j][i]*=0.99f;
+        }
+
+        mesh.reset();
+        float scale=2.0f/N;
+        for(int j=0;j<N;j++)for(int i=0;i<N;i++){
+            mesh.vertex((i-N/2)*scale,(j-N/2)*scale,0);
+            mesh.color(fmin(1.0f,r[j][i]),fmin(1.0f,g[j][i]),fmin(1.0f,b[j][i]));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.95f,0.95f,0.98f);
+        g.blending(true);g.blendTrans();g.depthTesting(false);
+        g.pointSize(5);g.meshColor();g.draw(mesh);
+    }
+
+    bool onMouseDown(const Mouse& m) override {
+        float mx=(m.x()/(float)width())*2-1;
+        float my=1-(m.y()/(float)height())*2;
+        int i=(int)((mx+1)*0.5f*N);
+        int j=(int)((my+1)*0.5f*N);
+
+        // Cycle through colors
+        float colors[5][3]={{1,0.2f,0.1f},{0.1f,0.8f,0.2f},{0.1f,0.3f,1},{1,0.8f,0.1f},{0.8f,0.1f,0.9f}};
+        addInk(i,j,colors[colorIdx][0],colors[colorIdx][1],colors[colorIdx][2]);
+        colorIdx=(colorIdx+1)%5;
+        return true;
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(InkDrops)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Cellular Automata (Advanced)
+  // ==========================================================================
+  {
+    id: 'ca-3d-life',
+    title: '3D Game of Life',
+    description: '3D cellular automaton with volumetric rendering',
+    category: 'simulation',
+    subcategory: 'cellular',
+    code: `/**
+ * 3D Game of Life
+ * Features: 3D neighbor rules, volumetric cubes
+ * Controls: Space = pause, R = reset, WASD+QE = navigate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class Life3D : public WebApp {
+public:
+    static const int SIZE=20;
+    bool grid[SIZE][SIZE][SIZE];
+    bool next[SIZE][SIZE][SIZE];
+    Mesh cube;
+    bool running=true;
+    float timer=0;
+    rnd::Random<> rng;
+    // 3D Life rule: survive 4,5, born 5
+    int surviveMin=4,surviveMax=5,bornMin=5,bornMax=5;
+
+    void onCreate() override {
+        addCube(cube,0.4f);
+        cube.generateNormals();
+        reset();
+        nav().pos(0,0,SIZE*1.5f);
+    }
+
+    void reset(){
+        for(int z=0;z<SIZE;z++)for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            grid[z][y][x]=rng.uniform()<0.2f;
+        }
+    }
+
+    int countNeighbors(int cx,int cy,int cz){
+        int count=0;
+        for(int dz=-1;dz<=1;dz++)for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+            if(dx==0&&dy==0&&dz==0)continue;
+            int nx=(cx+dx+SIZE)%SIZE;
+            int ny=(cy+dy+SIZE)%SIZE;
+            int nz=(cz+dz+SIZE)%SIZE;
+            if(grid[nz][ny][nx])count++;
+        }
+        return count;
+    }
+
+    void step(){
+        for(int z=0;z<SIZE;z++)for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            int n=countNeighbors(x,y,z);
+            if(grid[z][y][x]){
+                next[z][y][x]=(n>=surviveMin&&n<=surviveMax);
+            }else{
+                next[z][y][x]=(n>=bornMin&&n<=bornMax);
+            }
+        }
+        memcpy(grid,next,sizeof(grid));
+    }
+
+    void onAnimate(double dt) override {
+        if(running){
+            timer+=dt;
+            if(timer>0.2f){
+                step();
+                timer=0;
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.depthTesting(true);
+        g.lighting(true);
+        Light light; light.pos(SIZE,SIZE*2.0f,SIZE); g.light(light);
+
+        float offset=SIZE/2.0f;
+        for(int z=0;z<SIZE;z++)for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            if(grid[z][y][x]){
+                g.pushMatrix();
+                g.translate(x-offset,y-offset,z-offset);
+                float hue=(float)(x+y+z)/(SIZE*3);
+                g.color(HSV(hue,0.7f,0.9f));
+                g.draw(cube);
+                g.popMatrix();
+            }
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')running=!running;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Life3D)
+`,
+  },
+
+  {
+    id: 'ca-falling-sand',
+    title: 'Falling Sand',
+    description: 'Falling sand game with multiple material types',
+    category: 'simulation',
+    subcategory: 'cellular',
+    code: `/**
+ * Falling Sand Game
+ * Features: Sand, water, fire, stone materials
+ * Controls: 1=sand, 2=water, 3=fire, 4=stone, Click to place
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+class FallingSand : public WebApp {
+public:
+    static const int W=120,H=80;
+    enum Material{EMPTY=0,SAND,WATER,FIRE,STONE};
+    Material grid[H][W];
+    Mesh mesh;
+    Material brush=SAND;
+    bool mouseDown=false;
+    float mx=0,my=0;
+    rnd::Random<> rng;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        for(int y=0;y<H;y++)for(int x=0;x<W;x++)grid[y][x]=EMPTY;
+        nav().pos(0,0,2);
+    }
+
+    void swap(int x1,int y1,int x2,int y2){
+        Material t=grid[y1][x1];
+        grid[y1][x1]=grid[y2][x2];
+        grid[y2][x2]=t;
+    }
+
+    bool inBounds(int x,int y){return x>=0&&x<W&&y>=0&&y<H;}
+
+    void updateSand(int x,int y){
+        if(y>0){
+            if(grid[y-1][x]==EMPTY){swap(x,y,x,y-1);return;}
+            if(grid[y-1][x]==WATER){swap(x,y,x,y-1);return;}
+            int dir=rng.uniform()<0.5f?-1:1;
+            if(x+dir>=0&&x+dir<W&&y>0&&grid[y-1][x+dir]==EMPTY){
+                swap(x,y,x+dir,y-1);return;
+            }
+            if(x-dir>=0&&x-dir<W&&y>0&&grid[y-1][x-dir]==EMPTY){
+                swap(x,y,x-dir,y-1);return;
+            }
+        }
+    }
+
+    void updateWater(int x,int y){
+        if(y>0&&grid[y-1][x]==EMPTY){swap(x,y,x,y-1);return;}
+        int dir=rng.uniform()<0.5f?-1:1;
+        if(inBounds(x+dir,y-1)&&grid[y-1][x+dir]==EMPTY){
+            swap(x,y,x+dir,y-1);return;
+        }
+        if(inBounds(x+dir,y)&&grid[y][x+dir]==EMPTY){
+            swap(x,y,x+dir,y);return;
+        }
+        if(inBounds(x-dir,y)&&grid[y][x-dir]==EMPTY){
+            swap(x,y,x-dir,y);return;
+        }
+    }
+
+    void updateFire(int x,int y){
+        if(rng.uniform()<0.1f){grid[y][x]=EMPTY;return;}
+        if(y<H-1&&grid[y+1][x]==EMPTY&&rng.uniform()<0.4f){
+            swap(x,y,x,y+1);
+        }
+        // Spread to adjacent
+        for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+            int nx=x+dx,ny=y+dy;
+            if(inBounds(nx,ny)&&grid[ny][nx]==SAND&&rng.uniform()<0.01f){
+                grid[ny][nx]=FIRE;
+            }
+        }
+        if(inBounds(x,y-1)&&grid[y-1][x]==WATER){
+            grid[y][x]=EMPTY;grid[y-1][x]=EMPTY;
+        }
+    }
+
+    void onAnimate(double dt) override {
+        if(mouseDown){
+            int px=(int)((mx+1)*0.5f*W);
+            int py=(int)((my+1)*0.5f*H);
+            for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++){
+                int nx=px+dx,ny=py+dy;
+                if(inBounds(nx,ny)&&(brush==STONE||grid[ny][nx]==EMPTY)){
+                    if(rng.uniform()<0.5f)grid[ny][nx]=brush;
+                }
+            }
+        }
+
+        // Update bottom to top for falling
+        for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            Material m=grid[y][x];
+            if(m==SAND)updateSand(x,y);
+            else if(m==WATER)updateWater(x,y);
+            else if(m==FIRE)updateFire(x,y);
+        }
+
+        mesh.reset();
+        float sx=2.0f/W,sy=2.0f/H;
+        for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            Material m=grid[y][x];
+            if(m!=EMPTY){
+                mesh.vertex((x-W/2)*sx,(y-H/2)*sy,0);
+                switch(m){
+                    case SAND:mesh.color(0.9f,0.8f,0.4f);break;
+                    case WATER:mesh.color(0.2f,0.4f,0.9f);break;
+                    case FIRE:mesh.color(1.0f,0.3f+rng.uniform()*0.3f,0.1f);break;
+                    case STONE:mesh.color(0.5f,0.5f,0.5f);break;
+                    default:break;
+                }
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(4);g.meshColor();g.draw(mesh);
+    }
+
+    bool onMouseDown(const Mouse& m) override {
+        mouseDown=true;
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        return true;
+    }
+    bool onMouseUp(const Mouse& m) override {mouseDown=false;return true;}
+    bool onMouseDrag(const Mouse& m) override {
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        return true;
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='1')brush=SAND;
+        if(k.key()=='2')brush=WATER;
+        if(k.key()=='3')brush=FIRE;
+        if(k.key()=='4')brush=STONE;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(FallingSand)
+`,
+  },
+
+  {
+    id: 'ca-wireworld',
+    title: 'Wireworld',
+    description: 'Electronic circuit simulation cellular automaton',
+    category: 'simulation',
+    subcategory: 'cellular',
+    code: `/**
+ * Wireworld - Electronic Circuit Simulation
+ * Features: Electron heads, tails, conductors
+ * Controls: Click to place, 1=conductor, 2=head, Space=pause, R=reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class Wireworld : public WebApp {
+public:
+    static const int W=80,H=60;
+    enum Cell{EMPTY=0,HEAD,TAIL,WIRE};
+    Cell grid[H][W],next[H][W];
+    Mesh mesh;
+    Cell brush=WIRE;
+    bool mouseDown=false,running=true;
+    float mx=0,my=0;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        memset(grid,EMPTY,sizeof(grid));
+        // Create example circuit - oscillator
+        for(int x=20;x<60;x++)grid[30][x]=WIRE;
+        for(int y=25;y<35;y++){grid[y][20]=WIRE;grid[y][60]=WIRE;}
+        grid[30][25]=HEAD;grid[30][26]=TAIL;
+        nav().pos(0,0,2);
+    }
+
+    void reset(){memset(grid,EMPTY,sizeof(grid));}
+
+    int countHeads(int x,int y){
+        int c=0;
+        for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+            if(dx==0&&dy==0)continue;
+            int nx=x+dx,ny=y+dy;
+            if(nx>=0&&nx<W&&ny>=0&&ny<H&&grid[ny][nx]==HEAD)c++;
+        }
+        return c;
+    }
+
+    void step(){
+        for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            Cell c=grid[y][x];
+            if(c==EMPTY)next[y][x]=EMPTY;
+            else if(c==HEAD)next[y][x]=TAIL;
+            else if(c==TAIL)next[y][x]=WIRE;
+            else{
+                int heads=countHeads(x,y);
+                next[y][x]=(heads==1||heads==2)?HEAD:WIRE;
+            }
+        }
+        memcpy(grid,next,sizeof(grid));
+    }
+
+    void onAnimate(double dt) override {
+        if(mouseDown){
+            int px=(int)((mx+1)*0.5f*W);
+            int py=(int)((my+1)*0.5f*H);
+            if(px>=0&&px<W&&py>=0&&py<H)grid[py][px]=brush;
+        }
+        if(running)step();
+
+        mesh.reset();
+        float sx=2.0f/W,sy=2.0f/H;
+        for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            Cell c=grid[y][x];
+            if(c!=EMPTY){
+                mesh.vertex((x-W/2)*sx,(y-H/2)*sy,0);
+                if(c==HEAD)mesh.color(0.2f,0.5f,1.0f);
+                else if(c==TAIL)mesh.color(1.0f,0.3f,0.3f);
+                else mesh.color(0.9f,0.7f,0.2f);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(5);g.meshColor();g.draw(mesh);
+    }
+
+    bool onMouseDown(const Mouse& m) override {
+        mouseDown=true;
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        return true;
+    }
+    bool onMouseUp(const Mouse& m) override {mouseDown=false;return true;}
+    bool onMouseDrag(const Mouse& m) override {
+        mx=(m.x()/(float)width())*2-1;
+        my=1-(m.y()/(float)height())*2;
+        return true;
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='1')brush=WIRE;
+        if(k.key()=='2')brush=HEAD;
+        if(k.key()==' ')running=!running;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Wireworld)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Procedural Generation
+  // ==========================================================================
+  {
+    id: 'proc-terrain',
+    title: 'Procedural Terrain',
+    description: 'Infinite terrain with FBM noise and erosion',
+    category: 'simulation',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural Terrain Generator
+ * Features: FBM noise, thermal erosion, biomes
+ * Controls: WASD+QE = navigate, R = regenerate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class ProcTerrain : public WebApp {
+public:
+    static const int SIZE=64;
+    float height[SIZE][SIZE];
+    Mesh mesh;
+    rnd::Random<> rng;
+    bool keys[256]={};
+
+    float hash(float x,float y){
+        float n=sinf(x*127.1f+y*311.7f)*43758.5453f;
+        return n-floorf(n);
+    }
+
+    float noise(float x,float y){
+        float ix=floorf(x),iy=floorf(y);
+        float fx=x-ix,fy=y-iy;
+        fx=fx*fx*(3-2*fx);fy=fy*fy*(3-2*fy);
+        return (hash(ix,iy)*(1-fx)+hash(ix+1,iy)*fx)*(1-fy)+
+               (hash(ix,iy+1)*(1-fx)+hash(ix+1,iy+1)*fx)*fy;
+    }
+
+    float fbm(float x,float y,int oct=6){
+        float v=0,a=0.5f,f=1.0f;
+        for(int i=0;i<oct;i++){v+=a*noise(x*f,y*f);f*=2;a*=0.5f;}
+        return v;
+    }
+
+    void generate(){
+        float seed=rng.uniform()*1000;
+        for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            float nx=x*0.1f+seed,ny=y*0.1f+seed;
+            height[y][x]=fbm(nx,ny)*3.0f;
+            // Add ridges
+            height[y][x]+=powf(1.0f-fabsf(noise(nx*2,ny*2)*2-1),2)*1.5f;
+        }
+        // Simple thermal erosion
+        for(int iter=0;iter<20;iter++){
+            for(int y=1;y<SIZE-1;y++)for(int x=1;x<SIZE-1;x++){
+                float h=height[y][x];
+                float diffs[4]={h-height[y-1][x],h-height[y+1][x],
+                                h-height[y][x-1],h-height[y][x+1]};
+                float maxDiff=0;int maxIdx=-1;
+                for(int i=0;i<4;i++)if(diffs[i]>maxDiff){maxDiff=diffs[i];maxIdx=i;}
+                if(maxDiff>0.3f){
+                    float amt=maxDiff*0.25f;
+                    height[y][x]-=amt;
+                    if(maxIdx==0)height[y-1][x]+=amt;
+                    else if(maxIdx==1)height[y+1][x]+=amt;
+                    else if(maxIdx==2)height[y][x-1]+=amt;
+                    else height[y][x+1]+=amt;
+                }
+            }
+        }
+        buildMesh();
+    }
+
+    void buildMesh(){
+        mesh.reset();
+        mesh.primitive(Mesh::TRIANGLES);
+        float scale=4.0f/SIZE;
+        for(int y=0;y<SIZE-1;y++)for(int x=0;x<SIZE-1;x++){
+            float h00=height[y][x],h10=height[y][x+1];
+            float h01=height[y+1][x],h11=height[y+1][x+1];
+            Vec3f v00((x-SIZE/2)*scale,h00,(y-SIZE/2)*scale);
+            Vec3f v10((x+1-SIZE/2)*scale,h10,(y-SIZE/2)*scale);
+            Vec3f v01((x-SIZE/2)*scale,h01,(y+1-SIZE/2)*scale);
+            Vec3f v11((x+1-SIZE/2)*scale,h11,(y+1-SIZE/2)*scale);
+
+            auto getColor=[](float h)->Color{
+                if(h<0.3f)return Color(0.2f,0.4f,0.8f);      // water
+                if(h<0.5f)return Color(0.8f,0.75f,0.5f);     // sand
+                if(h<1.5f)return Color(0.3f,0.6f,0.2f);      // grass
+                if(h<2.5f)return Color(0.4f,0.35f,0.3f);     // rock
+                return Color(0.95f,0.95f,1.0f);              // snow
+            };
+
+            mesh.vertex(v00);mesh.color(getColor(h00));
+            mesh.vertex(v10);mesh.color(getColor(h10));
+            mesh.vertex(v01);mesh.color(getColor(h01));
+            mesh.vertex(v10);mesh.color(getColor(h10));
+            mesh.vertex(v11);mesh.color(getColor(h11));
+            mesh.vertex(v01);mesh.color(getColor(h01));
+        }
+        mesh.generateNormals();
+    }
+
+    void onCreate() override {
+        generate();
+        nav().pos(0,4,6);
+        nav().faceToward(Vec3f(0,0,0));
+        memset(keys,0,sizeof(keys));
+    }
+
+    void onAnimate(double dt) override {
+        float spd=4.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.5f,0.7f,0.9f);
+        g.depthTesting(true);
+        g.lighting(true);
+        Light light; light.pos(5,10,5); g.light(light);
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key();
+        if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='r')generate();
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ProcTerrain)
+`,
+  },
+
+  {
+    id: 'proc-caves',
+    title: 'Cave Generation',
+    description: 'Procedural caves using cellular automata and noise',
+    category: 'simulation',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural Cave Generator
+ * Features: Cellular automata smoothing, connected caves
+ * Controls: R = regenerate, WASD+QE = navigate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+class ProcCaves : public WebApp {
+public:
+    static const int W=60,H=40,D=30;
+    bool solid[D][H][W];
+    Mesh mesh;
+    rnd::Random<> rng;
+    bool keys[256]={};
+
+    void onCreate() override {
+        generate();
+        nav().pos(0,0,0); // Start inside the cave
+        memset(keys,0,sizeof(keys));
+    }
+
+    void generate(){
+        // Random fill
+        for(int z=0;z<D;z++)for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            solid[z][y][x]=rng.uniform()<0.52f;
+        }
+        // Cellular automata smoothing
+        bool next[D][H][W];
+        for(int iter=0;iter<5;iter++){
+            for(int z=1;z<D-1;z++)for(int y=1;y<H-1;y++)for(int x=1;x<W-1;x++){
+                int count=0;
+                for(int dz=-1;dz<=1;dz++)for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+                    if(solid[z+dz][y+dy][x+dx])count++;
+                }
+                next[z][y][x]=count>=14;
+            }
+            // Keep borders solid
+            for(int z=0;z<D;z++)for(int y=0;y<H;y++){next[z][y][0]=next[z][y][W-1]=true;}
+            for(int z=0;z<D;z++)for(int x=0;x<W;x++){next[z][0][x]=next[z][H-1][x]=true;}
+            for(int y=0;y<H;y++)for(int x=0;x<W;x++){next[0][y][x]=next[D-1][y][x]=true;}
+            memcpy(solid,next,sizeof(solid));
+        }
+        buildMesh();
+    }
+
+    void buildMesh(){
+        mesh.reset();
+        mesh.primitive(Mesh::TRIANGLES);
+        float sx=0.2f,sy=0.2f,sz=0.2f;
+        float ox=W*sx*0.5f,oy=H*sy*0.5f,oz=D*sz*0.5f;
+
+        auto addFace=[&](Vec3f a,Vec3f b,Vec3f c,Vec3f d,Vec3f n,Color col){
+            mesh.vertex(a);mesh.normal(n);mesh.color(col);
+            mesh.vertex(b);mesh.normal(n);mesh.color(col);
+            mesh.vertex(c);mesh.normal(n);mesh.color(col);
+            mesh.vertex(a);mesh.normal(n);mesh.color(col);
+            mesh.vertex(c);mesh.normal(n);mesh.color(col);
+            mesh.vertex(d);mesh.normal(n);mesh.color(col);
+        };
+
+        for(int z=0;z<D;z++)for(int y=0;y<H;y++)for(int x=0;x<W;x++){
+            if(!solid[z][y][x])continue;
+            float px=x*sx-ox,py=y*sy-oy,pz=z*sz-oz;
+            float s=sx*0.5f;
+            Color col(0.45f+rng.uniform()*0.1f,0.4f+rng.uniform()*0.1f,0.35f);
+            // Only add faces between solid and air
+            if(x<W-1&&!solid[z][y][x+1])addFace(Vec3f(px+s,py-s,pz-s),Vec3f(px+s,py+s,pz-s),Vec3f(px+s,py+s,pz+s),Vec3f(px+s,py-s,pz+s),Vec3f(1,0,0),col);
+            if(x>0&&!solid[z][y][x-1])addFace(Vec3f(px-s,py-s,pz+s),Vec3f(px-s,py+s,pz+s),Vec3f(px-s,py+s,pz-s),Vec3f(px-s,py-s,pz-s),Vec3f(-1,0,0),col);
+            if(y<H-1&&!solid[z][y+1][x])addFace(Vec3f(px-s,py+s,pz-s),Vec3f(px-s,py+s,pz+s),Vec3f(px+s,py+s,pz+s),Vec3f(px+s,py+s,pz-s),Vec3f(0,1,0),col);
+            if(y>0&&!solid[z][y-1][x])addFace(Vec3f(px-s,py-s,pz+s),Vec3f(px-s,py-s,pz-s),Vec3f(px+s,py-s,pz-s),Vec3f(px+s,py-s,pz+s),Vec3f(0,-1,0),col);
+            if(z<D-1&&!solid[z+1][y][x])addFace(Vec3f(px-s,py-s,pz+s),Vec3f(px+s,py-s,pz+s),Vec3f(px+s,py+s,pz+s),Vec3f(px-s,py+s,pz+s),Vec3f(0,0,1),col);
+            if(z>0&&!solid[z-1][y][x])addFace(Vec3f(px+s,py-s,pz-s),Vec3f(px-s,py-s,pz-s),Vec3f(px-s,py+s,pz-s),Vec3f(px+s,py+s,pz-s),Vec3f(0,0,-1),col);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        float spd=3.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.depthTesting(true);
+        g.lighting(true);
+        Vec3f lp=nav().pos(); Light light; light.pos(lp.x,lp.y,lp.z); g.light(light);
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='r')generate();
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ProcCaves)
+`,
+  },
+
+  {
+    id: 'proc-city',
+    title: 'Procedural City',
+    description: 'City generation with lot subdivision and buildings',
+    category: 'simulation',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural City Generator
+ * Features: Lot subdivision, varied buildings, streets
+ * Controls: R = regenerate, WASD+QE = navigate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+struct Building {
+    Vec3f pos;
+    float w,d,h;
+    Color col;
+};
+
+class ProcCity : public WebApp {
+public:
+    std::vector<Building> buildings;
+    Mesh mesh,ground;
+    rnd::Random<> rng;
+    bool keys[256]={};
+
+    void onCreate() override {
+        generate();
+        addSurface(ground,20,20,40,40);
+        nav().pos(0,8,15);
+        nav().faceToward(Vec3f(0,0,0));
+        memset(keys,0,sizeof(keys));
+    }
+
+    void subdivide(float x,float z,float w,float d,int depth){
+        if(depth>4||w<1.0f||d<1.0f){
+            // Create building
+            float h=0.5f+rng.uniform()*3.0f+rng.uniform()*rng.uniform()*5.0f;
+            float margin=0.15f;
+            Building b;
+            b.pos=Vec3f(x+margin,0,z+margin);
+            b.w=w-margin*2;
+            b.d=d-margin*2;
+            b.h=h;
+            float gray=0.4f+rng.uniform()*0.3f;
+            b.col=Color(gray,gray,gray+rng.uniform()*0.1f);
+            buildings.push_back(b);
+            return;
+        }
+        // Subdivide
+        if(rng.uniform()<0.5f&&w>2.0f){
+            float split=w*(0.3f+rng.uniform()*0.4f);
+            subdivide(x,z,split-0.1f,d,depth+1);
+            subdivide(x+split+0.1f,z,w-split-0.1f,d,depth+1);
+        }else if(d>2.0f){
+            float split=d*(0.3f+rng.uniform()*0.4f);
+            subdivide(x,z,w,split-0.1f,depth+1);
+            subdivide(x,z+split+0.1f,w,d-split-0.1f,depth+1);
+        }else{
+            // Leaf node
+            float h=0.5f+rng.uniform()*2.0f;
+            Building b;
+            b.pos=Vec3f(x+0.1f,0,z+0.1f);
+            b.w=w-0.2f;b.d=d-0.2f;b.h=h;
+            b.col=Color(0.5f+rng.uniform()*0.2f,0.5f+rng.uniform()*0.2f,0.55f);
+            buildings.push_back(b);
+        }
+    }
+
+    void generate(){
+        buildings.clear();
+        float citySize=16;
+        for(float bx=-citySize;bx<citySize;bx+=4.0f){
+            for(float bz=-citySize;bz<citySize;bz+=4.0f){
+                if(rng.uniform()<0.15f)continue; // Park/empty lot
+                subdivide(bx+0.2f,bz+0.2f,3.6f,3.6f,0);
+            }
+        }
+        buildMesh();
+    }
+
+    void buildMesh(){
+        mesh.reset();
+        mesh.primitive(Mesh::TRIANGLES);
+        for(auto& b:buildings){
+            Vec3f p=b.pos;
+            float w=b.w,d=b.d,h=b.h;
+            Color c=b.col,top=b.col*0.7f;
+            // Front
+            mesh.vertex(p.x,p.y,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            mesh.vertex(p.x+w,p.y,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            mesh.vertex(p.x+w,p.y+h,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            mesh.vertex(p.x,p.y,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            mesh.vertex(p.x+w,p.y+h,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            mesh.vertex(p.x,p.y+h,p.z+d);mesh.color(c);mesh.normal(0,0,1);
+            // Back
+            mesh.vertex(p.x+w,p.y,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            mesh.vertex(p.x,p.y,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            mesh.vertex(p.x,p.y+h,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            mesh.vertex(p.x+w,p.y,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            mesh.vertex(p.x,p.y+h,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            mesh.vertex(p.x+w,p.y+h,p.z);mesh.color(c);mesh.normal(0,0,-1);
+            // Left
+            mesh.vertex(p.x,p.y,p.z);mesh.color(c);mesh.normal(-1,0,0);
+            mesh.vertex(p.x,p.y,p.z+d);mesh.color(c);mesh.normal(-1,0,0);
+            mesh.vertex(p.x,p.y+h,p.z+d);mesh.color(c);mesh.normal(-1,0,0);
+            mesh.vertex(p.x,p.y,p.z);mesh.color(c);mesh.normal(-1,0,0);
+            mesh.vertex(p.x,p.y+h,p.z+d);mesh.color(c);mesh.normal(-1,0,0);
+            mesh.vertex(p.x,p.y+h,p.z);mesh.color(c);mesh.normal(-1,0,0);
+            // Right
+            mesh.vertex(p.x+w,p.y,p.z+d);mesh.color(c);mesh.normal(1,0,0);
+            mesh.vertex(p.x+w,p.y,p.z);mesh.color(c);mesh.normal(1,0,0);
+            mesh.vertex(p.x+w,p.y+h,p.z);mesh.color(c);mesh.normal(1,0,0);
+            mesh.vertex(p.x+w,p.y,p.z+d);mesh.color(c);mesh.normal(1,0,0);
+            mesh.vertex(p.x+w,p.y+h,p.z);mesh.color(c);mesh.normal(1,0,0);
+            mesh.vertex(p.x+w,p.y+h,p.z+d);mesh.color(c);mesh.normal(1,0,0);
+            // Top
+            mesh.vertex(p.x,p.y+h,p.z+d);mesh.color(top);mesh.normal(0,1,0);
+            mesh.vertex(p.x+w,p.y+h,p.z+d);mesh.color(top);mesh.normal(0,1,0);
+            mesh.vertex(p.x+w,p.y+h,p.z);mesh.color(top);mesh.normal(0,1,0);
+            mesh.vertex(p.x,p.y+h,p.z+d);mesh.color(top);mesh.normal(0,1,0);
+            mesh.vertex(p.x+w,p.y+h,p.z);mesh.color(top);mesh.normal(0,1,0);
+            mesh.vertex(p.x,p.y+h,p.z);mesh.color(top);mesh.normal(0,1,0);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        float spd=8.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.6f,0.75f,0.9f);
+        g.depthTesting(true);
+        g.lighting(true);
+        Light light; light.pos(10,20,10); g.light(light);
+        // Ground
+        g.pushMatrix();
+        g.rotate(90,1,0,0);
+        g.color(0.3f,0.3f,0.35f);
+        g.draw(ground);
+        g.popMatrix();
+        // Buildings
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true;
+        if(k.key()=='r')generate();
+        return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ProcCity)
+`,
+  },
+
+  {
+    id: 'proc-galaxy',
+    title: 'Galaxy Generator',
+    description: 'Procedural spiral galaxy with star distribution',
+    category: 'simulation',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural Galaxy Generator
+ * Features: Spiral arms, star colors, density falloff
+ * Controls: R = regenerate, WASD+QE = navigate
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+class ProcGalaxy : public WebApp {
+public:
+    Mesh stars;
+    rnd::Random<> rng;
+    float rotation=0;
+    static const int NUM_STARS=30000;
+
+    void onCreate() override {
+        stars.primitive(Mesh::POINTS);
+        generate();
+        nav().pos(0,5,8);
+        nav().faceToward(Vec3f(0,0,0));
+    }
+
+    void generate(){
+        stars.reset();
+        int numArms=rng.uniform()*2+2;
+        float armSpread=0.5f;
+        float armLength=4.0f;
+
+        for(int i=0;i<NUM_STARS;i++){
+            float r=rng.uniform()*rng.uniform()*armLength;
+            float armAngle=((int)(rng.uniform()*numArms))*(2*M_PI/numArms);
+            float spiralAngle=r*1.5f;
+            float spread=(rng.uniform()-0.5f)*armSpread*(1+r*0.3f);
+
+            float angle=armAngle+spiralAngle+spread;
+            float x=cosf(angle)*r+(rng.uniform()-0.5f)*0.2f;
+            float z=sinf(angle)*r+(rng.uniform()-0.5f)*0.2f;
+            float y=(rng.uniform()-0.5f)*0.1f*(1.0f-r/armLength);
+
+            stars.vertex(x,y,z);
+
+            // Color based on position
+            float temp=0.5f+rng.uniform()*0.5f;
+            if(r<0.5f)temp+=0.3f; // Core is hotter
+            if(rng.uniform()<0.02f)temp=1.0f; // Bright blue stars
+
+            Color col;
+            if(temp<0.5f)col=Color(1.0f,0.8f*temp*2,0.6f*temp*2);
+            else if(temp<0.8f)col=Color(1.0f,1.0f,(temp-0.5f)*3);
+            else col=Color(0.8f+(1-temp)*0.5f,0.9f+(1-temp)*0.2f,1.0f);
+
+            col.a=0.3f+rng.uniform()*0.7f;
+            stars.color(col);
+        }
+
+        // Add central bulge
+        for(int i=0;i<3000;i++){
+            float r=rng.uniform()*rng.uniform()*0.8f;
+            float theta=rng.uniform()*2*M_PI;
+            float phi=rng.uniform()*M_PI-M_PI/2;
+            float x=r*cosf(theta)*cosf(phi);
+            float y=r*sinf(phi)*0.3f;
+            float z=r*sinf(theta)*cosf(phi);
+            stars.vertex(x,y,z);
+            float bright=1.0f-r;
+            stars.color(1.0f,0.95f*bright,0.8f*bright,0.5f+bright*0.5f);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        rotation+=dt*5;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f,0.02f,0.05f);
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+        g.pushMatrix();
+        g.rotate(rotation,0,1,0);
+        g.rotate(30,1,0,0);
+        g.pointSize(2);
+        g.meshColor();
+        g.draw(stars);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='r')generate();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(ProcGalaxy)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Ray Marching (Additional)
+  // ==========================================================================
+  {
+    id: 'rm-organic-blob',
+    title: 'Organic Blob',
+    description: 'Metaball-style organic blob with smooth blending',
+    category: 'simulation',
+    subcategory: 'raymarching',
+    code: `/**
+ * Organic Blob - Ray Marched Metaballs
+ * Features: Smooth minimum blending, animation
+ * Controls: WASD+QE navigation
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+
+using namespace al;
+
+class OrganicBlob : public WebApp {
+public:
+    ShaderProgram shader;
+    Mesh quad;
+    float time=0;
+    bool keys[256]={};
+    float yaw=0,pitch=0;
+    bool dragging=false;
+    int lastX=0,lastY=0;
+
+    const char* vert = R"(#version 300 es
+        layout(location=0) in vec3 position;
+        void main(){gl_Position=vec4(position,1.0);}
+    )";
+
+    const char* frag = R"(#version 300 es
+        precision highp float;
+        out vec4 fragColor;
+        uniform float uTime;
+        uniform vec2 uRes;
+        uniform vec3 uCamPos;
+        uniform mat4 uCamMat;
+
+        float sdSphere(vec3 p,float r){return length(p)-r;}
+
+        float smin(float a,float b,float k){
+            float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0);
+            return mix(b,a,h)-k*h*(1.0-h);
+        }
+
+        float scene(vec3 p){
+            float d=1e10;
+            // Multiple animated spheres
+            for(int i=0;i<5;i++){
+                float fi=float(i);
+                float t=uTime+fi*1.2;
+                vec3 offset=vec3(
+                    sin(t*0.7+fi)*0.8,
+                    cos(t*0.5+fi*2.0)*0.6,
+                    sin(t*0.3+fi*0.5)*0.8
+                );
+                float r=0.4+0.1*sin(t+fi);
+                d=smin(d,sdSphere(p-offset,r),0.5);
+            }
+            // Central core
+            d=smin(d,sdSphere(p,0.6+0.1*sin(uTime*2.0)),0.3);
+            return d;
+        }
+
+        vec3 calcNormal(vec3 p){
+            vec2 e=vec2(0.001,0);
+            return normalize(vec3(
+                scene(p+e.xyy)-scene(p-e.xyy),
+                scene(p+e.yxy)-scene(p-e.yxy),
+                scene(p+e.yyx)-scene(p-e.yyx)));
+        }
+
+        float march(vec3 ro,vec3 rd){
+            float t=0.0;
+            for(int i=0;i<80;i++){
+                float d=scene(ro+rd*t);
+                if(d<0.001)return t;
+                t+=d;
+                if(t>20.0)break;
+            }
+            return -1.0;
+        }
+
+        void main(){
+            vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
+            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
+            vec3 ro=uCamPos;
+
+            vec3 col=vec3(0.05,0.05,0.1);
+
+            float t=march(ro,rd);
+            if(t>0.0){
+                vec3 p=ro+rd*t;
+                vec3 n=calcNormal(p);
+                vec3 light=normalize(vec3(1,1,1));
+
+                // Subsurface scattering approximation
+                float wrap=max(0.0,dot(n,light)*0.5+0.5);
+                vec3 sss=vec3(0.8,0.2,0.1)*wrap*wrap;
+
+                // Rim lighting
+                float rim=1.0-max(0.0,dot(n,-rd));
+                rim=pow(rim,3.0);
+
+                // Specular
+                vec3 h=normalize(light-rd);
+                float spec=pow(max(0.0,dot(n,h)),32.0);
+
+                col=sss+vec3(0.3,0.5,0.8)*rim+vec3(1)*spec*0.5;
+
+                // Fresnel
+                float fresnel=pow(1.0-max(0.0,dot(n,-rd)),2.0);
+                col=mix(col,vec3(0.8,0.9,1.0),fresnel*0.3);
+            }
+
+            fragColor=vec4(pow(col,vec3(0.4545)),1.0);
+        }
+    )";
+
+    void onCreate() override {
+        shader.compile(vert,frag);
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
+        quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        nav().pos(0,0,4);
+        memset(keys,0,sizeof(keys));
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        float spd=3.0f*(float)dt;
+        nav().updateDirectionVectors();
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
+        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
+        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
+        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0);
+        shader.use();
+        shader.uniform("uTime",time);
+        shader.uniform("uRes",(float)width(),(float)height());
+        Vec3f pos=nav().pos();
+        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+        nav().updateDirectionVectors();
+        Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
+        float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
+        shader.uniform("uCamMat",Matrix4f(vm));
+        g.draw(quad);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
+    }
+    bool onMouseDown(const Mouse& m) override {
+        dragging=true; lastX=m.x(); lastY=m.y(); return true;
+    }
+    bool onMouseUp(const Mouse& m) override { dragging=false; return true; }
+    bool onMouseDrag(const Mouse& m) override {
+        if(dragging){
+            float dx=(m.x()-lastX)*0.005f, dy=(m.y()-lastY)*0.005f;
+            yaw-=dx; pitch-=dy; pitch=fmax(-1.5f,fmin(1.5f,pitch));
+            Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
+            Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
+            Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
+            lastX=m.x(); lastY=m.y();
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(OrganicBlob)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Fluid & Smoke (Additional)
+  // ==========================================================================
+  {
+    id: 'fluid-lava-lamp',
+    title: 'Lava Lamp',
+    description: 'Metaball lava lamp with heat convection',
+    category: 'simulation',
+    subcategory: 'fluids',
+    code: `/**
+ * Lava Lamp Simulation
+ * Features: Metaballs, heat convection, color blending
+ * Controls: WASD+QE navigation
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+struct Blob {
+    Vec2f pos,vel;
+    float radius,temp;
+};
+
+class LavaLamp : public WebApp {
+public:
+    std::vector<Blob> blobs;
+    ShaderProgram shader;
+    Mesh quad;
+    float time=0;
+    rnd::Random<> rng;
+
+    const char* vert = R"(#version 300 es
+        layout(location=0) in vec3 position;
+        out vec2 vUV;
+        void main(){
+            vUV=position.xy*0.5+0.5;
+            gl_Position=vec4(position,1.0);
+        }
+    )";
+
+    const char* frag = R"(#version 300 es
+        precision highp float;
+        in vec2 vUV;
+        out vec4 fragColor;
+        uniform float uTime;
+        uniform vec4 uBlobs[20];
+        uniform int uNumBlobs;
+
+        void main(){
+            vec2 p=vUV*2.0-1.0;
+            p.y*=1.5; // Aspect ratio for lamp shape
+
+            float field=0.0;
+            float tempField=0.0;
+            for(int i=0;i<20;i++){
+                if(i>=uNumBlobs)break;
+                vec2 bp=uBlobs[i].xy;
+                float r=uBlobs[i].z;
+                float t=uBlobs[i].w;
+                float d=length(p-bp);
+                field+=r*r/(d*d+0.01);
+                tempField+=t*r*r/(d*d+0.01);
+            }
+
+            // Lamp glass boundary
+            float lamp=smoothstep(0.9,0.85,abs(p.x))*smoothstep(1.4,1.3,abs(p.y));
+
+            if(field>1.0&&lamp>0.5){
+                float t=tempField/field;
+                vec3 cold=vec3(0.8,0.2,0.1);
+                vec3 hot=vec3(1.0,0.8,0.2);
+                vec3 col=mix(cold,hot,t);
+                // Add animated glow using uTime
+                float pulse=0.5+0.5*sin(uTime*2.0);
+                col+=vec3(0.2,0.1,0.05)*smoothstep(1.0,3.0,field)*(0.8+0.2*pulse);
+                fragColor=vec4(col,1.0);
+            }else{
+                // Glass and liquid
+                vec3 glass=vec3(0.1,0.15,0.2);
+                vec3 liquid=vec3(0.05,0.08,0.12);
+                float edge=smoothstep(0.8,0.85,abs(p.x))+smoothstep(1.3,1.35,abs(p.y));
+                fragColor=vec4(mix(liquid,glass,edge),1.0);
+            }
+        }
+    )";
+
+    void onCreate() override {
+        shader.compile(vert,frag);
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
+        quad.vertex(-1,1,0);quad.vertex(1,1,0);
+
+        // Initialize blobs
+        for(int i=0;i<12;i++){
+            Blob b;
+            b.pos=Vec2f(rng.uniform(-0.6f,0.6f),rng.uniform(-1.2f,1.2f));
+            b.vel=Vec2f(0,0);
+            b.radius=0.15f+rng.uniform()*0.15f;
+            b.temp=rng.uniform();
+            blobs.push_back(b);
+        }
+        nav().pos(0,0,2);
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        float dtf=(float)dt;
+
+        // Heat source at bottom, cool at top
+        for(auto& b:blobs){
+            float heatSource=(b.pos.y<-1.0f)?1.0f:0.0f;
+            float coolSink=(b.pos.y>1.0f)?1.0f:0.0f;
+            b.temp+=(heatSource-coolSink)*dtf*0.5f;
+            b.temp=fmax(0.0f,fmin(1.0f,b.temp));
+
+            // Buoyancy
+            float buoyancy=(b.temp-0.5f)*2.0f;
+            b.vel.y+=buoyancy*dtf;
+
+            // Drag
+            b.vel*=0.98f;
+
+            // Random perturbation
+            b.vel.x+=(rng.uniform()-0.5f)*dtf*0.5f;
+
+            // Update position
+            b.pos+=b.vel*dtf;
+
+            // Boundaries
+            if(b.pos.x<-0.7f){b.pos.x=-0.7f;b.vel.x*=-0.5f;}
+            if(b.pos.x>0.7f){b.pos.x=0.7f;b.vel.x*=-0.5f;}
+            if(b.pos.y<-1.3f){b.pos.y=-1.3f;b.vel.y*=-0.3f;b.temp=fmin(1.0f,b.temp+0.1f);}
+            if(b.pos.y>1.3f){b.pos.y=1.3f;b.vel.y*=-0.3f;b.temp=fmax(0.0f,b.temp-0.1f);}
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        shader.use();
+        shader.uniform("uTime",time);
+        shader.uniform("uNumBlobs",(int)blobs.size());
+        for(int i=0;i<(int)blobs.size()&&i<20;i++){
+            char name[32];
+            snprintf(name,32,"uBlobs[%d]",i);
+            shader.uniform(name,blobs[i].pos.x,blobs[i].pos.y,blobs[i].radius,blobs[i].temp);
+        }
+        g.draw(quad);
+    }
+};
+
+ALLOLIB_WEB_MAIN(LavaLamp)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Particle Systems (Additional)
+  // ==========================================================================
+  {
+    id: 'particles-swarm',
+    title: 'Massive Swarm',
+    description: '50,000+ particles with emergent behavior',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Massive Particle Swarm
+ * Features: 50k particles, spatial hashing, emergent patterns
+ * Controls: WASD+QE navigation, Space = toggle mode
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class MassiveSwarm : public WebApp {
+public:
+    static const int NUM=50000;
+    struct Particle {
+        Vec3f pos,vel;
+    };
+    std::vector<Particle> particles;
+    Mesh mesh;
+    rnd::Random<> rng;
+    int mode=0;
+    Vec3f attractor;
+    float time=0;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        particles.resize(NUM);
+        for(auto& p:particles){
+            float theta=rng.uniform()*2*M_PI;
+            float phi=acosf(rng.uniform()*2-1);
+            float r=rng.uniform()*3;
+            p.pos=Vec3f(r*sinf(phi)*cosf(theta),r*sinf(phi)*sinf(theta),r*cosf(phi));
+            p.vel=Vec3f(0);
+        }
+        nav().pos(0,0,10);
+    }
+
+    void onAnimate(double dt) override {
+        time+=dt;
+        float dtf=fmin(0.016f,(float)dt);
+
+        // Mode-specific attractor
+        if(mode==0){
+            attractor=Vec3f(sinf(time*0.3f)*3,cosf(time*0.4f)*2,sinf(time*0.5f)*2);
+        }else if(mode==1){
+            attractor=Vec3f(0);
+        }else{
+            float r=3+sinf(time*0.5f);
+            attractor=Vec3f(r*cosf(time),0,r*sinf(time));
+        }
+
+        for(auto& p:particles){
+            Vec3f toAttr=attractor-p.pos;
+            float dist=toAttr.mag()+0.01f;
+
+            if(mode==0){
+                // Swirl around attractor
+                Vec3f force=toAttr.normalized()*0.5f;
+                Vec3f tangent=cross(toAttr,Vec3f(0,1,0)).normalized();
+                force+=tangent*2.0f/dist;
+                p.vel+=force*dtf;
+            }else if(mode==1){
+                // Collapse and expand
+                float pulse=sinf(time*2)*0.5f+0.5f;
+                p.vel+=toAttr.normalized()*(pulse-0.3f)*dtf*2;
+            }else{
+                // Orbit
+                Vec3f radial=p.pos;radial.y=0;
+                if(radial.mag()>0.1f){
+                    Vec3f tangent=cross(radial,Vec3f(0,1,0)).normalized();
+                    p.vel+=tangent*dtf*3;
+                    p.vel-=radial.normalized()*(radial.mag()-3)*dtf;
+                }
+                p.vel.y-=p.pos.y*dtf*2;
+            }
+
+            // Damping
+            p.vel*=0.99f;
+
+            // Speed limit
+            float speed=p.vel.mag();
+            if(speed>2.0f)p.vel*=2.0f/speed;
+
+            p.pos+=p.vel*dtf;
+        }
+
+        mesh.reset();
+        for(auto& p:particles){
+            mesh.vertex(p.pos);
+            float speed=p.vel.mag();
+            mesh.color(HSV(speed*0.3f,0.7f,0.9f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f);
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+        g.pointSize(1);
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')mode=(mode+1)%3;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(MassiveSwarm)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Agent-Based (Additional)
+  // ==========================================================================
+  {
+    id: 'agents-traffic',
+    title: 'Traffic Flow',
+    description: 'Traffic simulation with car following and lane changes',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * Traffic Flow Simulation
+ * Features: Car following model, lane changes, intersections
+ * Controls: Space = add cars, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+using namespace al;
+
+struct Car {
+    float x,lane,vel,targetVel;
+    Color col;
+};
+
+class TrafficFlow : public WebApp {
+public:
+    std::vector<Car> cars;
+    Mesh mesh;
+    rnd::Random<> rng;
+    float roadLen=20.0f;
+    int numLanes=3;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::TRIANGLES);
+        reset();
+        nav().pos(0,8,0);
+        nav().faceToward(Vec3f(0,0,0),Vec3f(0,0,-1));
+    }
+
+    void reset(){
+        cars.clear();
+        for(int i=0;i<30;i++)addCar();
+    }
+
+    void addCar(){
+        Car c;
+        c.x=rng.uniform()*roadLen;
+        c.lane=(float)((int)(rng.uniform()*numLanes));
+        c.vel=2+rng.uniform()*2;
+        c.targetVel=c.vel;
+        c.col=Color(rng.uniform()*0.5f+0.5f,rng.uniform()*0.3f,rng.uniform()*0.3f);
+        cars.push_back(c);
+    }
+
+    float getDistToNext(int idx){
+        float minDist=roadLen;
+        for(int i=0;i<(int)cars.size();i++){
+            if(i==idx)continue;
+            if(fabs(cars[i].lane-cars[idx].lane)<0.5f){
+                float dx=cars[i].x-cars[idx].x;
+                if(dx<0)dx+=roadLen;
+                if(dx<minDist)minDist=dx;
+            }
+        }
+        return minDist;
+    }
+
+    bool canChangeLane(int idx,int dir){
+        float targetLane=cars[idx].lane+dir;
+        if(targetLane<0||targetLane>=numLanes)return false;
+        for(int i=0;i<(int)cars.size();i++){
+            if(i==idx)continue;
+            if(fabs(cars[i].lane-targetLane)<0.5f){
+                float dx=fabs(cars[i].x-cars[idx].x);
+                if(dx>roadLen/2)dx=roadLen-dx;
+                if(dx<2.0f)return false;
+            }
+        }
+        return true;
+    }
+
+    void onAnimate(double dt) override {
+        float dtf=(float)dt;
+        for(int i=0;i<(int)cars.size();i++){
+            Car& c=cars[i];
+            float dist=getDistToNext(i);
+
+            // Car following - slow down if too close
+            float safeSpeed=fmax(0.0f,(dist-1.0f)*0.8f);
+            float targetSpeed=fmin(c.targetVel,safeSpeed);
+
+            // Accelerate/decelerate
+            float accel=(targetSpeed-c.vel)*2.0f;
+            c.vel+=accel*dtf;
+            c.vel=fmax(0.0f,c.vel);
+
+            // Lane change decision
+            if(dist<3.0f&&c.vel<c.targetVel*0.7f){
+                if(rng.uniform()<0.02f){
+                    int dir=rng.uniform()<0.5f?-1:1;
+                    if(canChangeLane(i,dir)){
+                        c.lane+=dir;
+                    }else if(canChangeLane(i,-dir)){
+                        c.lane-=dir;
+                    }
+                }
+            }
+
+            // Move
+            c.x+=c.vel*dtf;
+            if(c.x>roadLen)c.x-=roadLen;
+        }
+
+        // Build mesh
+        mesh.reset();
+        float laneWidth=1.5f;
+        float roadWidth=numLanes*laneWidth;
+
+        // Road surface
+        mesh.vertex(-roadWidth/2,0,-roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+        mesh.vertex(roadWidth/2,0,-roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+        mesh.vertex(roadWidth/2,0,roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+        mesh.vertex(-roadWidth/2,0,-roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+        mesh.vertex(roadWidth/2,0,roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+        mesh.vertex(-roadWidth/2,0,roadLen/2);mesh.color(0.2f,0.2f,0.2f);mesh.normal(0,1,0);
+
+        // Cars
+        for(auto& c:cars){
+            float cx=(c.lane+0.5f)*laneWidth-roadWidth/2;
+            float cz=c.x-roadLen/2;
+            float w=0.4f,l=0.8f,h=0.3f;
+            // Simple box
+            Vec3f v[8]={
+                {cx-w,0,cz-l},{cx+w,0,cz-l},{cx+w,0,cz+l},{cx-w,0,cz+l},
+                {cx-w,h,cz-l},{cx+w,h,cz-l},{cx+w,h,cz+l},{cx-w,h,cz+l}
+            };
+            int faces[6][4]={{0,1,2,3},{4,7,6,5},{0,4,5,1},{2,6,7,3},{0,3,7,4},{1,5,6,2}};
+            Vec3f normals[6]={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
+            for(int f=0;f<6;f++){
+                mesh.vertex(v[faces[f][0]]);mesh.color(c.col);mesh.normal(normals[f]);
+                mesh.vertex(v[faces[f][1]]);mesh.color(c.col);mesh.normal(normals[f]);
+                mesh.vertex(v[faces[f][2]]);mesh.color(c.col);mesh.normal(normals[f]);
+                mesh.vertex(v[faces[f][0]]);mesh.color(c.col);mesh.normal(normals[f]);
+                mesh.vertex(v[faces[f][2]]);mesh.color(c.col);mesh.normal(normals[f]);
+                mesh.vertex(v[faces[f][3]]);mesh.color(c.col);mesh.normal(normals[f]);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.3f,0.5f,0.3f);
+        g.depthTesting(true);
+        g.lighting(true);
+        Light light; light.pos(5,10,5); g.light(light);
+        g.meshColor();
+        g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')addCar();
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(TrafficFlow)
+`,
+  },
+
+  {
+    id: 'agents-evolution',
+    title: 'Evolutionary Agents',
+    description: 'Genetic algorithm with mutation and selection',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * Evolutionary Agents
+ * Features: Genetics, mutation, natural selection, food gathering
+ * Controls: Space = fast forward, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+using namespace al;
+
+struct Gene {
+    float speed,sense,size;
+};
+
+struct Agent {
+    Vec2f pos,vel;
+    Gene genes;
+    float energy,age;
+    bool alive;
+};
+
+struct Food {
+    Vec2f pos;
+    bool eaten;
+};
+
+class Evolution : public WebApp {
+public:
+    std::vector<Agent> agents;
+    std::vector<Food> food;
+    Mesh agentMesh,foodMesh;
+    rnd::Random<> rng;
+    int generation=0;
+    float time=0;
+    bool fastMode=false;
+
+    void onCreate() override {
+        agentMesh.primitive(Mesh::POINTS);
+        foodMesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,4);
+    }
+
+    void reset(){
+        agents.clear();
+        food.clear();
+        for(int i=0;i<50;i++){
+            Agent a;
+            a.pos=Vec2f(rng.uniform(-2,2),rng.uniform(-2,2));
+            a.vel=Vec2f(0);
+            a.genes.speed=0.5f+rng.uniform()*1.0f;
+            a.genes.sense=0.3f+rng.uniform()*0.7f;
+            a.genes.size=0.5f+rng.uniform()*0.5f;
+            a.energy=100;
+            a.age=0;
+            a.alive=true;
+            agents.push_back(a);
+        }
+        spawnFood(100);
+        generation=0;
+    }
+
+    void spawnFood(int n){
+        for(int i=0;i<n;i++){
+            Food f;
+            f.pos=Vec2f(rng.uniform(-2.5f,2.5f),rng.uniform(-2.5f,2.5f));
+            f.eaten=false;
+            food.push_back(f);
+        }
+    }
+
+    Agent reproduce(Agent& parent){
+        Agent child;
+        child.pos=parent.pos+Vec2f(rng.uniform(-0.1f,0.1f),rng.uniform(-0.1f,0.1f));
+        child.vel=Vec2f(0);
+        child.genes=parent.genes;
+        // Mutation
+        if(rng.uniform()<0.3f)child.genes.speed+=rng.uniform(-0.2f,0.2f);
+        if(rng.uniform()<0.3f)child.genes.sense+=rng.uniform(-0.1f,0.1f);
+        if(rng.uniform()<0.3f)child.genes.size+=rng.uniform(-0.1f,0.1f);
+        child.genes.speed=fmax(0.1f,fmin(3.0f,child.genes.speed));
+        child.genes.sense=fmax(0.1f,fmin(1.5f,child.genes.sense));
+        child.genes.size=fmax(0.2f,fmin(1.5f,child.genes.size));
+        child.energy=50;
+        child.age=0;
+        child.alive=true;
+        return child;
+    }
+
+    void onAnimate(double dt) override {
+        int steps=fastMode?10:1;
+        float dtf=0.016f;
+
+        for(int s=0;s<steps;s++){
+            time+=dtf;
+            std::vector<Agent> newAgents;
+
+            for(auto& a:agents){
+                if(!a.alive)continue;
+
+                // Find nearest food
+                Food* nearest=nullptr;
+                float nearDist=1e10f;
+                for(auto& f:food){
+                    if(f.eaten)continue;
+                    float d=(f.pos-a.pos).mag();
+                    if(d<nearDist&&d<a.genes.sense){
+                        nearDist=d;
+                        nearest=&f;
+                    }
+                }
+
+                // Move toward food or wander
+                if(nearest){
+                    Vec2f dir=(nearest->pos-a.pos).normalized();
+                    a.vel+=dir*a.genes.speed*dtf*10;
+                }else{
+                    a.vel+=Vec2f(rng.uniform(-1,1),rng.uniform(-1,1))*dtf;
+                }
+
+                // Limit speed
+                float spd=a.vel.mag();
+                if(spd>a.genes.speed)a.vel*=a.genes.speed/spd;
+
+                a.pos+=a.vel*dtf;
+
+                // Bounds
+                if(a.pos.x<-2.5f||a.pos.x>2.5f)a.vel.x*=-1;
+                if(a.pos.y<-2.5f||a.pos.y>2.5f)a.vel.y*=-1;
+                a.pos.x=fmax(-2.5f,fmin(2.5f,a.pos.x));
+                a.pos.y=fmax(-2.5f,fmin(2.5f,a.pos.y));
+
+                // Eat food
+                for(auto& f:food){
+                    if(!f.eaten&&(f.pos-a.pos).mag()<0.1f){
+                        f.eaten=true;
+                        a.energy+=30;
+                    }
+                }
+
+                // Energy cost
+                a.energy-=(0.5f+a.genes.speed*0.3f+a.genes.sense*0.2f)*dtf*10;
+                a.age+=dtf;
+
+                // Death
+                if(a.energy<=0||a.age>30){
+                    a.alive=false;
+                }
+
+                // Reproduction
+                if(a.energy>150){
+                    a.energy-=50;
+                    newAgents.push_back(reproduce(a));
+                }
+            }
+
+            // Add new agents
+            for(auto& a:newAgents)agents.push_back(a);
+
+            // Remove dead
+            agents.erase(std::remove_if(agents.begin(),agents.end(),[](Agent& a){return !a.alive;}),agents.end());
+            food.erase(std::remove_if(food.begin(),food.end(),[](Food& f){return f.eaten;}),food.end());
+
+            // Respawn food
+            if(food.size()<50)spawnFood(10);
+
+            // Check extinction
+            if(agents.empty()){
+                generation++;
+                for(int i=0;i<20;i++){
+                    Agent a;
+                    a.pos=Vec2f(rng.uniform(-2,2),rng.uniform(-2,2));
+                    a.vel=Vec2f(0);
+                    a.genes.speed=0.5f+rng.uniform()*1.0f;
+                    a.genes.sense=0.3f+rng.uniform()*0.7f;
+                    a.genes.size=0.5f+rng.uniform()*0.5f;
+                    a.energy=100;a.age=0;a.alive=true;
+                    agents.push_back(a);
+                }
+            }
+        }
+
+        // Build meshes
+        agentMesh.reset();
+        for(auto& a:agents){
+            agentMesh.vertex(a.pos.x,a.pos.y,0);
+            float hue=a.genes.speed/3.0f;
+            agentMesh.color(HSV(hue,0.8f,0.9f));
+        }
+
+        foodMesh.reset();
+        for(auto& f:food){
+            if(!f.eaten){
+                foodMesh.vertex(f.pos.x,f.pos.y,0);
+                foodMesh.color(0.2f,0.8f,0.2f);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f);
+        g.blending(true);g.blendTrans();g.depthTesting(false);
+        g.pointSize(4);g.meshColor();g.draw(foodMesh);
+        g.pointSize(8);g.meshColor();g.draw(agentMesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')fastMode=!fastMode;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(Evolution)
+`,
+  },
+
+  {
+    id: 'life-neural-creatures',
+    title: 'Neural Creatures',
+    description: 'Creatures with simple neural network brains',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * Neural Network Creatures
+ * Features: Simple feedforward neural nets, learning through evolution
+ * Controls: Space = fast mode, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+using namespace al;
+
+class NeuralCreatures : public WebApp {
+public:
+    static const int INPUTS=6,HIDDEN=4,OUTPUTS=2;
+
+    struct Brain {
+        float w1[INPUTS][HIDDEN],w2[HIDDEN][OUTPUTS];
+        float b1[HIDDEN],b2[OUTPUTS];
+
+        void randomize(rnd::Random<>& rng){
+            for(int i=0;i<INPUTS;i++)for(int j=0;j<HIDDEN;j++)w1[i][j]=rng.uniform(-1,1);
+            for(int i=0;i<HIDDEN;i++)for(int j=0;j<OUTPUTS;j++)w2[i][j]=rng.uniform(-1,1);
+            for(int i=0;i<HIDDEN;i++)b1[i]=rng.uniform(-0.5f,0.5f);
+            for(int i=0;i<OUTPUTS;i++)b2[i]=rng.uniform(-0.5f,0.5f);
+        }
+
+        void mutate(rnd::Random<>& rng,float rate=0.1f){
+            for(int i=0;i<INPUTS;i++)for(int j=0;j<HIDDEN;j++)
+                if(rng.uniform()<rate)w1[i][j]+=rng.uniform(-0.5f,0.5f);
+            for(int i=0;i<HIDDEN;i++)for(int j=0;j<OUTPUTS;j++)
+                if(rng.uniform()<rate)w2[i][j]+=rng.uniform(-0.5f,0.5f);
+        }
+
+        void forward(float in[INPUTS],float out[OUTPUTS]){
+            float h[HIDDEN];
+            for(int j=0;j<HIDDEN;j++){
+                h[j]=b1[j];
+                for(int i=0;i<INPUTS;i++)h[j]+=in[i]*w1[i][j];
+                h[j]=tanhf(h[j]);
+            }
+            for(int j=0;j<OUTPUTS;j++){
+                out[j]=b2[j];
+                for(int i=0;i<HIDDEN;i++)out[j]+=h[i]*w2[i][j];
+                out[j]=tanhf(out[j]);
+            }
+        }
+    };
+
+    struct Creature {
+        Vec2f pos,vel;
+        float angle,energy;
+        Brain brain;
+        bool alive;
+    };
+
+    struct Food { Vec2f pos; bool eaten; };
+
+    std::vector<Creature> creatures;
+    std::vector<Food> food;
+    Mesh creatureMesh,foodMesh;
+    rnd::Random<> rng;
+    bool fastMode=false;
+
+    void onCreate() override {
+        creatureMesh.primitive(Mesh::POINTS);
+        foodMesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,5);
+    }
+
+    void reset(){
+        creatures.clear();
+        food.clear();
+        for(int i=0;i<30;i++){
+            Creature c;
+            c.pos=Vec2f(rng.uniform(-3,3),rng.uniform(-3,3));
+            c.vel=Vec2f(0);
+            c.angle=rng.uniform()*2*M_PI;
+            c.energy=100;
+            c.brain.randomize(rng);
+            c.alive=true;
+            creatures.push_back(c);
+        }
+        for(int i=0;i<80;i++){
+            Food f;
+            f.pos=Vec2f(rng.uniform(-3.5f,3.5f),rng.uniform(-3.5f,3.5f));
+            f.eaten=false;
+            food.push_back(f);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        int steps=fastMode?5:1;
+        float dtf=0.02f;
+
+        for(int s=0;s<steps;s++){
+            std::vector<Creature> babies;
+
+            for(auto& c:creatures){
+                if(!c.alive)continue;
+
+                // Sense nearest food (front left, front right, behind)
+                float sensors[INPUTS]={0,0,0,0,0,0};
+                for(auto& f:food){
+                    if(f.eaten)continue;
+                    Vec2f toFood=f.pos-c.pos;
+                    float dist=toFood.mag();
+                    if(dist<2.0f){
+                        float foodAngle=atan2f(toFood.y,toFood.x);
+                        float relAngle=foodAngle-c.angle;
+                        while(relAngle>M_PI)relAngle-=2*M_PI;
+                        while(relAngle<-M_PI)relAngle+=2*M_PI;
+                        float strength=1.0f/(dist+0.1f);
+                        if(relAngle>0.3f)sensors[0]+=strength;
+                        else if(relAngle<-0.3f)sensors[1]+=strength;
+                        else sensors[2]+=strength;
+                    }
+                }
+                sensors[3]=c.energy/200.0f;
+                sensors[4]=sinf(c.angle);
+                sensors[5]=cosf(c.angle);
+
+                // Neural network decision
+                float outputs[OUTPUTS];
+                c.brain.forward(sensors,outputs);
+
+                // Apply outputs: turn and speed
+                c.angle+=outputs[0]*dtf*3;
+                float speed=(outputs[1]+1)*0.5f*2;
+
+                c.vel.x=cosf(c.angle)*speed;
+                c.vel.y=sinf(c.angle)*speed;
+                c.pos+=c.vel*dtf;
+
+                // Wrap around
+                if(c.pos.x<-4)c.pos.x=4;if(c.pos.x>4)c.pos.x=-4;
+                if(c.pos.y<-4)c.pos.y=4;if(c.pos.y>4)c.pos.y=-4;
+
+                // Eat food
+                for(auto& f:food){
+                    if(!f.eaten&&(f.pos-c.pos).mag()<0.2f){
+                        f.eaten=true;
+                        c.energy+=40;
+                    }
+                }
+
+                c.energy-=dtf*5;
+                if(c.energy<=0)c.alive=false;
+
+                // Reproduce
+                if(c.energy>180){
+                    c.energy-=80;
+                    Creature baby;
+                    baby.pos=c.pos;
+                    baby.angle=rng.uniform()*2*M_PI;
+                    baby.vel=Vec2f(0);
+                    baby.energy=80;
+                    baby.brain=c.brain;
+                    baby.brain.mutate(rng);
+                    baby.alive=true;
+                    babies.push_back(baby);
+                }
+            }
+
+            for(auto& b:babies)creatures.push_back(b);
+            creatures.erase(std::remove_if(creatures.begin(),creatures.end(),[](Creature& c){return !c.alive;}),creatures.end());
+            food.erase(std::remove_if(food.begin(),food.end(),[](Food& f){return f.eaten;}),food.end());
+
+            if(food.size()<30){
+                for(int i=0;i<20;i++){
+                    Food f;f.pos=Vec2f(rng.uniform(-3.5f,3.5f),rng.uniform(-3.5f,3.5f));f.eaten=false;
+                    food.push_back(f);
+                }
+            }
+
+            if(creatures.empty())reset();
+        }
+
+        creatureMesh.reset();
+        for(auto& c:creatures){
+            creatureMesh.vertex(c.pos.x,c.pos.y,0);
+            creatureMesh.color(HSV(c.energy/200.0f*0.3f,0.8f,0.9f));
+        }
+        foodMesh.reset();
+        for(auto& f:food){
+            if(!f.eaten){foodMesh.vertex(f.pos.x,f.pos.y,0);foodMesh.color(0.2f,0.9f,0.3f);}
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f);
+        g.blending(true);g.blendTrans();g.depthTesting(false);
+        g.pointSize(5);g.meshColor();g.draw(foodMesh);
+        g.pointSize(10);g.meshColor();g.draw(creatureMesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()==' ')fastMode=!fastMode;
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(NeuralCreatures)
+`,
+  },
+
+  {
+    id: 'life-coral-growth',
+    title: 'Coral Growth',
+    description: 'Diffusion-limited aggregation coral simulation',
+    category: 'simulation',
+    subcategory: 'life',
+    code: `/**
+ * Coral Growth (DLA)
+ * Features: Diffusion-limited aggregation, branching structures
+ * Controls: Space = spawn particles, R = reset
+ */
+#include "al_playground_compat.hpp"
+#include <cmath>
+#include <vector>
+#include <cstring>
+
+using namespace al;
+
+class CoralGrowth : public WebApp {
+public:
+    static const int SIZE=200;
+    bool grid[SIZE][SIZE];
+    Mesh mesh;
+    rnd::Random<> rng;
+    int particles=0;
+
+    struct Walker { float x,y; };
+    std::vector<Walker> walkers;
+
+    void onCreate() override {
+        mesh.primitive(Mesh::POINTS);
+        reset();
+        nav().pos(0,0,3);
+    }
+
+    void reset(){
+        memset(grid,false,sizeof(grid));
+        // Seed at bottom center
+        for(int x=SIZE/2-2;x<=SIZE/2+2;x++)grid[0][x]=true;
+        walkers.clear();
+        particles=5;
+    }
+
+    bool hasNeighbor(int x,int y){
+        for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+            int nx=x+dx,ny=y+dy;
+            if(nx>=0&&nx<SIZE&&ny>=0&&ny<SIZE&&grid[ny][nx])return true;
+        }
+        return false;
+    }
+
+    void onAnimate(double dt) override {
+        // Spawn new walkers at top
+        while((int)walkers.size()<500){
+            Walker w;
+            w.x=rng.uniform()*SIZE;
+            w.y=SIZE-1;
+            walkers.push_back(w);
+        }
+
+        // Move walkers
+        for(int iter=0;iter<50;iter++){
+            for(auto it=walkers.begin();it!=walkers.end();){
+                it->x+=(rng.uniform()-0.5f)*2;
+                it->y+=(rng.uniform()-0.5f)*2-0.3f; // Slight downward bias
+
+                int ix=(int)it->x,iy=(int)it->y;
+
+                // Out of bounds
+                if(ix<0||ix>=SIZE||iy<0){
+                    it=walkers.erase(it);
+                    continue;
+                }
+                if(iy>=SIZE){it->y=SIZE-1;iy=SIZE-1;}
+
+                // Check if we should stick
+                if(hasNeighbor(ix,iy)&&!grid[iy][ix]){
+                    grid[iy][ix]=true;
+                    particles++;
+                    it=walkers.erase(it);
+                }else{
+                    ++it;
+                }
+            }
+        }
+
+        // Build mesh
+        mesh.reset();
+        float scale=2.0f/SIZE;
+        for(int y=0;y<SIZE;y++)for(int x=0;x<SIZE;x++){
+            if(grid[y][x]){
+                mesh.vertex((x-SIZE/2)*scale,(y-SIZE/2)*scale,0);
+                float h=(float)y/SIZE;
+                mesh.color(HSV(0.45f+h*0.15f,0.6f,0.7f+h*0.3f));
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f,0.15f,0.2f);
+        g.blending(true);g.blendAdd();g.depthTesting(false);
+        g.pointSize(2);g.meshColor();g.draw(mesh);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if(k.key()=='r')reset();
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(CoralGrowth)
 `,
   },
 
@@ -7077,6 +12375,8 @@ export const multiFileExamples: MultiFileExample[] = [
  * - Separate voice definition (voices/FMVoice.hpp)
  * - Reusable effect (effects/Reverb.hpp)
  * - Clean main application file
+ *
+ * Controls: ZSXDCVGBHNJM = piano keys (Z=C4)
  */
 
 #include "al_playground_compat.hpp"
@@ -7085,9 +12385,9 @@ export const multiFileExamples: MultiFileExample[] = [
 
 using namespace al;
 
-class OrganizedSynthApp : public WebApp {
+class OrganizedSynthApp : public al::WebApp {
 public:
-    SynthGUIManager<FMVoice> synthManager;
+    SynthGUIManager<FMVoice> synthManager{"FMSynth"};
     SimpleReverb reverb;
 
     void onCreate() override {
@@ -7097,7 +12397,7 @@ public:
     }
 
     void onAnimate(double dt) override {
-        synthManager.setCurrentTime(currentTime());
+        (void)dt;
     }
 
     void onDraw(Graphics& g) override {
@@ -7105,7 +12405,6 @@ public:
         g.lighting(true);
         g.depthTesting(true);
         synthManager.render(g);
-        synthManager.drawSynthControlPanel();
     }
 
     void onSound(AudioIOData& io) override {
@@ -7122,22 +12421,22 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
-        int midi = keyToMidi(k.key());
+        int midi = asciiToMIDI(k.key());
         if (midi > 0) {
-            synthManager.voice()->setInternalParameterValue("frequency", midiToFreq(midi));
+            synthManager.voice()->setInternalParameterValue("frequency", 440.0f * powf(2.0f, (midi - 69) / 12.0f));
             synthManager.triggerOn(midi);
         }
         return true;
     }
 
     bool onKeyUp(const Keyboard& k) override {
-        int midi = keyToMidi(k.key());
+        int midi = asciiToMIDI(k.key());
         if (midi > 0) synthManager.triggerOff(midi);
         return true;
     }
 };
 
-ALLOLIB_MAIN(OrganizedSynthApp)
+ALLOLIB_WEB_MAIN(OrganizedSynthApp)
 `,
       },
       {
@@ -7159,12 +12458,11 @@ ALLOLIB_MAIN(OrganizedSynthApp)
 
 using namespace al;
 
-class FMVoice : public SynthVoice {
+class FMVoice : public al::SynthVoice {
 public:
     gam::Sine<> carrier;
     gam::Sine<> modulator;
     gam::Env<4> env;
-    gam::Pan<> pan;
 
     Mesh sphere;
     float envValue = 0;
@@ -7190,15 +12488,15 @@ public:
         createInternalTriggerParameter("releaseTime", 0.8, 0.01, 5.0);
     }
 
-    void onProcess(AudioIOData& io) override {
+    void onProcess(al::AudioIOData& io) override {
         float freq = getInternalParameterValue("frequency");
         float amp = getInternalParameterValue("amplitude");
         float modRatio = getInternalParameterValue("modRatio");
         float modIndex = getInternalParameterValue("modIndex");
+        float panVal = getInternalParameterValue("pan");
 
         env.lengths()[0] = getInternalParameterValue("attackTime");
         env.lengths()[2] = getInternalParameterValue("releaseTime");
-        pan.pos(getInternalParameterValue("pan"));
 
         modulator.freq(freq * modRatio);
 
@@ -7207,24 +12505,25 @@ public:
             carrier.freq(freq + mod);
 
             envValue = env();
-            float s1 = carrier() * envValue * amp;
-            float s2;
-            pan(s1, s1, s2);
+            float s = carrier() * envValue * amp;
 
-            io.out(0) += s1;
-            io.out(1) += s2;
+            // Manual stereo panning: panVal from -1 (left) to 1 (right)
+            float leftGain = (1.0f - panVal) * 0.5f + 0.5f;
+            float rightGain = (1.0f + panVal) * 0.5f + 0.5f;
+            io.out(0) += s * leftGain;
+            io.out(1) += s * rightGain;
         }
 
         if (env.done()) free();
     }
 
-    void onProcess(Graphics& g) override {
+    void onProcess(al::Graphics& g) override {
         g.pushMatrix();
         g.translate(getInternalParameterValue("pan") * 2, 0, 0);
         g.scale(1 + envValue);
 
         float freq = getInternalParameterValue("frequency");
-        float hue = log2(freq / 110.0f) / 4.0f;
+        float hue = log2f(freq / 110.0f) / 4.0f;
         g.color(HSV(hue, 0.7f, 0.5f + envValue * 0.5f));
         g.draw(sphere);
         g.popMatrix();

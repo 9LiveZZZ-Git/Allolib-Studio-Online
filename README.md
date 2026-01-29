@@ -37,6 +37,18 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
 
+### Recording & Export
+- **Video Recording** - Record WebGL canvas with synchronized audio to WebM
+- **Screenshot Capture** - Export frames as PNG, JPEG, or WebP
+- **Social Media Presets** - Ready-to-use sizes for YouTube Shorts, Instagram Reels, TikTok, and more
+- **Quality Settings** - Low, Medium, High, Ultra bitrate options
+- **Popout Visualizer** - Open output in a dedicated window for recording
+- **Size Presets**:
+  - **Shorts & Reels (9:16)** - YouTube Shorts, Instagram Reels, TikTok, Stories (1080x1920)
+  - **YouTube** - 4K, 1080p, 720p landscape formats
+  - **Instagram** - Feed (square), Portrait (4:5)
+  - **Standard** - 4K, 2K, 1080p, 720p, and custom sizes
+
 ### Sequencer
 - **Clip-Based Sequencer** - Create, edit, and arrange `.synthSequence` clips on a timeline
 - **Auto Synth Detection** - Detects `SynthVoice` subclasses from your C++ source on compile

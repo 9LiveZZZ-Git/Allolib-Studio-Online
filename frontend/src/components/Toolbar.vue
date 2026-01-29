@@ -1000,6 +1000,26 @@ function getPlatformBadgeClass(platform: string) {
             </div>
           </div>
 
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Default Point Size</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="number"
+                  v-model.number="settings.display.defaultPointSize"
+                  @input="handleSettingChange()"
+                  min="0.1"
+                  max="20"
+                  step="0.1"
+                  class="w-16 px-2 py-1 bg-editor-bg border border-editor-border rounded text-sm text-white text-right"
+                />
+              </div>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+              Controls gl_PointSize for particle rendering (0.1 - 20)
+            </div>
+          </div>
+
           <button
             @click="settings.resetDisplay(); handleSettingChange()"
             class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"

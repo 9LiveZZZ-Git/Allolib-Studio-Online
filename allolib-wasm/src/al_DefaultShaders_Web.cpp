@@ -117,6 +117,7 @@ uniform mat4 al_ProjectionMatrix;
 uniform mat4 al_NormalMatrix; // normal matrix: transpose of inverse of al_ModelViewMatrix
 uniform float eye_sep;
 uniform float foc_len;
+uniform float al_PointSize;
 layout (location = 0) in vec3 position;
 layout (location = 3) in vec3 normal;
 out vec3 normal_eye;
@@ -206,7 +207,13 @@ std::string multilight_vert_body_perlight(int num_lights) {
   return s;
 }
 
-std::string multilight_vert_body_end() { return "}"; }
+std::string multilight_vert_body_end() {
+  return R"(
+    // Default to 1.0 if point size not set (uniform defaults to 0)
+    // Note: glPointSize() doesn't work in WebGL2, so we use shader uniform
+    gl_PointSize = al_PointSize > 0.0 ? al_PointSize : 1.0;
+})";
+}
 
 // WebGL2 / OpenGL ES 3.0 fragment shader header
 std::string multilight_frag_header_common() {
