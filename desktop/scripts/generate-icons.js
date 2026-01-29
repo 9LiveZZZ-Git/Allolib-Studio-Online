@@ -7,13 +7,12 @@
  *
  * Usage: node generate-icons.js
  *
- * Requirements: npm install sharp png-to-ico
+ * Requirements: npm install sharp
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// Try to use sharp for image generation, fall back to creating empty files
 async function generateIcons() {
   const resourcesDir = path.join(__dirname, '..', 'resources');
   const iconsDir = path.join(resourcesDir, 'icons');
@@ -29,38 +28,17 @@ async function generateIcons() {
   let sharp;
   try {
     sharp = require('sharp');
-    console.log('Using sharp for icon generation');
   } catch (e) {
-    console.log('sharp not available, creating placeholder files');
-    console.log('For proper icons, run: npm install sharp');
-
-    // Create placeholder files
-    const placeholderPng = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      'base64'
-    );
-
-    // Create minimal placeholder files
-    fs.writeFileSync(path.join(resourcesDir, 'icon.png'), placeholderPng);
-    fs.writeFileSync(path.join(resourcesDir, 'tray-icon.png'), placeholderPng);
-
-    // Create Linux icon sizes
-    const sizes = [16, 32, 48, 64, 128, 256, 512];
-    for (const size of sizes) {
-      fs.writeFileSync(path.join(iconsDir, `${size}x${size}.png`), placeholderPng);
-    }
-
-    console.log('Placeholder icons created. Replace with proper icons before release.');
-    return;
+    console.error('Error: sharp is required for icon generation');
+    console.error('Run: npm install sharp');
+    process.exit(1);
   }
 
-  // Generate icons with sharp
-  const sizes = [16, 32, 48, 64, 128, 256, 512];
+  console.log('Generating icons with sharp...');
 
-  // Create a simple gradient icon
-  async function createIcon(size) {
-    // Create a simple blue gradient square with "A" letter
-    const svg = `
+  // SVG template for the icon - blue gradient with "A" letter
+  function createSvg(size) {
+    return Buffer.from(`
       <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -69,50 +47,40 @@ async function generateIcons() {
           </linearGradient>
         </defs>
         <rect width="${size}" height="${size}" rx="${size * 0.15}" fill="url(#grad)"/>
-        <text x="50%" y="55%" font-family="Arial, sans-serif" font-size="${size * 0.6}"
+        <text x="50%" y="58%" font-family="Arial, Helvetica, sans-serif" font-size="${size * 0.55}"
               font-weight="bold" fill="white" text-anchor="middle" dominant-baseline="middle">A</text>
       </svg>
-    `;
-
-    return sharp(Buffer.from(svg)).png().toBuffer();
+    `);
   }
 
-  console.log('Generating icons...');
+  // Generate icons at various sizes
+  const sizes = [16, 32, 48, 64, 128, 256, 512];
 
-  // Generate PNG icons for each size
   for (const size of sizes) {
-    const buffer = await createIcon(size);
-    const filename = path.join(iconsDir, `${size}x${size}.png`);
-    fs.writeFileSync(filename, buffer);
-    console.log(`  Created: ${size}x${size}.png`);
+    const svg = createSvg(size);
+    const png = await sharp(svg).png().toBuffer();
+
+    // Write to icons folder
+    fs.writeFileSync(path.join(iconsDir, `${size}x${size}.png`), png);
+    console.log(`Created: resources/icons/${size}x${size}.png`);
   }
 
   // Copy 256x256 as main icon
-  const mainIcon = await createIcon(256);
+  const mainIcon = await sharp(createSvg(256)).png().toBuffer();
   fs.writeFileSync(path.join(resourcesDir, 'icon.png'), mainIcon);
-  console.log('  Created: icon.png');
+  console.log('Created: resources/icon.png');
 
   // Create tray icon (16x16)
-  const trayIcon = await createIcon(16);
+  const trayIcon = await sharp(createSvg(16)).png().toBuffer();
   fs.writeFileSync(path.join(resourcesDir, 'tray-icon.png'), trayIcon);
-  console.log('  Created: tray-icon.png');
-
-  // Try to create ICO for Windows
-  try {
-    const pngToIco = require('png-to-ico');
-    const pngFiles = [16, 32, 48, 64, 128, 256].map(size =>
-      path.join(iconsDir, `${size}x${size}.png`)
-    );
-    const ico = await pngToIco(pngFiles);
-    fs.writeFileSync(path.join(resourcesDir, 'icon.ico'), ico);
-    console.log('  Created: icon.ico');
-  } catch (e) {
-    console.log('  Skipping ICO (install png-to-ico for Windows icon)');
-  }
+  console.log('Created: resources/tray-icon.png');
 
   console.log('');
   console.log('Icon generation complete!');
-  console.log('Note: For macOS .icns, use iconutil on macOS or an online converter.');
+  console.log('Note: These are placeholder icons. Replace with proper designed icons before production release.');
 }
 
-generateIcons().catch(console.error);
+generateIcons().catch(err => {
+  console.error('Icon generation failed:', err);
+  process.exit(1);
+});

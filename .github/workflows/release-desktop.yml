@@ -74,7 +74,15 @@ jobs:
 
       - name: Install desktop dependencies
         working-directory: desktop
-        run: npm ci
+        run: npm install
+
+      - name: Install sharp for icon generation
+        working-directory: desktop
+        run: npm install sharp --no-save
+
+      - name: Generate icons
+        working-directory: desktop
+        run: node scripts/generate-icons.js
 
       - name: Build desktop app
         working-directory: desktop
@@ -123,7 +131,15 @@ jobs:
 
       - name: Install desktop dependencies
         working-directory: desktop
-        run: npm ci
+        run: npm install
+
+      - name: Install sharp for icon generation
+        working-directory: desktop
+        run: npm install sharp --no-save
+
+      - name: Generate icons
+        working-directory: desktop
+        run: node scripts/generate-icons.js
 
       - name: Build desktop app
         working-directory: desktop
@@ -141,7 +157,6 @@ jobs:
           name: macos-release
           path: |
             desktop/release/*.dmg
-            desktop/release/*.pkg
             desktop/release/latest-mac.yml
 
   # Build Linux
@@ -172,7 +187,15 @@ jobs:
 
       - name: Install desktop dependencies
         working-directory: desktop
-        run: npm ci
+        run: npm install
+
+      - name: Install sharp for icon generation
+        working-directory: desktop
+        run: npm install sharp --no-save
+
+      - name: Generate icons
+        working-directory: desktop
+        run: node scripts/generate-icons.js
 
       - name: Build desktop app
         working-directory: desktop
@@ -245,7 +268,6 @@ jobs:
             release/*.exe
             release/*.zip
             release/*.dmg
-            release/*.pkg
             release/*.AppImage
             release/*.deb
             release/*.yml
@@ -256,25 +278,18 @@ jobs:
 
             | Platform | Download |
             |----------|----------|
-            | Windows (Installer) | `AlloLib-Studio-Setup-*.exe` |
-            | Windows (Portable) | `AlloLib-Studio-*-win.zip` |
+            | Windows | `AlloLib-Studio-Setup-*.exe` |
             | macOS (Intel) | `AlloLib-Studio-*-x64.dmg` |
             | macOS (Apple Silicon) | `AlloLib-Studio-*-arm64.dmg` |
-            | Linux (AppImage) | `AlloLib-Studio-*.AppImage` |
-            | Linux (Debian/Ubuntu) | `allolib-studio_*.deb` |
+            | Linux | `AlloLib-Studio-*.AppImage` |
 
             ### Installation
 
-            **Windows:** Run the installer or extract the portable ZIP.
+            **Windows:** Run the installer.
 
-            **macOS:** Open the DMG and drag to Applications. You may need to right-click and select "Open" the first time due to unsigned app.
+            **macOS:** Open the DMG and drag to Applications. You may need to right-click and select "Open" the first time.
 
-            **Linux:** Make the AppImage executable (`chmod +x`) and run, or install the .deb package.
-
-            ### Requirements
-
-            - For compilation features, you need Docker or Emscripten SDK installed locally.
-            - The app runs a local server on port 3001 for compilation services.
+            **Linux:** Make the AppImage executable (`chmod +x`) and run it.
 
             ### What's Changed
 
