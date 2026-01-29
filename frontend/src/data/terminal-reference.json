@@ -1,0 +1,745 @@
+{
+  "version": "0.1.0",
+  "categories": [
+    {
+      "name": "File System",
+      "icon": "folder",
+      "commands": [
+        {
+          "name": "ls",
+          "syntax": "ls [-l] [-a] [path]",
+          "description": "List directory contents",
+          "flags": [
+            { "flag": "-l", "description": "Long format with size and date" },
+            { "flag": "-a", "description": "Show hidden entries (. and ..)" }
+          ],
+          "examples": [
+            "ls",
+            "ls -l /src",
+            "ls -la"
+          ]
+        },
+        {
+          "name": "cd",
+          "syntax": "cd [path]",
+          "description": "Change working directory",
+          "examples": [
+            "cd",
+            "cd /src",
+            "cd ..",
+            "cd ~"
+          ]
+        },
+        {
+          "name": "pwd",
+          "syntax": "pwd",
+          "description": "Print working directory"
+        },
+        {
+          "name": "cat",
+          "syntax": "cat [-n] <file> ...",
+          "description": "Display file contents",
+          "flags": [
+            { "flag": "-n", "description": "Show line numbers" }
+          ],
+          "examples": [
+            "cat main.cpp",
+            "cat -n config.h"
+          ]
+        },
+        {
+          "name": "head",
+          "syntax": "head [-n N] <file>",
+          "description": "Show the first N lines of a file (default 10)",
+          "flags": [
+            { "flag": "-n N", "description": "Number of lines to show" }
+          ],
+          "examples": [
+            "head main.cpp",
+            "head -n 20 large-file.txt"
+          ]
+        },
+        {
+          "name": "tail",
+          "syntax": "tail [-n N] <file>",
+          "description": "Show the last N lines of a file (default 10)",
+          "flags": [
+            { "flag": "-n N", "description": "Number of lines to show" }
+          ]
+        },
+        {
+          "name": "touch",
+          "syntax": "touch <file>",
+          "description": "Create empty file",
+          "examples": [
+            "touch newfile.cpp"
+          ]
+        },
+        {
+          "name": "mkdir",
+          "syntax": "mkdir [-p] <dir> ...",
+          "description": "Create directory",
+          "flags": [
+            { "flag": "-p", "description": "Create parent directories as needed" }
+          ],
+          "examples": [
+            "mkdir src",
+            "mkdir -p src/audio/synths"
+          ]
+        },
+        {
+          "name": "rm",
+          "syntax": "rm [-r] [-f] <file|dir> ...",
+          "description": "Remove files or directories",
+          "flags": [
+            { "flag": "-r", "description": "Recursive (for directories)" },
+            { "flag": "-f", "description": "Force (no error if missing)" }
+          ],
+          "examples": [
+            "rm old.cpp",
+            "rm -rf temp/"
+          ]
+        },
+        {
+          "name": "rmdir",
+          "syntax": "rmdir <dir>",
+          "description": "Remove empty directory"
+        },
+        {
+          "name": "cp",
+          "syntax": "cp <src> <dest>",
+          "description": "Copy file",
+          "examples": [
+            "cp main.cpp main_backup.cpp"
+          ]
+        },
+        {
+          "name": "mv",
+          "syntax": "mv <src> <dest>",
+          "description": "Move or rename file",
+          "examples": [
+            "mv old.cpp new.cpp",
+            "mv file.txt /archive/"
+          ]
+        },
+        {
+          "name": "find",
+          "syntax": "find [path] [-name pattern]",
+          "description": "Find files matching a glob pattern",
+          "flags": [
+            { "flag": "-name pattern", "description": "Match filename pattern (* = anything, ? = one char)" }
+          ],
+          "examples": [
+            "find -name \"*.cpp\"",
+            "find /src -name \"test*\""
+          ]
+        },
+        {
+          "name": "grep",
+          "syntax": "grep [-i] [-n] [-l] [-v] <pattern> [files...]",
+          "description": "Search for pattern in file contents",
+          "flags": [
+            { "flag": "-i", "description": "Case insensitive" },
+            { "flag": "-n", "description": "Show line numbers" },
+            { "flag": "-l", "description": "Only show filenames" },
+            { "flag": "-v", "description": "Invert match" }
+          ],
+          "examples": [
+            "grep TODO *.cpp",
+            "grep -in error log.txt"
+          ]
+        },
+        {
+          "name": "wc",
+          "syntax": "wc <file> ...",
+          "description": "Print line, word, and byte counts"
+        },
+        {
+          "name": "tree",
+          "syntax": "tree [path]",
+          "description": "Display directory tree",
+          "examples": [
+            "tree",
+            "tree /src"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Editor & Project",
+      "icon": "code",
+      "commands": [
+        {
+          "name": "open",
+          "syntax": "open <file>",
+          "description": "Open file in editor",
+          "examples": [
+            "open main.cpp"
+          ]
+        },
+        {
+          "name": "compile",
+          "syntax": "compile",
+          "description": "Compile the project"
+        },
+        {
+          "name": "run",
+          "syntax": "run",
+          "description": "Compile and run the project"
+        },
+        {
+          "name": "stop",
+          "syntax": "stop",
+          "description": "Stop running application"
+        },
+        {
+          "name": "status",
+          "syntax": "status",
+          "description": "Show application status (compiling, running, etc.)"
+        }
+      ]
+    },
+    {
+      "name": "Utilities",
+      "icon": "settings",
+      "commands": [
+        {
+          "name": "echo",
+          "syntax": "echo <text>",
+          "description": "Print text. Supports $VARIABLE expansion.",
+          "examples": [
+            "echo Hello World",
+            "echo $USER",
+            "echo \"text\" > file.txt"
+          ]
+        },
+        {
+          "name": "clear",
+          "syntax": "clear",
+          "description": "Clear terminal screen"
+        },
+        {
+          "name": "history",
+          "syntax": "history [-c] [N]",
+          "description": "Show command history",
+          "flags": [
+            { "flag": "-c", "description": "Clear history" },
+            { "flag": "N", "description": "Show last N entries" }
+          ]
+        },
+        {
+          "name": "alias",
+          "syntax": "alias [name=cmd]",
+          "description": "Show or set command aliases",
+          "examples": [
+            "alias",
+            "alias ll='ls -l'",
+            "alias rebuild='compile && run'"
+          ]
+        },
+        {
+          "name": "unalias",
+          "syntax": "unalias <name>",
+          "description": "Remove an alias"
+        },
+        {
+          "name": "env",
+          "syntax": "env",
+          "description": "Show environment variables"
+        },
+        {
+          "name": "export",
+          "syntax": "export <KEY>=<VALUE>",
+          "description": "Set environment variable",
+          "examples": [
+            "export DEBUG=true"
+          ]
+        },
+        {
+          "name": "date",
+          "syntax": "date",
+          "description": "Show current date and time"
+        },
+        {
+          "name": "whoami",
+          "syntax": "whoami",
+          "description": "Show current user"
+        },
+        {
+          "name": "which",
+          "syntax": "which <cmd>",
+          "description": "Show command type (builtin, alias, or function)"
+        },
+        {
+          "name": "version",
+          "syntax": "version",
+          "description": "Show terminal version info"
+        },
+        {
+          "name": "help",
+          "syntax": "help [command]",
+          "description": "Show help for all commands or a specific command",
+          "examples": [
+            "help",
+            "help seq",
+            "help js"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sequencer",
+      "icon": "music",
+      "commands": [
+        {
+          "name": "seq play",
+          "syntax": "seq play",
+          "description": "Start sequencer playback"
+        },
+        {
+          "name": "seq stop",
+          "syntax": "seq stop",
+          "description": "Stop playback and reset to beginning"
+        },
+        {
+          "name": "seq pause",
+          "syntax": "seq pause",
+          "description": "Pause playback at current position"
+        },
+        {
+          "name": "seq seek",
+          "syntax": "seq seek <time>",
+          "description": "Jump to time position (in seconds or beats with 'b' suffix)",
+          "examples": [
+            "seq seek 0",
+            "seq seek 4.5",
+            "seq seek 8b"
+          ]
+        },
+        {
+          "name": "seq bpm",
+          "syntax": "seq bpm [value]",
+          "description": "Get or set tempo in BPM",
+          "examples": [
+            "seq bpm",
+            "seq bpm 140"
+          ]
+        },
+        {
+          "name": "seq loop",
+          "syntax": "seq loop [on|off|start|end]",
+          "description": "Toggle loop mode or set loop points",
+          "examples": [
+            "seq loop on",
+            "seq loop off",
+            "seq loop start 0",
+            "seq loop end 8b"
+          ]
+        },
+        {
+          "name": "seq snap",
+          "syntax": "seq snap [mode]",
+          "description": "Set snap grid mode",
+          "examples": [
+            "seq snap 1/4",
+            "seq snap 1/8",
+            "seq snap off"
+          ]
+        },
+        {
+          "name": "seq tracks",
+          "syntax": "seq tracks",
+          "description": "List all arrangement tracks"
+        },
+        {
+          "name": "seq track",
+          "syntax": "seq track <cmd> [args]",
+          "description": "Manage tracks: add, delete, mute, solo",
+          "examples": [
+            "seq track add MySynth",
+            "seq track del 2",
+            "seq track mute 1",
+            "seq track solo 1"
+          ]
+        },
+        {
+          "name": "seq clips",
+          "syntax": "seq clips",
+          "description": "List all clips in arrangement"
+        },
+        {
+          "name": "seq clip",
+          "syntax": "seq clip <cmd> [args]",
+          "description": "Manage clips: new, select, delete, info",
+          "examples": [
+            "seq clip new 1",
+            "seq clip sel clip-xxx",
+            "seq clip del clip-xxx",
+            "seq clip info"
+          ]
+        },
+        {
+          "name": "seq notes",
+          "syntax": "seq notes [clipId]",
+          "description": "List notes in the active or specified clip"
+        },
+        {
+          "name": "seq note",
+          "syntax": "seq note <cmd> [args]",
+          "description": "Manage notes: add, delete",
+          "examples": [
+            "seq note add 440 0 1",
+            "seq note del note-xxx"
+          ]
+        },
+        {
+          "name": "seq status",
+          "syntax": "seq status",
+          "description": "Show sequencer state (BPM, position, playing)"
+        },
+        {
+          "name": "seq synths",
+          "syntax": "seq synths",
+          "description": "List detected synth classes"
+        },
+        {
+          "name": "seq save",
+          "syntax": "seq save <name>",
+          "description": "Save sequence to file",
+          "examples": [
+            "seq save my-sequence"
+          ]
+        },
+        {
+          "name": "seq load",
+          "syntax": "seq load <file>",
+          "description": "Load sequence from file",
+          "examples": [
+            "seq load /sequences/demo.synthSequence"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Scripting",
+      "icon": "terminal",
+      "commands": [
+        {
+          "name": "fn",
+          "syntax": "fn <name> [js] <command|{body}>",
+          "description": "Define a custom function (shell or JavaScript)",
+          "examples": [
+            "fn greet echo \"Hello, $1!\"",
+            "fn rebuild compile && run",
+            "fn setup { mkdir src; touch src/main.cpp }",
+            "fn hello js { print(\"Hello, \" + $1) }",
+            "fn scale js { for(let i=0;i<8;i++) print(mtof(60+i)) }"
+          ]
+        },
+        {
+          "name": "script list",
+          "syntax": "script list",
+          "description": "List all user-defined scripts"
+        },
+        {
+          "name": "script show",
+          "syntax": "script show <name>",
+          "description": "Show script source code"
+        },
+        {
+          "name": "script edit",
+          "syntax": "script edit <name> [js]",
+          "description": "Edit script in the editor (add 'js' for JavaScript)",
+          "examples": [
+            "script edit myfunction",
+            "script edit myscript js"
+          ]
+        },
+        {
+          "name": "script del",
+          "syntax": "script del <name>",
+          "description": "Delete a user script"
+        },
+        {
+          "name": "script export",
+          "syntax": "script export <name>",
+          "description": "Save script to a file"
+        },
+        {
+          "name": "script import",
+          "syntax": "script import <file>",
+          "description": "Import script from .sh or .js file"
+        },
+        {
+          "name": "script doc",
+          "syntax": "script doc <name> <description>",
+          "description": "Set documentation for a script"
+        },
+        {
+          "name": "source",
+          "syntax": "source <file> [args]",
+          "description": "Execute commands from a script file",
+          "examples": [
+            "source /scripts/setup.sh",
+            ". mycommands.sh arg1 arg2"
+          ]
+        },
+        {
+          "name": "js",
+          "syntax": "js <code|{block}|file.js>",
+          "description": "Execute JavaScript code with full API access",
+          "examples": [
+            "js print(\"Hello!\")",
+            "js { for(let i=0; i<5; i++) print(i) }",
+            "js myscript.js"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "JavaScript API",
+      "icon": "api",
+      "commands": [
+        {
+          "name": "print / echo",
+          "syntax": "print(...args), echo(...args)",
+          "description": "Print text to terminal"
+        },
+        {
+          "name": "error / warn / info / success",
+          "syntax": "error(msg), warn(msg), info(msg), success(msg)",
+          "description": "Print colored output"
+        },
+        {
+          "name": "exec / run",
+          "syntax": "exec(cmd), run(cmd)",
+          "description": "Execute a terminal command"
+        },
+        {
+          "name": "fs.read",
+          "syntax": "fs.read(path)",
+          "description": "Read file contents (returns string)"
+        },
+        {
+          "name": "fs.write",
+          "syntax": "fs.write(path, content)",
+          "description": "Write content to file"
+        },
+        {
+          "name": "fs.exists",
+          "syntax": "fs.exists(path)",
+          "description": "Check if file exists"
+        },
+        {
+          "name": "fs.list",
+          "syntax": "fs.list(path)",
+          "description": "List directory contents"
+        },
+        {
+          "name": "fs.delete",
+          "syntax": "fs.delete(path)",
+          "description": "Delete a file"
+        },
+        {
+          "name": "project.name",
+          "syntax": "project.name",
+          "description": "Get or set project name"
+        },
+        {
+          "name": "project.files",
+          "syntax": "project.files",
+          "description": "Array of file paths in project"
+        },
+        {
+          "name": "project.compile / run / stop",
+          "syntax": "project.compile(), project.run(), project.stop()",
+          "description": "Control project compilation and execution"
+        },
+        {
+          "name": "seq (object)",
+          "syntax": "seq.bpm, seq.currentTime, seq.isPlaying, seq.play(), etc.",
+          "description": "Full sequencer API access"
+        },
+        {
+          "name": "mtof / ftom",
+          "syntax": "mtof(midi), ftom(freq)",
+          "description": "MIDI note to frequency conversion and vice versa"
+        },
+        {
+          "name": "noteToFreq",
+          "syntax": "noteToFreq(\"C4\")",
+          "description": "Convert note name to frequency"
+        },
+        {
+          "name": "Math helpers",
+          "syntax": "random(min,max), randomInt(min,max), clamp(v,min,max), lerp(a,b,t)",
+          "description": "Math utility functions"
+        },
+        {
+          "name": "sleep",
+          "syntax": "await sleep(ms)",
+          "description": "Async delay (use with await)"
+        },
+        {
+          "name": "prompt / confirm",
+          "syntax": "prompt(msg), confirm(msg)",
+          "description": "Show input or confirmation dialog"
+        }
+      ]
+    },
+    {
+      "name": "Lattice / Just Intonation",
+      "icon": "grid",
+      "commands": [
+        {
+          "name": "lattice.ratio",
+          "syntax": "lattice.ratio(\"5/4\")",
+          "description": "Parse a ratio string to a number (e.g., \"5/4\" -> 1.25)"
+        },
+        {
+          "name": "lattice.freq",
+          "syntax": "lattice.freq(ratio, baseFreq)",
+          "description": "Convert ratio to frequency (e.g., freq(\"3/2\", 440) -> 660)"
+        },
+        {
+          "name": "lattice.coords",
+          "syntax": "lattice.coords(ratio)",
+          "description": "Get lattice coordinates {i, j, ratio} (i=power of 3, j=power of 5)"
+        },
+        {
+          "name": "lattice.parseRatios",
+          "syntax": "lattice.parseRatios(\"1/1 5/4 3/2\")",
+          "description": "Parse space/comma separated ratios to array of numbers"
+        },
+        {
+          "name": "lattice.sequence",
+          "syntax": "lattice.sequence(ratios, rhythm, options)",
+          "description": "Create a sequence from ratios and rhythm pattern",
+          "examples": [
+            "lattice.sequence(\"1/1 5/4 3/2 2/1\", \"1 0.5 0.5 2\", {base: 440, clipId: \"c1\"})"
+          ]
+        },
+        {
+          "name": "lattice.randomSequence",
+          "syntax": "lattice.randomSequence(ratios, options)",
+          "description": "Create sequence with random rhythm durations",
+          "examples": [
+            "lattice.randomSequence(lattice.scales.pentatonic, {clipId: \"c1\"})"
+          ]
+        },
+        {
+          "name": "lattice.chord",
+          "syntax": "lattice.chord(ratios, options)",
+          "description": "Create simultaneous notes (chord)",
+          "examples": [
+            "lattice.chord(\"1/1 5/4 3/2\", {base: 440, time: 0, dur: 2, clipId: \"c1\"})"
+          ]
+        },
+        {
+          "name": "lattice.path",
+          "syntax": "lattice.path(coords, rhythm, options)",
+          "description": "Create sequence from lattice coordinate path (\"i,j\" pairs)",
+          "examples": [
+            "lattice.path(\"0,0 1,0 1,1 0,1\", \"1 1 1 2\", {clipId: \"c1\"})"
+          ]
+        },
+        {
+          "name": "lattice.intervals",
+          "syntax": "lattice.intervals.unison, .majorThird, .perfectFifth, etc.",
+          "description": "Built-in JI interval ratios"
+        },
+        {
+          "name": "lattice.scales",
+          "syntax": "lattice.scales.major, .minor, .pentatonic",
+          "description": "Built-in JI scale ratio strings"
+        },
+        {
+          "name": "lattice.chords",
+          "syntax": "lattice.chords.majorTriad, .minorTriad, .major7",
+          "description": "Built-in JI chord ratio strings"
+        }
+      ]
+    },
+    {
+      "name": "Shell Features",
+      "icon": "terminal",
+      "commands": [
+        {
+          "name": "Pipes",
+          "syntax": "cmd1 | cmd2",
+          "description": "Pipe output from one command to another",
+          "examples": [
+            "cat main.cpp | grep TODO",
+            "ls | wc"
+          ]
+        },
+        {
+          "name": "Redirect Output",
+          "syntax": "cmd > file, cmd >> file",
+          "description": "Redirect output to file (> overwrites, >> appends)",
+          "examples": [
+            "echo \"hello\" > greeting.txt",
+            "date >> log.txt"
+          ]
+        },
+        {
+          "name": "Command Chaining",
+          "syntax": "cmd1 && cmd2, cmd1 ; cmd2",
+          "description": "&& runs cmd2 only if cmd1 succeeds; ; always runs both"
+        },
+        {
+          "name": "Variable Expansion",
+          "syntax": "$VAR, ${VAR}",
+          "description": "Expand environment variables"
+        },
+        {
+          "name": "Script Arguments",
+          "syntax": "$1, $2, $@, $#",
+          "description": "$1-$9 positional args, $@ all args, $# arg count"
+        }
+      ]
+    },
+    {
+      "name": "Keyboard Shortcuts",
+      "icon": "keyboard",
+      "commands": [
+        {
+          "name": "Tab",
+          "syntax": "Tab",
+          "description": "Autocomplete command or filename"
+        },
+        {
+          "name": "Up/Down Arrow",
+          "syntax": "↑ / ↓",
+          "description": "Navigate command history"
+        },
+        {
+          "name": "Ctrl+L",
+          "syntax": "Ctrl+L",
+          "description": "Clear terminal screen"
+        },
+        {
+          "name": "Ctrl+C",
+          "syntax": "Ctrl+C",
+          "description": "Cancel current input"
+        },
+        {
+          "name": "Ctrl+A / Ctrl+E",
+          "syntax": "Ctrl+A / Ctrl+E",
+          "description": "Move to beginning / end of line"
+        },
+        {
+          "name": "Ctrl+W",
+          "syntax": "Ctrl+W",
+          "description": "Delete word before cursor"
+        },
+        {
+          "name": "Ctrl+U",
+          "syntax": "Ctrl+U",
+          "description": "Clear entire line"
+        }
+      ]
+    }
+  ],
+  "userCommands": []
+}

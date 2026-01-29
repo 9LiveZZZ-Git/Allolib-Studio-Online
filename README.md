@@ -51,6 +51,19 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Arrangement View** - Place clip instances on tracks, loop regions, per-track mute/solo
 - **Spectrum Analyzer** - Professional FFT visualization with configurable resolution
 
+### Terminal
+- **Unix-Like Shell** - Navigate the virtual filesystem with `ls`, `cd`, `cat`, `grep`, `find`, etc.
+- **Project Commands** - `compile`, `run`, `stop`, `open <file>` for quick project control
+- **Sequencer Commands** - Control playback, tracks, clips, and notes via `seq` commands
+- **Scripting System** - Define custom functions with `fn name { commands }` (shell) or `fn name js { code }` (JavaScript)
+- **Full JavaScript API** - Execute JS code with `js { code }` for automation and scripting
+  - Access to `fs`, `project`, `seq`, `Math`, `mtof/ftom`, and more
+  - Lattice/Just Intonation API for creating sequences from ratio strings
+- **Reference Tab** - Searchable command documentation with examples
+  - Add custom command documentation that persists across sessions
+- **Tab Completion** - Autocomplete commands, filenames, and user scripts
+- **Pipes & Redirects** - Chain commands with `|`, write output with `>` or `>>`
+
 ## Quick Start
 
 ### Desktop App (Recommended)
@@ -128,6 +141,37 @@ For synth examples, play notes with your keyboard:
 - **ZXCVBNM** - C3 to B3 (low octave)
 - **ASDFGHJ** - C4 to B4 (middle C octave)
 - **QWERTYU** - C5 to B5 (high octave)
+
+### Terminal Commands
+
+The Terminal tab provides a shell-like interface. Examples:
+
+```bash
+# File navigation
+ls -l                    # List files with details
+cat main.cpp             # View file contents
+grep TODO *.cpp          # Search in files
+
+# Project control
+compile                  # Compile the project
+run                      # Compile and run
+stop                     # Stop execution
+
+# Sequencer control
+seq play                 # Start playback
+seq bpm 140              # Set tempo
+seq track add MySynth    # Add a track
+
+# Custom functions
+fn rebuild compile && run
+fn hello js { print("Hello, " + $1) }
+
+# JavaScript with lattice API
+js lattice.sequence("1/1 5/4 3/2 2/1", "1 0.5 0.5 2", {base: 440})
+js lattice.randomSequence(lattice.scales.pentatonic)
+```
+
+Type `help` for all commands or click the **Reference** tab for searchable documentation.
 
 ### Camera Controls
 

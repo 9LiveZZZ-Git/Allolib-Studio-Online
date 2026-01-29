@@ -2,6 +2,7 @@
 import { ref, onBeforeUnmount, nextTick } from 'vue'
 import Console from './Console.vue'
 import XTerminal from './XTerminal.vue'
+import TerminalReference from './TerminalReference.vue'
 
 defineProps<{
   output: string[]
@@ -12,7 +13,7 @@ const emit = defineEmits<{
   clear: []
 }>()
 
-const activeTab = ref<'output' | 'terminal'>('output')
+const activeTab = ref<'output' | 'terminal' | 'reference'>('output')
 const xtermRef = ref<InstanceType<typeof XTerminal>>()
 
 // Resize state
@@ -49,7 +50,7 @@ function stopResize() {
   document.body.style.userSelect = ''
 }
 
-function switchTab(tab: 'output' | 'terminal') {
+function switchTab(tab: 'output' | 'terminal' | 'reference') {
   activeTab.value = tab
   if (tab === 'terminal') {
     // Re-fit xterm after tab switch (DOM needs to update first)
@@ -101,6 +102,17 @@ onBeforeUnmount(() => {
         >
           Terminal
         </button>
+        <button
+          @click="switchTab('reference')"
+          :class="[
+            'px-2 py-0.5 text-xs rounded transition-colors',
+            activeTab === 'reference'
+              ? 'bg-allolib-blue text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+          ]"
+        >
+          Reference
+        </button>
       </div>
 
       <!-- Clear button -->
@@ -126,6 +138,11 @@ onBeforeUnmount(() => {
       <!-- Terminal tab (always mounted for xterm) -->
       <div v-show="activeTab === 'terminal'" class="h-full">
         <XTerminal ref="xtermRef" />
+      </div>
+
+      <!-- Reference tab -->
+      <div v-show="activeTab === 'reference'" class="h-full">
+        <TerminalReference />
       </div>
     </div>
   </div>
