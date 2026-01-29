@@ -83,6 +83,40 @@ export const useTerminalStore = defineStore('terminal', () => {
   // Saved input for history navigation
   let savedInput = ''
 
+  // User-defined scripts/functions
+  interface UserScript {
+    name: string
+    body: string[]           // array of command lines
+    description: string      // user documentation
+    args: string[]           // argument names for documentation
+    createdAt: number
+    updatedAt: number
+  }
+  const userScripts = ref<Record<string, UserScript>>({})
+
+  // Script execution context for argument passing
+  let scriptArgs: string[] = []
+
+  // Load user scripts from localStorage
+  function loadUserScripts() {
+    try {
+      const saved = localStorage.getItem('alloterm-scripts')
+      if (saved) {
+        userScripts.value = JSON.parse(saved)
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Save user scripts to localStorage
+  function saveUserScripts() {
+    try {
+      localStorage.setItem('alloterm-scripts', JSON.stringify(userScripts.value))
+    } catch { /* ignore */ }
+  }
+
+  // Initialize scripts on store creation
+  loadUserScripts()
+
   const VERSION = '0.1.0'
 
   // ── Prompt ──────────────────────────────────────────────────────────────
@@ -466,14 +500,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     let candidates: string[]
 
     if (isFirstWord) {
-      // Complete command names
+      // Complete command names (built-ins, aliases, and user scripts)
       const allCmds = Object.keys(commands)
       const allAliases = Object.keys(aliases.value)
-      const all = [...new Set([...allCmds, ...allAliases])]
+      const allUserScripts = Object.keys(userScripts.value)
+      const all = [...new Set([...allCmds, ...allAliases, ...allUserScripts])]
       candidates = all.filter(c => c.startsWith(partial)).sort()
     } else if (cmd === 'seq') {
       // Complete seq subcommands
       candidates = completeSeqCommand(parts, partial)
+    } else if (cmd === 'script') {
+      // Complete script subcommands
+      candidates = completeScriptCommand(parts, partial)
+    } else if (cmd === 'source' || cmd === '.') {
+      // Complete .sh files
+      candidates = completePath(partial).filter(p =>
+        p.endsWith('.sh') || p.endsWith('/')
+      )
     } else {
       // Complete file/folder paths
       candidates = completePath(partial)
@@ -637,6 +680,34 @@ export const useTerminalStore = defineStore('terminal', () => {
     return []
   }
 
+  function completeScriptCommand(parts: string[], partial: string): string[] {
+    const scriptSubcommands = ['list', 'ls', 'show', 'cat', 'edit', 'del', 'rm', 'delete', 'export', 'import', 'doc']
+    const wordIndex = parts.length - 1
+
+    if (wordIndex === 1) {
+      // Complete first script subcommand
+      return scriptSubcommands.filter(c => c.startsWith(partial)).sort()
+    }
+
+    const subCmd = parts[1]?.toLowerCase() || ''
+
+    if (wordIndex === 2) {
+      // Complete script name for most commands
+      if (['show', 'cat', 'edit', 'del', 'rm', 'delete', 'export', 'doc'].includes(subCmd)) {
+        const names = Object.keys(userScripts.value)
+        return names.filter(n => n.startsWith(partial)).sort()
+      }
+      // Complete file path for import
+      if (subCmd === 'import') {
+        return completePath(partial).filter(p =>
+          p.endsWith('.sh') || p.endsWith('/')
+        )
+      }
+    }
+
+    return []
+  }
+
   function applyCompletion(candidate: string) {
     const term = terminal.value
     if (!term) return
@@ -742,9 +813,18 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
 
       const handler = commands[cmd]
+      const userScript = userScripts.value[cmd]
+
       if (handler) {
         try {
           handler(ctx)
+        } catch (err) {
+          writeError(`${cmd}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      } else if (userScript) {
+        // Execute user-defined script
+        try {
+          executeUserScript(userScript, ctx.args)
         } catch (err) {
           writeError(`${cmd}: ${err instanceof Error ? err.message : String(err)}`)
         }
@@ -781,6 +861,137 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
 
     writePrompt()
+  }
+
+  /**
+   * Execute a user-defined script with argument substitution.
+   * Supports: $1, $2... for positional args, $@ for all args, $# for arg count
+   */
+  function executeUserScript(script: UserScript, args: string[]) {
+    // Save current script args context (for nested scripts)
+    const prevArgs = scriptArgs
+    scriptArgs = args
+
+    try {
+      for (const line of script.body) {
+        // Skip empty lines and comments
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('#')) continue
+
+        // Expand script arguments
+        const expanded = expandScriptArgs(trimmed, args)
+
+        // Execute the command (but don't write another prompt)
+        executeScriptLine(expanded)
+      }
+    } finally {
+      // Restore previous script args context
+      scriptArgs = prevArgs
+    }
+  }
+
+  /**
+   * Expand script arguments in a command line.
+   * $1, $2... = positional args
+   * $@ = all args space-separated
+   * $* = all args space-separated
+   * $# = number of args
+   * $0 = script name (not implemented, use $SCRIPT_NAME env if needed)
+   */
+  function expandScriptArgs(line: string, args: string[]): string {
+    let result = line
+
+    // Replace $# with arg count
+    result = result.replace(/\$#/g, String(args.length))
+
+    // Replace $@ and $* with all args
+    const allArgs = args.join(' ')
+    result = result.replace(/\$@/g, allArgs)
+    result = result.replace(/\$\*/g, allArgs)
+
+    // Replace positional args $1, $2, ... $9, ${10}, ${11}, etc.
+    result = result.replace(/\$\{(\d+)\}/g, (_, num) => args[parseInt(num) - 1] || '')
+    result = result.replace(/\$(\d)/g, (_, num) => args[parseInt(num) - 1] || '')
+
+    return result
+  }
+
+  /**
+   * Execute a single line from a script (without writing prompt).
+   */
+  function executeScriptLine(line: string) {
+    const expanded = expandAlias(line, new Set())
+    const segments = splitPipes(expanded)
+
+    let pipeData: string | null = null
+    for (const seg of segments) {
+      const trimmed = seg.trim()
+      if (!trimmed) continue
+
+      // Parse redirect
+      let redirect: { file: string; append: boolean } | null = null
+      let cmdPart = trimmed
+      const appendMatch = trimmed.match(/^(.*?)>>(.+)$/)
+      const overwriteMatch = trimmed.match(/^(.*?)>([^>].*)$/)
+      if (appendMatch) {
+        cmdPart = appendMatch[1].trim()
+        redirect = { file: appendMatch[2].trim(), append: true }
+      } else if (overwriteMatch) {
+        cmdPart = overwriteMatch[1].trim()
+        redirect = { file: overwriteMatch[2].trim(), append: false }
+      }
+
+      const { cmd, args, flags, rawArgs } = parseCommand(cmdPart)
+      if (!cmd) continue
+
+      const ctx: CommandContext = {
+        args,
+        rawArgs,
+        flags,
+        stdin: pipeData,
+        stdout: '',
+        redirectFile: redirect && !redirect.append ? redirect.file : null,
+        appendFile: redirect && redirect.append ? redirect.file : null,
+      }
+
+      const handler = commands[cmd]
+      const userScript = userScripts.value[cmd]
+
+      if (handler) {
+        try { handler(ctx) } catch { /* ignore in scripts */ }
+      } else if (userScript) {
+        try { executeUserScript(userScript, ctx.args) } catch { /* ignore */ }
+      } else {
+        writeError(`${cmd}: command not found`)
+      }
+
+      // Handle redirect
+      if (redirect) {
+        const absPath = resolvePath(redirect.file)
+        const projPath = toProjectPath(absPath)
+        const ps = getProjectStore()
+        const existing = ps.project.files.find(f => f.path === projPath)
+        if (existing) {
+          existing.content = redirect.append ? existing.content + ctx.stdout : ctx.stdout
+          existing.updatedAt = Date.now()
+          existing.isDirty = true
+        } else {
+          const name = projPath.includes('/') ? projPath.split('/').pop()! : projPath
+          ps.project.files.push({
+            name,
+            path: projPath,
+            content: ctx.stdout,
+            isMain: false,
+            isDirty: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          })
+        }
+        pipeData = null
+      } else {
+        pipeData = ctx.stdout || null
+      }
+    }
   }
 
   function expandAlias(line: string, seen: Set<string>): string {
@@ -932,6 +1143,15 @@ export const useTerminalStore = defineStore('terminal', () => {
           ['seq clips', 'List all clips'],
           ['seq status', 'Show sequencer state'],
           ['seq synths', 'List detected synths'],
+        ]],
+        ['Scripting', [
+          ['fn <name> <cmd>', 'Define custom function'],
+          ['script list', 'List user scripts'],
+          ['script show <name>', 'Show script source'],
+          ['script edit <name>', 'Edit script in editor'],
+          ['script del <name>', 'Delete a script'],
+          ['source <file>', 'Execute script file'],
+          ['. <file>', 'Execute script file (alias)'],
         ]],
       ]
 
@@ -1811,6 +2031,367 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
     },
 
+    // ──────────────────────────────────────────────── fn (define function/script)
+    fn(ctx) {
+      if (ctx.args.length < 1) {
+        writeln(`${C.bold}fn${C.reset} - Define a custom command/script`)
+        writeln('')
+        writeln(`${C.cyan}Usage:${C.reset}`)
+        writeln(`  ${C.green}fn <name> <command>${C.reset}       Single-line function`)
+        writeln(`  ${C.green}fn <name> { ... }${C.reset}        Multi-line function`)
+        writeln('')
+        writeln(`${C.cyan}Examples:${C.reset}`)
+        writeln(`  ${C.dim}fn greet echo "Hello, $1!"${C.reset}`)
+        writeln(`  ${C.dim}fn build-run compile && run${C.reset}`)
+        writeln(`  ${C.dim}fn status { seq status; echo "---"; ls }${C.reset}`)
+        writeln('')
+        writeln(`${C.cyan}Arguments:${C.reset}`)
+        writeln(`  ${C.dim}$1, $2, ...${C.reset}  Positional arguments`)
+        writeln(`  ${C.dim}$@${C.reset}          All arguments`)
+        writeln(`  ${C.dim}$#${C.reset}          Number of arguments`)
+        writeln('')
+        writeln(`Use ${C.green}script list${C.reset} to see defined functions`)
+        return
+      }
+
+      const name = ctx.args[0]
+      if (commands[name]) {
+        writeError(`fn: cannot override built-in command '${name}'`)
+        return
+      }
+
+      // Check for multi-line { ... } syntax
+      const rest = ctx.rawArgs.slice(name.length).trim()
+      let body: string[]
+
+      if (rest.startsWith('{')) {
+        // Multi-line: extract commands between { }
+        const match = rest.match(/^\{([^}]*)\}$/)
+        if (!match) {
+          writeError('fn: unclosed brace, use { commands; ... }')
+          return
+        }
+        // Split by ; for multiple commands
+        body = match[1].split(';').map(s => s.trim()).filter(Boolean)
+      } else {
+        // Single-line command
+        body = [rest]
+      }
+
+      if (body.length === 0 || (body.length === 1 && !body[0])) {
+        writeError('fn: missing command body')
+        return
+      }
+
+      userScripts.value[name] = {
+        name,
+        body,
+        description: '',
+        args: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      saveUserScripts()
+      writeln(`Defined function: ${C.green}${name}${C.reset}`)
+    },
+
+    // ──────────────────────────────────────────────── script (manage scripts)
+    script(ctx) {
+      const sub = ctx.args[0]
+      const scriptName = ctx.args[1]
+
+      if (!sub) {
+        writeln(`${C.bold}script${C.reset} - Manage custom scripts`)
+        writeln('')
+        writeln(`${C.cyan}Commands:${C.reset}`)
+        writeln(`  ${C.green}script list${C.reset}              List all scripts`)
+        writeln(`  ${C.green}script show <name>${C.reset}       Show script source`)
+        writeln(`  ${C.green}script edit <name>${C.reset}       Edit script (opens editor)`)
+        writeln(`  ${C.green}script del <name>${C.reset}        Delete a script`)
+        writeln(`  ${C.green}script export <name>${C.reset}     Export to .sh file`)
+        writeln(`  ${C.green}script import <file>${C.reset}     Import from .sh file`)
+        writeln(`  ${C.green}script doc <name> <text>${C.reset} Set script description`)
+        writeln('')
+        writeln(`${C.dim}Use 'fn <name> <cmd>' to create simple functions${C.reset}`)
+        return
+      }
+
+      switch (sub) {
+        case 'list':
+        case 'ls': {
+          const scripts = Object.values(userScripts.value)
+          if (scripts.length === 0) {
+            writeln(`${C.dim}No custom scripts defined${C.reset}`)
+            writeln(`Use ${C.green}fn <name> <command>${C.reset} to create one`)
+            return
+          }
+          writeln(`${C.bold}Custom Scripts${C.reset} (${scripts.length})`)
+          writeln('')
+          for (const s of scripts) {
+            const desc = s.description ? ` ${C.dim}- ${s.description}${C.reset}` : ''
+            const lineCount = s.body.length
+            writeln(`  ${C.green}${s.name}${C.reset}${desc} ${C.dim}(${lineCount} line${lineCount !== 1 ? 's' : ''})${C.reset}`)
+          }
+          break
+        }
+
+        case 'show':
+        case 'cat': {
+          if (!scriptName) {
+            writeError('script show: missing script name')
+            return
+          }
+          const s = userScripts.value[scriptName]
+          if (!s) {
+            writeError(`script show: '${scriptName}' not found`)
+            return
+          }
+          writeln(`${C.bold}${s.name}${C.reset}${s.description ? ` - ${s.description}` : ''}`)
+          writeln(`${C.dim}─────────────────────────────${C.reset}`)
+          for (let i = 0; i < s.body.length; i++) {
+            writeln(`${C.dim}${String(i + 1).padStart(3)}│${C.reset} ${s.body[i]}`)
+          }
+          break
+        }
+
+        case 'edit': {
+          if (!scriptName) {
+            writeError('script edit: missing script name')
+            return
+          }
+          const s = userScripts.value[scriptName]
+          if (!s) {
+            // Create new script
+            userScripts.value[scriptName] = {
+              name: scriptName,
+              body: ['# Your script here', 'echo "Hello from ' + scriptName + '"'],
+              description: '',
+              args: [],
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            }
+            saveUserScripts()
+          }
+          // Create a virtual .sh file in the project for editing
+          const content = `#!/bin/alloterm
+# Script: ${scriptName}
+# ${userScripts.value[scriptName].description || 'Add description with: script doc ' + scriptName + ' "description"'}
+#
+# Arguments: $1, $2, ... (positional), $@ (all), $# (count)
+# Run with: ${scriptName} [args...]
+
+${userScripts.value[scriptName].body.join('\n')}
+`
+          const ps = getProjectStore()
+          const filePath = `/scripts/${scriptName}.sh`
+          const existing = ps.project.files.find(f => f.path === filePath)
+          if (existing) {
+            existing.content = content
+            existing.updatedAt = Date.now()
+          } else {
+            ps.project.files.push({
+              name: `${scriptName}.sh`,
+              path: filePath,
+              content,
+              isMain: false,
+              isDirty: false,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            })
+          }
+          // Open in editor
+          const app = useAppStore()
+          app.openFile(filePath)
+          writeln(`Opening ${C.cyan}${filePath}${C.reset} in editor`)
+          writeln(`${C.dim}Save and run 'script import ${filePath}' to update${C.reset}`)
+          break
+        }
+
+        case 'del':
+        case 'rm':
+        case 'delete': {
+          if (!scriptName) {
+            writeError('script del: missing script name')
+            return
+          }
+          if (!userScripts.value[scriptName]) {
+            writeError(`script del: '${scriptName}' not found`)
+            return
+          }
+          delete userScripts.value[scriptName]
+          saveUserScripts()
+          writeln(`Deleted script: ${scriptName}`)
+          break
+        }
+
+        case 'export': {
+          if (!scriptName) {
+            writeError('script export: missing script name')
+            return
+          }
+          const s = userScripts.value[scriptName]
+          if (!s) {
+            writeError(`script export: '${scriptName}' not found`)
+            return
+          }
+          const content = `#!/bin/alloterm
+# Script: ${s.name}
+# ${s.description || ''}
+# Created: ${new Date(s.createdAt).toISOString()}
+
+${s.body.join('\n')}
+`
+          const filePath = `/scripts/${scriptName}.sh`
+          const ps = getProjectStore()
+          const existing = ps.project.files.find(f => f.path === filePath)
+          if (existing) {
+            existing.content = content
+            existing.updatedAt = Date.now()
+            existing.isDirty = true
+          } else {
+            ps.project.files.push({
+              name: `${scriptName}.sh`,
+              path: filePath,
+              content,
+              isMain: false,
+              isDirty: false,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            })
+          }
+          writeln(`Exported to ${C.green}${filePath}${C.reset}`)
+          break
+        }
+
+        case 'import': {
+          const filePath = scriptName  // Actually the file path
+          if (!filePath) {
+            writeError('script import: missing file path')
+            return
+          }
+          const absPath = resolvePath(filePath)
+          const projPath = toProjectPath(absPath)
+          const ps = getProjectStore()
+          const file = ps.project.files.find(f => f.path === projPath || f.path === filePath)
+          if (!file) {
+            writeError(`script import: file not found '${filePath}'`)
+            return
+          }
+          // Parse the script file
+          const lines = file.content.split('\n')
+          const body: string[] = []
+          let name = file.name.replace(/\.sh$/, '')
+          let description = ''
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (trimmed.startsWith('#!/')) continue  // Skip shebang
+            if (trimmed.startsWith('# Script:')) {
+              name = trimmed.slice(9).trim()
+              continue
+            }
+            if (trimmed.startsWith('#') && !description && trimmed.length > 2) {
+              description = trimmed.slice(1).trim()
+              continue
+            }
+            if (trimmed && !trimmed.startsWith('#')) {
+              body.push(trimmed)
+            }
+          }
+
+          if (body.length === 0) {
+            writeError('script import: no commands found in file')
+            return
+          }
+
+          userScripts.value[name] = {
+            name,
+            body,
+            description,
+            args: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          }
+          saveUserScripts()
+          writeln(`Imported script: ${C.green}${name}${C.reset} (${body.length} lines)`)
+          break
+        }
+
+        case 'doc': {
+          if (!scriptName) {
+            writeError('script doc: missing script name')
+            return
+          }
+          const s = userScripts.value[scriptName]
+          if (!s) {
+            writeError(`script doc: '${scriptName}' not found`)
+            return
+          }
+          const desc = ctx.args.slice(2).join(' ')
+          if (!desc) {
+            writeln(`${C.bold}${s.name}${C.reset}: ${s.description || C.dim + '(no description)' + C.reset}`)
+            return
+          }
+          s.description = desc
+          s.updatedAt = Date.now()
+          saveUserScripts()
+          writeln(`Updated description for ${C.green}${scriptName}${C.reset}`)
+          break
+        }
+
+        default:
+          writeError(`script: unknown command '${sub}'`)
+      }
+    },
+
+    // ──────────────────────────────────────────────── source (run script file)
+    source(ctx) {
+      const filePath = ctx.args[0]
+      if (!filePath) {
+        writeln(`${C.bold}source${C.reset} <file> - Execute commands from a file`)
+        writeln('')
+        writeln(`Also available as: ${C.green}.${C.reset} <file>`)
+        writeln('')
+        writeln(`${C.cyan}Example:${C.reset}`)
+        writeln(`  ${C.dim}source /scripts/setup.sh${C.reset}`)
+        writeln(`  ${C.dim}. mycommands.sh${C.reset}`)
+        return
+      }
+
+      const absPath = resolvePath(filePath)
+      const projPath = toProjectPath(absPath)
+      const ps = getProjectStore()
+      const file = ps.project.files.find(f => f.path === projPath || f.path === filePath)
+
+      if (!file) {
+        writeError(`source: file not found '${filePath}'`)
+        return
+      }
+
+      const lines = file.content.split('\n')
+      const args = ctx.args.slice(1)  // Pass remaining args to sourced script
+
+      // Save script args context
+      const prevArgs = scriptArgs
+      scriptArgs = args
+
+      try {
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed || trimmed.startsWith('#')) continue
+          const expanded = expandScriptArgs(trimmed, args)
+          executeScriptLine(expanded)
+        }
+      } finally {
+        scriptArgs = prevArgs
+      }
+    },
+
+    // ──────────────────────────────────────────────── . (alias for source)
+    '.'(ctx) {
+      commands.source(ctx)
+    },
+
     // ──────────────────────────────────────────────── version
     version(ctx) {
       writeln(`${C.cyan}AlloLib Studio Online${C.reset} v${VERSION}`)
@@ -2431,6 +3012,76 @@ export const useTerminalStore = defineStore('terminal', () => {
   ${C.cyan}Info:${C.reset}
     ${C.dim}status${C.reset}             Show sequencer state
     ${C.dim}synths${C.reset}             List detected synths`,
+    fn: `${C.bold}fn${C.reset} <name> <command>
+  Define a custom function/script.
+
+  ${C.cyan}Single-line:${C.reset}
+    ${C.dim}fn greet echo "Hello, $1!"${C.reset}
+    ${C.dim}fn rebuild compile && run${C.reset}
+
+  ${C.cyan}Multi-line:${C.reset}
+    ${C.dim}fn setup { mkdir src; touch src/main.cpp }${C.reset}
+
+  ${C.cyan}Arguments:${C.reset}
+    ${C.dim}$1, $2, ...${C.reset}  Positional arguments
+    ${C.dim}$@${C.reset}          All arguments
+    ${C.dim}$#${C.reset}          Number of arguments
+
+  ${C.cyan}Example:${C.reset}
+    ${C.dim}fn greet echo "Hello, $1!"${C.reset}
+    ${C.dim}greet World${C.reset}  → Hello, World!`,
+    script: `${C.bold}script${C.reset} <cmd> [args]
+  Manage custom scripts.
+
+  ${C.cyan}Commands:${C.reset}
+    ${C.dim}list${C.reset}              List all scripts
+    ${C.dim}show <name>${C.reset}       Show script source
+    ${C.dim}edit <name>${C.reset}       Edit in Monaco editor
+    ${C.dim}del <name>${C.reset}        Delete a script
+    ${C.dim}export <name>${C.reset}     Save to .sh file
+    ${C.dim}import <file>${C.reset}     Load from .sh file
+    ${C.dim}doc <name> <text>${C.reset} Set description
+
+  Scripts are saved to localStorage and persist
+  across sessions.`,
+    source: `${C.bold}source${C.reset} <file> [args]
+  Execute commands from a script file.
+
+  Also available as: ${C.green}.${C.reset} <file>
+
+  ${C.cyan}Example:${C.reset}
+    ${C.dim}source /scripts/setup.sh${C.reset}
+    ${C.dim}. mycommands.sh arg1 arg2${C.reset}
+
+  Lines starting with # are treated as comments.
+  Arguments are passed as $1, $2, etc.`,
+    scripting: `${C.bold}Scripting Guide${C.reset}
+
+  ${C.cyan}Creating Functions:${C.reset}
+    ${C.dim}fn <name> <command>${C.reset}        Single-line
+    ${C.dim}fn <name> { cmd1; cmd2 }${C.reset}  Multi-line
+
+  ${C.cyan}Managing Scripts:${C.reset}
+    ${C.dim}script list${C.reset}               Show all scripts
+    ${C.dim}script edit <name>${C.reset}        Edit in editor
+    ${C.dim}script export <name>${C.reset}      Save to file
+
+  ${C.cyan}Running Scripts:${C.reset}
+    ${C.dim}<name> [args]${C.reset}             Run user function
+    ${C.dim}source <file>${C.reset}             Run script file
+    ${C.dim}. <file>${C.reset}                  Alias for source
+
+  ${C.cyan}Arguments:${C.reset}
+    ${C.dim}$1, $2, ... $9${C.reset}            Positional args
+    ${C.dim}\${10}, \${11}...${C.reset}           Args 10+
+    ${C.dim}$@${C.reset}                        All arguments
+    ${C.dim}$#${C.reset}                        Argument count
+
+  ${C.cyan}Script File Format:${C.reset}
+    ${C.dim}#!/bin/alloterm${C.reset}
+    ${C.dim}# Comment${C.reset}
+    ${C.dim}echo "Hello $1"${C.reset}
+    ${C.dim}compile && run${C.reset}`,
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
