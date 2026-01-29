@@ -11,6 +11,7 @@ import ViewerPane from './components/ViewerPane.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
 import SequencerPanel from './components/SequencerPanel.vue'
 import { defaultCode } from '@/utils/monaco-config'
+import { isMultiFileExample, type AnyExample } from '@/data/examples'
 import { wsService } from '@/services/websocket'
 import type { AllolibRuntime } from '@/services/runtime'
 import { parameterSystem } from '@/utils/parameter-system'
@@ -70,6 +71,45 @@ const handleStop = () => {
 const handleLoadExample = (code: string) => {
   editorRef.value?.setCode(code)
   appStore.log('[INFO] Example loaded')
+}
+
+// Example dialog handlers
+const handleAddExampleToProject = (example: AnyExample) => {
+  if (isMultiFileExample(example)) {
+    // Add all files from multi-file example
+    for (const file of example.files) {
+      projectStore.addOrUpdateFile(file.path, file.content)
+    }
+    // Open the main file
+    projectStore.setActiveFile(example.mainFile)
+    appStore.log(`[INFO] Added ${example.files.length} files to project: ${example.title}`)
+  } else {
+    // Single file - add with a unique name based on example id
+    const fileName = `${example.id}.cpp`
+    projectStore.addOrUpdateFile(fileName, example.code)
+    projectStore.setActiveFile(fileName)
+    appStore.log(`[INFO] Added "${example.title}" to project as ${fileName}`)
+  }
+}
+
+const handleReplaceProjectWithExample = (example: AnyExample) => {
+  // Clear existing project
+  projectStore.newProject()
+
+  if (isMultiFileExample(example)) {
+    // Add all files from multi-file example
+    for (const file of example.files) {
+      projectStore.addOrUpdateFile(file.path, file.content)
+    }
+    // Open the main file
+    projectStore.setActiveFile(example.mainFile)
+    appStore.log(`[INFO] Loaded multi-file example: ${example.title} (${example.files.length} files)`)
+  } else {
+    // Single file - replace main.cpp
+    projectStore.addOrUpdateFile('main.cpp', example.code)
+    projectStore.setActiveFile('main.cpp')
+    appStore.log(`[INFO] Loaded example: ${example.title}`)
+  }
 }
 
 // File menu handlers
@@ -345,6 +385,8 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
       @run="handleRun"
       @stop="handleStop"
       @load-example="handleLoadExample"
+      @add-example-to-project="handleAddExampleToProject"
+      @replace-project-with-example="handleReplaceProjectWithExample"
       @file-new="handleFileNew"
       @file-save="handleFileSave"
       @file-save-as="handleFileSaveAs"

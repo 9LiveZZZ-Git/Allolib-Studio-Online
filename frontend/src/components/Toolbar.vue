@@ -2,7 +2,16 @@
 import { ref, computed } from 'vue'
 import type { AppStatus } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
-import { categories, examples, type Example } from '@/data/examples'
+import {
+  categoryGroups,
+  allExamples,
+  getExamplesBySubcategory,
+  isMultiFileExample,
+  type AnyExample,
+  type ExampleCategory,
+  type MultiFileExample,
+  type Example
+} from '@/data/examples'
 import {
   glossary,
   categories as glossaryCategories,
@@ -10,6 +19,7 @@ import {
   searchGlossary,
   type GlossaryEntry
 } from '@/data/glossary'
+import ExampleDialog from './ExampleDialog.vue'
 
 defineProps<{
   status: AppStatus
@@ -21,6 +31,8 @@ const emit = defineEmits<{
   run: []
   stop: []
   loadExample: [code: string]
+  addExampleToProject: [example: AnyExample]
+  replaceProjectWithExample: [example: AnyExample]
   settingsChanged: []
   fileNew: []
   fileSave: []
@@ -85,8 +97,25 @@ const statusLabels: Record<AppStatus, string> = {
 
 // Examples dropdown state
 const showExamples = ref(false)
+const expandedGroup = ref<string | null>(null)
 const expandedCategory = ref<string | null>(null)
 const expandedSubcategory = ref<string | null>(null)
+
+// Example dialog state
+const showExampleDialog = ref(false)
+const selectedExample = ref<AnyExample | null>(null)
+
+function toggleGroup(groupId: string) {
+  if (expandedGroup.value === groupId) {
+    expandedGroup.value = null
+    expandedCategory.value = null
+    expandedSubcategory.value = null
+  } else {
+    expandedGroup.value = groupId
+    expandedCategory.value = null
+    expandedSubcategory.value = null
+  }
+}
 
 function toggleCategory(catId: string) {
   if (expandedCategory.value === catId) {
@@ -106,19 +135,42 @@ function toggleSubcategory(subId: string) {
   }
 }
 
-function getExamplesForSubcategory(catId: string, subId: string): Example[] {
-  return examples.filter(e => e.category === catId && e.subcategory === subId)
+function getExamplesForSubcategory(catId: string, subId: string): AnyExample[] {
+  return getExamplesBySubcategory(catId, subId)
 }
 
-function selectExample(example: Example) {
-  emit('loadExample', example.code)
+function selectExample(example: AnyExample) {
+  selectedExample.value = example
+  showExampleDialog.value = true
   showExamples.value = false
+}
+
+function handleAddToProject(example: AnyExample) {
+  emit('addExampleToProject', example)
+  showExampleDialog.value = false
+  selectedExample.value = null
+  expandedGroup.value = null
   expandedCategory.value = null
   expandedSubcategory.value = null
 }
 
+function handleReplaceProject(example: AnyExample) {
+  emit('replaceProjectWithExample', example)
+  showExampleDialog.value = false
+  selectedExample.value = null
+  expandedGroup.value = null
+  expandedCategory.value = null
+  expandedSubcategory.value = null
+}
+
+function closeExampleDialog() {
+  showExampleDialog.value = false
+  selectedExample.value = null
+}
+
 function closeDropdown() {
   showExamples.value = false
+  expandedGroup.value = null
   expandedCategory.value = null
   expandedSubcategory.value = null
 }
@@ -380,7 +432,7 @@ function getPlatformBadgeClass(platform: string) {
       <!-- Dropdown Panel -->
       <div
         v-if="showExamples"
-        class="absolute right-0 top-full mt-1 w-80 max-h-[80vh] overflow-y-auto bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50"
+        class="absolute right-0 top-full mt-1 w-96 max-h-[80vh] overflow-y-auto bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50"
       >
         <!-- Header -->
         <div class="sticky top-0 bg-editor-sidebar px-4 py-2 border-b border-editor-border">
@@ -394,18 +446,27 @@ function getPlatformBadgeClass(platform: string) {
           </div>
         </div>
 
-        <!-- Categories -->
+        <!-- Category Groups -->
         <div class="py-1">
-          <div v-for="category in categories" :key="category.id" class="border-b border-editor-border last:border-b-0">
-            <!-- Category Header -->
+          <div v-for="group in categoryGroups" :key="group.id" class="border-b border-editor-border last:border-b-0">
+            <!-- Group Header (AlloLib / AlloLib Playground) -->
             <button
-              class="w-full px-4 py-2 text-left text-sm font-medium hover:bg-editor-active flex items-center justify-between"
-              @click="toggleCategory(category.id)"
+              class="w-full px-4 py-2.5 text-left font-semibold hover:bg-editor-active flex items-center justify-between"
+              :class="expandedGroup === group.id ? 'bg-editor-active text-allolib-blue' : 'text-white'"
+              @click="toggleGroup(group.id)"
             >
-              <span>{{ category.title }}</span>
+              <span class="flex items-center gap-2">
+                <svg v-if="group.id === 'allolib'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+                {{ group.title }}
+              </span>
               <svg
                 class="w-4 h-4 transition-transform"
-                :class="{ 'rotate-90': expandedCategory === category.id }"
+                :class="{ 'rotate-90': expandedGroup === group.id }"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -414,18 +475,18 @@ function getPlatformBadgeClass(platform: string) {
               </svg>
             </button>
 
-            <!-- Subcategories -->
-            <div v-if="expandedCategory === category.id && category.subcategories" class="bg-editor-sidebar">
-              <div v-for="sub in category.subcategories" :key="sub.id">
-                <!-- Subcategory Header -->
+            <!-- Categories within Group -->
+            <div v-if="expandedGroup === group.id" class="bg-editor-sidebar/50">
+              <div v-for="category in group.categories" :key="category.id" class="border-t border-editor-border/50">
+                <!-- Category Header -->
                 <button
-                  class="w-full pl-6 pr-4 py-1.5 text-left text-sm text-gray-300 hover:bg-editor-active flex items-center justify-between"
-                  @click="toggleSubcategory(sub.id)"
+                  class="w-full pl-6 pr-4 py-2 text-left text-sm font-medium hover:bg-editor-active flex items-center justify-between"
+                  @click="toggleCategory(category.id)"
                 >
-                  <span>{{ sub.title }}</span>
+                  <span>{{ category.title }}</span>
                   <svg
-                    class="w-3 h-3 transition-transform"
-                    :class="{ 'rotate-90': expandedSubcategory === sub.id }"
+                    class="w-4 h-4 transition-transform"
+                    :class="{ 'rotate-90': expandedCategory === category.id }"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -434,17 +495,47 @@ function getPlatformBadgeClass(platform: string) {
                   </svg>
                 </button>
 
-                <!-- Examples in Subcategory -->
-                <div v-if="expandedSubcategory === sub.id" class="bg-editor-bg">
-                  <button
-                    v-for="example in getExamplesForSubcategory(category.id, sub.id)"
-                    :key="example.id"
-                    class="w-full pl-10 pr-4 py-2 text-left hover:bg-editor-active group"
-                    @click="selectExample(example)"
-                  >
-                    <div class="text-sm text-allolib-blue group-hover:text-white">{{ example.title }}</div>
-                    <div class="text-xs text-gray-500 group-hover:text-gray-400">{{ example.description }}</div>
-                  </button>
+                <!-- Subcategories -->
+                <div v-if="expandedCategory === category.id && category.subcategories" class="bg-editor-sidebar">
+                  <div v-for="sub in category.subcategories" :key="sub.id">
+                    <!-- Subcategory Header -->
+                    <button
+                      class="w-full pl-10 pr-4 py-1.5 text-left text-sm text-gray-300 hover:bg-editor-active flex items-center justify-between"
+                      @click="toggleSubcategory(sub.id)"
+                    >
+                      <span>{{ sub.title }}</span>
+                      <svg
+                        class="w-3 h-3 transition-transform"
+                        :class="{ 'rotate-90': expandedSubcategory === sub.id }"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+
+                    <!-- Examples in Subcategory -->
+                    <div v-if="expandedSubcategory === sub.id" class="bg-editor-bg">
+                      <button
+                        v-for="example in getExamplesForSubcategory(category.id, sub.id)"
+                        :key="example.id"
+                        class="w-full pl-14 pr-4 py-2 text-left hover:bg-editor-active group"
+                        @click="selectExample(example)"
+                      >
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm text-allolib-blue group-hover:text-white">{{ example.title }}</span>
+                          <span
+                            v-if="'files' in example"
+                            class="text-[10px] px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded"
+                          >
+                            {{ example.files.length }} files
+                          </span>
+                        </div>
+                        <div class="text-xs text-gray-500 group-hover:text-gray-400">{{ example.description }}</div>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -454,7 +545,7 @@ function getPlatformBadgeClass(platform: string) {
         <!-- Footer -->
         <div class="sticky bottom-0 bg-editor-sidebar px-4 py-2 border-t border-editor-border">
           <div class="text-xs text-gray-500 text-center">
-            {{ examples.length }} examples available
+            {{ allExamples.length }} examples available
           </div>
         </div>
       </div>
@@ -1090,4 +1181,13 @@ function getPlatformBadgeClass(platform: string) {
       </div>
     </div>
   </Teleport>
+
+  <!-- Example Dialog -->
+  <ExampleDialog
+    :example="selectedExample"
+    :visible="showExampleDialog"
+    @close="closeExampleDialog"
+    @addToProject="handleAddToProject"
+    @replaceProject="handleReplaceProject"
+  />
 </template>

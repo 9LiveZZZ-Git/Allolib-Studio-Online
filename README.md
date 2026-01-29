@@ -30,7 +30,9 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Preset System** - Save/load presets as allolib-compatible `.preset` files
 - **Multi-File Projects** - Create headers, organize with folders, export as ZIP
 - **Polyphonic Synths** - SynthGUIManager, PolySynth, keyboard-triggered voices
-- **30+ Examples** - Ready-to-run demos covering graphics, audio, synthesis, and interaction
+- **40+ Examples** - Ready-to-run demos organized by AlloLib and Playground categories
+- **Multi-File Examples** - Examples with multiple source files and headers
+- **Example Dialog** - Choose to add examples to project or start fresh
 - **Glossary** - 330+ searchable terms covering AlloLib and Gamma DSP APIs
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
@@ -182,7 +184,11 @@ Default camera controls in the viewer:
 
 ## Examples
 
-The Examples dropdown includes demos organized by category:
+The Examples dropdown organizes demos into two main groups:
+
+### AlloLib Examples
+
+Core framework examples demonstrating fundamental concepts:
 
 | Category | Examples |
 |----------|----------|
@@ -191,9 +197,25 @@ The Examples dropdown includes demos organized by category:
 | **Audio** | Oscillators, Envelopes, Synthesis |
 | **Interaction** | Keyboard, Mouse, Navigation |
 | **Scene System** | SynthVoice, PolySynth, DynamicScene |
-| **Playground Synthesis** | Sine Envelope, Wavetable, FM, Subtractive, Additive |
-| **Playground AudioVisual** | AudioVisual Spheres, Synthesis Showcase |
-| **Advanced** | Particles, Generative, Audio-Visual |
+| **Simulation** | Particle Systems, Physics, Agent-Based (Flocking, Wave Equation, Spring Mesh) |
+| **Advanced** | Particles, Generative, Multi-File Projects |
+
+### AlloLib Playground Examples
+
+Creative coding examples with synthesis and audio-visual integration:
+
+| Category | Examples |
+|----------|----------|
+| **Synthesis** | Sine Envelope, Wavetable, FM, Subtractive, Additive |
+| **AudioVisual** | AudioVisual Spheres, Synthesis Showcase |
+
+### Loading Examples
+
+When selecting an example, a dialog appears with two options:
+- **Add to Project** - Adds the example file(s) to your current project
+- **Replace Project** - Clears existing files and starts fresh with the example
+
+Multi-file examples show a file list in the dialog before loading.
 
 ## Architecture
 

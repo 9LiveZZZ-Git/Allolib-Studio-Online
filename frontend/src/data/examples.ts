@@ -3,9 +3,20 @@
  *
  * Complete code examples organized by category for the examples dropdown.
  * Each example is a fully functional AlloLib web application.
+ *
+ * Structure:
+ * - AlloLib (core library examples)
+ *   - Basics, Graphics, Audio, Interaction, Scene System, Simulation, Advanced
+ * - AlloLib Playground (synthesis tutorials)
+ *   - Synthesis, AudioVisual
  */
 
 import { playgroundCategories, playgroundExamples } from './playgroundExamples'
+
+export interface ExampleFile {
+  path: string
+  content: string
+}
 
 export interface Example {
   id: string
@@ -16,81 +27,129 @@ export interface Example {
   code: string
 }
 
+export interface MultiFileExample {
+  id: string
+  title: string
+  description: string
+  category: string
+  subcategory?: string
+  files: ExampleFile[]
+  mainFile: string // which file to open in editor
+}
+
+export type AnyExample = Example | MultiFileExample
+
 export interface ExampleCategory {
   id: string
   title: string
   subcategories?: { id: string; title: string }[]
 }
 
+// Helper to check if an example is multi-file
+export function isMultiFileExample(example: AnyExample): example is MultiFileExample {
+  return 'files' in example
+}
+
+// Top-level category groups for the dropdown
+export interface CategoryGroup {
+  id: string
+  title: string
+  categories: ExampleCategory[]
+}
+
+export const categoryGroups: CategoryGroup[] = [
+  {
+    id: 'allolib',
+    title: 'AlloLib',
+    categories: [
+      {
+        id: 'basics',
+        title: 'Basics',
+        subcategories: [
+          { id: 'hello-world', title: 'Hello World' },
+          { id: 'shapes', title: 'Shapes' },
+          { id: 'colors', title: 'Colors' },
+        ],
+      },
+      {
+        id: 'graphics',
+        title: 'Graphics',
+        subcategories: [
+          { id: 'meshes', title: 'Meshes' },
+          { id: 'transforms', title: 'Transforms' },
+          { id: 'lighting', title: 'Lighting' },
+          { id: 'shaders', title: 'Shaders' },
+          { id: 'textures', title: 'Textures' },
+        ],
+      },
+      {
+        id: 'audio',
+        title: 'Audio',
+        subcategories: [
+          { id: 'oscillators', title: 'Oscillators' },
+          { id: 'envelopes', title: 'Envelopes' },
+          { id: 'synthesis', title: 'Synthesis' },
+          { id: 'samples', title: 'Samples' },
+          { id: 'effects', title: 'Effects' },
+        ],
+      },
+      {
+        id: 'interaction',
+        title: 'Interaction',
+        subcategories: [
+          { id: 'keyboard', title: 'Keyboard' },
+          { id: 'mouse', title: 'Mouse' },
+          { id: 'navigation', title: 'Navigation' },
+        ],
+      },
+      {
+        id: 'scene',
+        title: 'Scene System',
+        subcategories: [
+          { id: 'synthvoice', title: 'SynthVoice' },
+          { id: 'polysynth', title: 'PolySynth' },
+          { id: 'dynamicscene', title: 'DynamicScene' },
+        ],
+      },
+      {
+        id: 'simulation',
+        title: 'Simulation',
+        subcategories: [
+          { id: 'particles', title: 'Particle Systems' },
+          { id: 'physics', title: 'Physics' },
+          { id: 'agents', title: 'Agent-Based' },
+        ],
+      },
+      {
+        id: 'advanced',
+        title: 'Advanced',
+        subcategories: [
+          { id: 'multifile', title: 'Multi-File Projects' },
+          { id: 'audiovisual', title: 'Audio-Visual' },
+          { id: 'generative', title: 'Generative' },
+        ],
+      },
+      {
+        id: 'feature-tests',
+        title: 'Feature Tests',
+        subcategories: [
+          { id: 'graphics', title: 'Graphics Tests' },
+          { id: 'audio', title: 'Audio Tests' },
+          { id: 'ui', title: 'UI Tests' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'playground',
+    title: 'AlloLib Playground',
+    categories: playgroundCategories,
+  },
+]
+
+// Flat list of all categories for backwards compatibility
 export const categories: ExampleCategory[] = [
-  {
-    id: 'basics',
-    title: 'Basics',
-    subcategories: [
-      { id: 'hello-world', title: 'Hello World' },
-      { id: 'shapes', title: 'Shapes' },
-      { id: 'colors', title: 'Colors' },
-    ],
-  },
-  {
-    id: 'graphics',
-    title: 'Graphics',
-    subcategories: [
-      { id: 'meshes', title: 'Meshes' },
-      { id: 'transforms', title: 'Transforms' },
-      { id: 'lighting', title: 'Lighting' },
-      { id: 'shaders', title: 'Shaders' },
-      { id: 'textures', title: 'Textures' },
-    ],
-  },
-  {
-    id: 'audio',
-    title: 'Audio',
-    subcategories: [
-      { id: 'oscillators', title: 'Oscillators' },
-      { id: 'envelopes', title: 'Envelopes' },
-      { id: 'synthesis', title: 'Synthesis' },
-      { id: 'samples', title: 'Samples' },
-      { id: 'effects', title: 'Effects' },
-    ],
-  },
-  {
-    id: 'interaction',
-    title: 'Interaction',
-    subcategories: [
-      { id: 'keyboard', title: 'Keyboard' },
-      { id: 'mouse', title: 'Mouse' },
-      { id: 'navigation', title: 'Navigation' },
-    ],
-  },
-  {
-    id: 'scene',
-    title: 'Scene System',
-    subcategories: [
-      { id: 'synthvoice', title: 'SynthVoice' },
-      { id: 'polysynth', title: 'PolySynth' },
-      { id: 'dynamicscene', title: 'DynamicScene' },
-    ],
-  },
-  {
-    id: 'advanced',
-    title: 'Advanced',
-    subcategories: [
-      { id: 'particles', title: 'Particles' },
-      { id: 'audiovisual', title: 'Audio-Visual' },
-      { id: 'generative', title: 'Generative' },
-    ],
-  },
-  {
-    id: 'feature-tests',
-    title: 'Feature Tests',
-    subcategories: [
-      { id: 'graphics', title: 'Graphics Tests' },
-      { id: 'audio', title: 'Audio Tests' },
-      { id: 'ui', title: 'UI Tests' },
-    ],
-  },
-  // Merge playground categories (from allolib_playground tutorials)
+  ...categoryGroups[0].categories,
   ...playgroundCategories,
 ]
 
@@ -5969,21 +6028,1292 @@ ALLOLIB_MAIN(ParameterDemoApp)
  */
 `,
   },
+
+  // ==========================================================================
+  // SIMULATION - Particle Systems
+  // ==========================================================================
+  {
+    id: 'sim-particle-fountain',
+    title: 'Particle Fountain',
+    description: 'Simple particle system with fountain-like emission',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Particle Fountain
+ *
+ * A simple particle system demonstrating emission, velocity, and gravity.
+ * Particles are emitted upward and fall back down.
+ *
+ * Based on allolib/examples/simulation/particleSystem.cpp
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+
+using namespace al;
+
+struct Particle {
+    Vec3f pos, vel, acc;
+    int age = 0;
+
+    void update(int ageInc) {
+        vel += acc;
+        pos += vel;
+        age += ageInc;
+    }
+};
+
+template <int N>
+struct Emitter {
+    Particle particles[N];
+    int tap = 0;
+
+    Emitter() {
+        for (auto& p : particles) p.age = N;
+    }
+
+    template <int M>
+    void update() {
+        for (auto& p : particles) p.update(M);
+
+        for (int i = 0; i < M; ++i) {
+            auto& p = particles[tap];
+
+            // Fountain emission
+            if (rnd::prob(0.95)) {
+                p.vel.set(
+                    rnd::uniform(-0.1f, -0.05f),
+                    rnd::uniform(0.12f, 0.14f),
+                    rnd::uniform(-0.01f, 0.01f)
+                );
+                p.acc.set(0, -0.002f, 0);  // Gravity
+            } else {
+                // Occasional spray
+                p.vel.set(
+                    rnd::uniformS(0.01f),
+                    rnd::uniformS(0.01f),
+                    rnd::uniformS(0.01f)
+                );
+                p.acc.set(0, 0, 0);
+            }
+            p.pos.set(0, -2, 0);  // Emission point
+            p.age = 0;
+
+            ++tap;
+            if (tap >= N) tap = 0;
+        }
+    }
+
+    int size() { return N; }
+};
+
+class ParticleFountain : public WebApp {
+public:
+    Emitter<8000> emitter;
+    Mesh mesh;
+
+    void onCreate() override {
+        nav().pos(4, 0, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        emitter.update<40>();
+
+        mesh.reset();
+        mesh.primitive(Mesh::POINTS);
+
+        for (int i = 0; i < emitter.size(); ++i) {
+            Particle& p = emitter.particles[i];
+            float age = float(p.age) / emitter.size();
+
+            mesh.vertex(p.pos);
+            // Color based on age: blue to transparent
+            mesh.color(Color(0.3f, 0.5f, 1.0f, (1.0f - age) * 0.6f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+        g.pointSize(4);
+        g.meshColor();
+        g.draw(mesh);
+    }
+};
+
+ALLOLIB_WEB_MAIN(ParticleFountain)
+`,
+  },
+  {
+    id: 'sim-particle-galaxy',
+    title: 'Particle Galaxy',
+    description: 'Spinning galaxy of particles with orbital motion',
+    category: 'simulation',
+    subcategory: 'particles',
+    code: `/**
+ * Particle Galaxy
+ *
+ * Particles orbit around a center point creating a galaxy effect.
+ * Demonstrates circular motion and mesh generation.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+#include <cmath>
+
+using namespace al;
+
+struct Star {
+    float radius;      // Distance from center
+    float angle;       // Current angle
+    float speed;       // Angular velocity
+    float height;      // Y offset
+    float brightness;
+
+    void update(float dt) {
+        angle += speed * dt;
+        if (angle > M_2PI) angle -= M_2PI;
+    }
+
+    Vec3f position() const {
+        return Vec3f(
+            cos(angle) * radius,
+            height + sin(angle * 3) * 0.1f,
+            sin(angle) * radius
+        );
+    }
+};
+
+class ParticleGalaxy : public WebApp {
+public:
+    static const int NUM_STARS = 10000;
+    Star stars[NUM_STARS];
+    Mesh mesh;
+    float rotation = 0;
+
+    void onCreate() override {
+        // Initialize stars with random orbits
+        for (int i = 0; i < NUM_STARS; ++i) {
+            Star& s = stars[i];
+            // Distribute radius with more stars near center
+            float r = rnd::uniform();
+            s.radius = r * r * 4.0f + 0.2f;
+            s.angle = rnd::uniform() * M_2PI;
+            // Inner stars orbit faster (Kepler's law approximation)
+            s.speed = 0.5f / (s.radius + 0.5f);
+            s.height = rnd::uniformS(0.2f) * (1.0f - r);
+            s.brightness = rnd::uniform(0.3f, 1.0f);
+        }
+
+        nav().pos(0, 3, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        rotation += dt * 0.1;
+
+        // Update all stars
+        for (int i = 0; i < NUM_STARS; ++i) {
+            stars[i].update(dt);
+        }
+
+        // Rebuild mesh
+        mesh.reset();
+        mesh.primitive(Mesh::POINTS);
+
+        for (int i = 0; i < NUM_STARS; ++i) {
+            Star& s = stars[i];
+            mesh.vertex(s.position());
+
+            // Color based on radius: blue core, white/yellow outer
+            float t = s.radius / 4.0f;
+            float r = 0.6f + t * 0.4f;
+            float g = 0.7f + t * 0.3f;
+            float b = 1.0f - t * 0.3f;
+            mesh.color(Color(r, g, b, s.brightness * 0.8f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.01f, 0.01f, 0.02f);
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+        g.pointSize(2);
+
+        g.pushMatrix();
+        g.rotate(rotation * 10, 0, 1, 0);
+        g.meshColor();
+        g.draw(mesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(ParticleGalaxy)
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Physics
+  // ==========================================================================
+  {
+    id: 'sim-wave-equation',
+    title: 'Wave Equation',
+    description: '2D wave simulation with ripples and reflections',
+    category: 'simulation',
+    subcategory: 'physics',
+    code: `/**
+ * Wave Equation Simulation
+ *
+ * Implements a discretized 2D wave equation with random droplets.
+ * Based on allolib/examples/simulation/waveEquation.cpp
+ *
+ * u(r,t+1) = 2u(r,t) - u(r,t-1) + v^2[u(r+1,t) - 2u(r,t) + u(r-1,t)]
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/math/al_Random.hpp"
+
+using namespace al;
+
+class WaveEquation : public WebApp {
+public:
+    static const int Nx = 128, Ny = 128;  // Grid size
+    float wave[Nx * Ny * 2];  // Double buffer for wave values
+    int zcurr = 0;            // Current time plane
+    float decay = 0.96f;      // Wave decay factor
+    float velocity = 0.4f;    // Wave propagation speed
+
+    Mesh mesh;
+
+    void onCreate() override {
+        // Initialize wave array to zero
+        for (int i = 0; i < Nx * Ny * 2; ++i) wave[i] = 0;
+
+        // Create a tessellated plane mesh
+        addSurface(mesh, Nx, Ny);
+
+        nav().pos(0, 2, 3);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    int indexAt(int x, int y, int z) {
+        return (y * Nx + x) * 2 + z;
+    }
+
+    void onAnimate(double dt) override {
+        int zprev = 1 - zcurr;
+
+        // Add random droplets
+        for (int k = 0; k < 2; ++k) {
+            if (rnd::prob(0.02f)) {
+                int ix = rnd::uniform(Nx - 8) + 4;
+                int iy = rnd::uniform(Ny - 8) + 4;
+
+                // Create Gaussian droplet
+                for (int j = -4; j <= 4; ++j) {
+                    for (int i = -4; i <= 4; ++i) {
+                        float x = float(i) / 4.0f;
+                        float y = float(j) / 4.0f;
+                        float v = 0.3f * exp(-(x*x + y*y) / 0.25f);
+                        wave[indexAt(ix + i, iy + j, zcurr)] += v;
+                        wave[indexAt(ix + i, iy + j, zprev)] += v;
+                    }
+                }
+            }
+        }
+
+        // Update wave equation
+        for (int j = 0; j < Ny; ++j) {
+            for (int i = 0; i < Nx; ++i) {
+                // Wrap at boundaries (toroidal)
+                int im1 = i > 0 ? i - 1 : Nx - 1;
+                int ip1 = i < Nx - 1 ? i + 1 : 0;
+                int jm1 = j > 0 ? j - 1 : Ny - 1;
+                int jp1 = j < Ny - 1 ? j + 1 : 0;
+
+                // Get neighborhood values
+                float vp = wave[indexAt(i, j, zprev)];
+                float vc = wave[indexAt(i, j, zcurr)];
+                float vl = wave[indexAt(im1, j, zcurr)];
+                float vr = wave[indexAt(ip1, j, zcurr)];
+                float vd = wave[indexAt(i, jm1, zcurr)];
+                float vu = wave[indexAt(i, jp1, zcurr)];
+
+                // Wave equation update
+                float val = 2*vc - vp + velocity*((vl - 2*vc + vr) + (vd - 2*vc + vu));
+                wave[indexAt(i, j, zprev)] = val * decay;
+
+                // Update mesh vertex height
+                int idx = j * Nx + i;
+                mesh.vertices()[idx].z = val;
+            }
+        }
+
+        mesh.generateNormals();
+        zcurr = zprev;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        g.pushMatrix();
+        g.rotate(-60, 1, 0, 0);
+        g.scale(2);
+        g.color(0.3f, 0.6f, 0.9f);
+        g.draw(mesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(WaveEquation)
+`,
+  },
+  {
+    id: 'sim-spring-mesh',
+    title: 'Spring Mesh',
+    description: 'Soft body simulation using spring-mass physics',
+    category: 'simulation',
+    subcategory: 'physics',
+    code: `/**
+ * Spring Mesh Simulation
+ *
+ * A grid of particles connected by springs creating a cloth-like effect.
+ * Click to apply force to the mesh.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+#include <vector>
+
+using namespace al;
+
+struct MassPoint {
+    Vec3f pos, vel;
+    bool fixed = false;
+
+    void update(float dt, Vec3f force) {
+        if (fixed) return;
+        Vec3f acc = force;
+        vel += acc * dt;
+        vel *= 0.98f;  // Damping
+        pos += vel * dt;
+    }
+};
+
+class SpringMesh : public WebApp {
+public:
+    static const int WIDTH = 20;
+    static const int HEIGHT = 15;
+    MassPoint points[WIDTH * HEIGHT];
+    Mesh mesh;
+
+    float stiffness = 50.0f;
+    float restLength = 0.15f;
+    Vec3f gravity{0, -2.0f, 0};
+
+    void onCreate() override {
+        // Initialize grid of points
+        for (int y = 0; y < HEIGHT; ++y) {
+            for (int x = 0; x < WIDTH; ++x) {
+                int i = y * WIDTH + x;
+                points[i].pos = Vec3f(
+                    (x - WIDTH/2.0f) * restLength,
+                    (HEIGHT/2.0f - y) * restLength,
+                    0
+                );
+                points[i].vel.set(0, 0, 0);
+                // Fix top row
+                if (y == 0 && (x == 0 || x == WIDTH-1 || x == WIDTH/2)) {
+                    points[i].fixed = true;
+                }
+            }
+        }
+
+        nav().pos(0, 0, 4);
+    }
+
+    Vec3f springForce(MassPoint& a, MassPoint& b) {
+        Vec3f diff = b.pos - a.pos;
+        float dist = diff.mag();
+        if (dist < 0.001f) return Vec3f(0);
+
+        float stretch = dist - restLength;
+        return diff.normalized() * stretch * stiffness;
+    }
+
+    void onAnimate(double dt) override {
+        float step = 0.002f;  // Fixed timestep for stability
+        int steps = int(dt / step) + 1;
+
+        for (int s = 0; s < steps; ++s) {
+            // Calculate forces
+            std::vector<Vec3f> forces(WIDTH * HEIGHT, gravity);
+
+            // Horizontal springs
+            for (int y = 0; y < HEIGHT; ++y) {
+                for (int x = 0; x < WIDTH - 1; ++x) {
+                    int i = y * WIDTH + x;
+                    int j = i + 1;
+                    Vec3f f = springForce(points[i], points[j]);
+                    forces[i] += f;
+                    forces[j] -= f;
+                }
+            }
+
+            // Vertical springs
+            for (int y = 0; y < HEIGHT - 1; ++y) {
+                for (int x = 0; x < WIDTH; ++x) {
+                    int i = y * WIDTH + x;
+                    int j = i + WIDTH;
+                    Vec3f f = springForce(points[i], points[j]);
+                    forces[i] += f;
+                    forces[j] -= f;
+                }
+            }
+
+            // Update positions
+            for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+                points[i].update(step, forces[i]);
+            }
+        }
+
+        // Build mesh
+        mesh.reset();
+        mesh.primitive(Mesh::LINES);
+
+        // Horizontal lines
+        for (int y = 0; y < HEIGHT; ++y) {
+            for (int x = 0; x < WIDTH - 1; ++x) {
+                int i = y * WIDTH + x;
+                mesh.vertex(points[i].pos);
+                mesh.vertex(points[i + 1].pos);
+                mesh.color(0.4f, 0.7f, 1.0f);
+                mesh.color(0.4f, 0.7f, 1.0f);
+            }
+        }
+
+        // Vertical lines
+        for (int y = 0; y < HEIGHT - 1; ++y) {
+            for (int x = 0; x < WIDTH; ++x) {
+                int i = y * WIDTH + x;
+                mesh.vertex(points[i].pos);
+                mesh.vertex(points[i + WIDTH].pos);
+                mesh.color(0.4f, 0.7f, 1.0f);
+                mesh.color(0.4f, 0.7f, 1.0f);
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f);
+        g.depthTesting(true);
+        g.meshColor();
+        g.draw(mesh);
+
+        // Draw fixed points
+        Mesh fixedPts;
+        fixedPts.primitive(Mesh::POINTS);
+        for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+            if (points[i].fixed) {
+                fixedPts.vertex(points[i].pos);
+                fixedPts.color(1.0f, 0.3f, 0.3f);
+            }
+        }
+        g.pointSize(8);
+        g.draw(fixedPts);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            // Apply random impulse
+            for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+                if (!points[i].fixed) {
+                    points[i].vel += Vec3f(
+                        rnd::uniformS(2.0f),
+                        rnd::uniform(1.0f, 3.0f),
+                        rnd::uniformS(2.0f)
+                    );
+                }
+            }
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SpringMesh)
+
+// Press SPACE to shake the mesh!
+`,
+  },
+
+  // ==========================================================================
+  // SIMULATION - Agent-Based
+  // ==========================================================================
+  {
+    id: 'sim-flocking',
+    title: 'Flocking Boids',
+    description: 'Reynolds flocking algorithm with collision avoidance and velocity matching',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * Flocking Boids
+ *
+ * Implementation of Craig Reynolds' flocking algorithm with:
+ * - Collision avoidance
+ * - Velocity matching
+ * - Random hunting motion
+ *
+ * Based on allolib/examples/simulation/flocking.cpp
+ * Press R to reset boids.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+#include <cmath>
+
+using namespace al;
+
+class Boid {
+public:
+    Vec2f pos, vel;
+
+    void update(float dt) {
+        pos += vel * dt;
+    }
+};
+
+class FlockingBoids : public WebApp {
+public:
+    static const int NUM_BOIDS = 64;
+    Boid boids[NUM_BOIDS];
+    Mesh heads, tails, box;
+
+    void onCreate() override {
+        // Create boundary box
+        box.primitive(Mesh::LINE_LOOP);
+        box.vertex(-1, -1, 0);
+        box.vertex(1, -1, 0);
+        box.vertex(1, 1, 0);
+        box.vertex(-1, 1, 0);
+
+        nav().pos(0, 0, 4);
+        resetBoids();
+    }
+
+    void resetBoids() {
+        for (auto& b : boids) {
+            // Random position and velocity in unit disc
+            float r = sqrt(rnd::uniform());
+            float a = rnd::uniform() * M_2PI;
+            b.pos = Vec2f(cos(a) * r, sin(a) * r);
+
+            r = sqrt(rnd::uniform()) * 0.5f;
+            a = rnd::uniform() * M_2PI;
+            b.vel = Vec2f(cos(a) * r, sin(a) * r);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        // Boid-boid interactions
+        for (int i = 0; i < NUM_BOIDS - 1; ++i) {
+            for (int j = i + 1; j < NUM_BOIDS; ++j) {
+                Vec2f ds = boids[i].pos - boids[j].pos;
+                float dist = ds.mag();
+                if (dist < 0.001f) continue;
+
+                // Collision avoidance (Gaussian falloff)
+                float pushRadius = 0.08f;
+                float pushStrength = 1.0f;
+                float push = exp(-dist*dist / (pushRadius*pushRadius)) * pushStrength;
+                Vec2f pushVec = ds.normalized() * push;
+                boids[i].vel += pushVec;
+                boids[j].vel -= pushVec;
+
+                // Velocity matching
+                float matchRadius = 0.15f;
+                float nearness = exp(-dist*dist / (matchRadius*matchRadius));
+                Vec2f veli = boids[i].vel;
+                Vec2f velj = boids[j].vel;
+                boids[i].vel = veli * (1 - 0.5f*nearness) + velj * (0.5f*nearness);
+                boids[j].vel = velj * (1 - 0.5f*nearness) + veli * (0.5f*nearness);
+            }
+        }
+
+        // Individual behaviors
+        for (auto& b : boids) {
+            // Random hunting motion
+            float huntUrge = 0.3f;
+            float r = sqrt(rnd::uniform());
+            float a = rnd::uniform() * M_2PI;
+            Vec2f hunt(cos(a) * r, sin(a) * r);
+            hunt *= hunt.magSqr();  // Cubed distribution
+            b.vel += hunt * huntUrge;
+
+            // Speed limit
+            float speed = b.vel.mag();
+            if (speed > 2.0f) b.vel *= 2.0f / speed;
+
+            // Boundary reflection
+            if (b.pos.x > 1 || b.pos.x < -1) {
+                b.pos.x = b.pos.x > 0 ? 1 : -1;
+                b.vel.x = -b.vel.x;
+            }
+            if (b.pos.y > 1 || b.pos.y < -1) {
+                b.pos.y = b.pos.y > 0 ? 1 : -1;
+                b.vel.y = -b.vel.y;
+            }
+
+            b.update(dt);
+        }
+
+        // Generate meshes
+        heads.reset();
+        heads.primitive(Mesh::POINTS);
+        tails.reset();
+        tails.primitive(Mesh::LINES);
+
+        for (int i = 0; i < NUM_BOIDS; ++i) {
+            Vec3f pos(boids[i].pos.x, boids[i].pos.y, 0);
+            Vec3f tailEnd = pos - Vec3f(boids[i].vel.normalized() * 0.07f, 0);
+
+            heads.vertex(pos);
+            float hue = float(i) / NUM_BOIDS * 0.3f + 0.55f;
+            Color c = HSV(hue, 0.7f, 1.0f);
+            heads.color(c);
+
+            tails.vertex(pos);
+            tails.vertex(tailEnd);
+            tails.color(c);
+            tails.color(Color(0.5f));
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.depthTesting(true);
+        g.pointSize(8);
+        g.meshColor();
+        g.draw(heads);
+        g.draw(tails);
+
+        g.color(0.3f);
+        g.draw(box);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == 'r' || k.key() == 'R') {
+            resetBoids();
+        }
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(FlockingBoids)
+
+// Press R to reset the flock!
+`,
+  },
+  {
+    id: 'sim-ant-trails',
+    title: 'Ant Colony Trails',
+    description: 'Ant colony simulation with pheromone trails',
+    category: 'simulation',
+    subcategory: 'agents',
+    code: `/**
+ * Ant Colony Simulation
+ *
+ * Simple ant foraging with pheromone trail following.
+ * Ants search for food and leave trails for others to follow.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/math/al_Random.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class AntTrails : public WebApp {
+public:
+    static const int GRID_SIZE = 100;
+    static const int NUM_ANTS = 200;
+
+    float pheromones[GRID_SIZE][GRID_SIZE];
+    float food[GRID_SIZE][GRID_SIZE];
+
+    struct Ant {
+        Vec2f pos;
+        float angle;
+        bool hasFood;
+    };
+    std::vector<Ant> ants;
+
+    Vec2f nestPos{GRID_SIZE/2.0f, GRID_SIZE/2.0f};
+    Mesh trailMesh, antMesh, foodMesh;
+
+    void onCreate() override {
+        // Initialize pheromones and food
+        for (int y = 0; y < GRID_SIZE; ++y) {
+            for (int x = 0; x < GRID_SIZE; ++x) {
+                pheromones[y][x] = 0;
+                food[y][x] = 0;
+            }
+        }
+
+        // Place food sources
+        placeFood(20, 20, 8);
+        placeFood(80, 30, 6);
+        placeFood(70, 75, 10);
+
+        // Initialize ants
+        ants.resize(NUM_ANTS);
+        for (auto& ant : ants) {
+            ant.pos = nestPos;
+            ant.angle = rnd::uniform() * M_2PI;
+            ant.hasFood = false;
+        }
+
+        nav().pos(0, 0, 3);
+    }
+
+    void placeFood(int cx, int cy, int radius) {
+        for (int dy = -radius; dy <= radius; ++dy) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                if (dx*dx + dy*dy <= radius*radius) {
+                    int x = cx + dx;
+                    int y = cy + dy;
+                    if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
+                        food[y][x] = 1.0f;
+                    }
+                }
+            }
+        }
+    }
+
+    void onAnimate(double dt) override {
+        // Evaporate pheromones
+        for (int y = 0; y < GRID_SIZE; ++y) {
+            for (int x = 0; x < GRID_SIZE; ++x) {
+                pheromones[y][x] *= 0.995f;
+            }
+        }
+
+        // Update ants
+        for (auto& ant : ants) {
+            // Sense pheromones
+            float leftAngle = ant.angle + 0.5f;
+            float rightAngle = ant.angle - 0.5f;
+
+            Vec2f leftPos = ant.pos + Vec2f(cos(leftAngle), sin(leftAngle)) * 2;
+            Vec2f rightPos = ant.pos + Vec2f(cos(rightAngle), sin(rightAngle)) * 2;
+
+            float leftPher = samplePheromone(leftPos);
+            float rightPher = samplePheromone(rightPos);
+
+            // Turn towards stronger pheromone
+            if (!ant.hasFood) {
+                if (leftPher > rightPher) ant.angle += 0.1f;
+                else if (rightPher > leftPher) ant.angle -= 0.1f;
+            }
+
+            // Random wandering
+            ant.angle += rnd::uniformS(0.3f);
+
+            // Move forward
+            float speed = 15.0f * dt;
+            ant.pos += Vec2f(cos(ant.angle), sin(ant.angle)) * speed;
+
+            // Boundary wrapping
+            if (ant.pos.x < 0) ant.pos.x += GRID_SIZE;
+            if (ant.pos.x >= GRID_SIZE) ant.pos.x -= GRID_SIZE;
+            if (ant.pos.y < 0) ant.pos.y += GRID_SIZE;
+            if (ant.pos.y >= GRID_SIZE) ant.pos.y -= GRID_SIZE;
+
+            int gx = int(ant.pos.x);
+            int gy = int(ant.pos.y);
+
+            if (ant.hasFood) {
+                // Deposit pheromone while carrying food
+                pheromones[gy][gx] = std::min(1.0f, pheromones[gy][gx] + 0.1f);
+
+                // Check if at nest
+                float distToNest = (ant.pos - nestPos).mag();
+                if (distToNest < 3) {
+                    ant.hasFood = false;
+                    ant.angle += M_PI;  // Turn around
+                }
+            } else {
+                // Check for food
+                if (food[gy][gx] > 0) {
+                    ant.hasFood = true;
+                    food[gy][gx] -= 0.01f;
+                    if (food[gy][gx] < 0) food[gy][gx] = 0;
+                    ant.angle += M_PI;  // Turn around
+                }
+            }
+        }
+
+        // Build meshes
+        buildTrailMesh();
+        buildAntMesh();
+        buildFoodMesh();
+    }
+
+    float samplePheromone(Vec2f pos) {
+        int x = int(pos.x) % GRID_SIZE;
+        int y = int(pos.y) % GRID_SIZE;
+        if (x < 0) x += GRID_SIZE;
+        if (y < 0) y += GRID_SIZE;
+        return pheromones[y][x];
+    }
+
+    void buildTrailMesh() {
+        trailMesh.reset();
+        trailMesh.primitive(Mesh::POINTS);
+
+        float scale = 2.0f / GRID_SIZE;
+        for (int y = 0; y < GRID_SIZE; ++y) {
+            for (int x = 0; x < GRID_SIZE; ++x) {
+                float p = pheromones[y][x];
+                if (p > 0.01f) {
+                    trailMesh.vertex(
+                        (x - GRID_SIZE/2.0f) * scale,
+                        (y - GRID_SIZE/2.0f) * scale,
+                        0
+                    );
+                    trailMesh.color(0.2f, 0.8f, 0.3f, p * 0.5f);
+                }
+            }
+        }
+    }
+
+    void buildAntMesh() {
+        antMesh.reset();
+        antMesh.primitive(Mesh::POINTS);
+
+        float scale = 2.0f / GRID_SIZE;
+        for (auto& ant : ants) {
+            antMesh.vertex(
+                (ant.pos.x - GRID_SIZE/2.0f) * scale,
+                (ant.pos.y - GRID_SIZE/2.0f) * scale,
+                0.01f
+            );
+            if (ant.hasFood) {
+                antMesh.color(1.0f, 0.8f, 0.2f);
+            } else {
+                antMesh.color(0.8f, 0.2f, 0.2f);
+            }
+        }
+    }
+
+    void buildFoodMesh() {
+        foodMesh.reset();
+        foodMesh.primitive(Mesh::POINTS);
+
+        float scale = 2.0f / GRID_SIZE;
+        for (int y = 0; y < GRID_SIZE; ++y) {
+            for (int x = 0; x < GRID_SIZE; ++x) {
+                if (food[y][x] > 0) {
+                    foodMesh.vertex(
+                        (x - GRID_SIZE/2.0f) * scale,
+                        (y - GRID_SIZE/2.0f) * scale,
+                        0
+                    );
+                    foodMesh.color(0.2f, 0.6f, 1.0f, food[y][x]);
+                }
+            }
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f);
+        g.blending(true);
+        g.blendAdd();
+        g.depthTesting(false);
+
+        g.pointSize(3);
+        g.meshColor();
+        g.draw(trailMesh);
+
+        g.pointSize(5);
+        g.draw(foodMesh);
+
+        g.pointSize(3);
+        g.draw(antMesh);
+
+        // Draw nest
+        Mesh nest;
+        nest.primitive(Mesh::POINTS);
+        float scale = 2.0f / GRID_SIZE;
+        nest.vertex(0, 0, 0.02f);
+        nest.color(1.0f, 1.0f, 1.0f);
+        g.pointSize(10);
+        g.draw(nest);
+    }
+};
+
+ALLOLIB_WEB_MAIN(AntTrails)
+`,
+  },
+
+  // ==========================================================================
+  // ADVANCED - Multi-File Projects
+  // ==========================================================================
+  {
+    id: 'adv-multifile-synth',
+    title: 'Multi-File Synth',
+    description: 'Example showing how to organize code across multiple files',
+    category: 'advanced',
+    subcategory: 'multifile',
+    code: `/**
+ * Multi-File Synthesizer Example
+ *
+ * This example demonstrates organizing code across multiple files:
+ * - main.cpp (this file) - Application entry point
+ * - MySynth.hpp - Header with synth voice definition
+ *
+ * Add MySynth.hpp to your project to compile this example.
+ */
+
+#include "al_playground_compat.hpp"
+#include "MySynth.hpp"
+
+using namespace al;
+
+class MultiFileSynthApp : public WebApp {
+public:
+    SynthGUIManager<MySynthVoice> synthManager;
+    Mesh backgroundSphere;
+
+    void onCreate() override {
+        addSphere(backgroundSphere, 0.5, 30, 30);
+        backgroundSphere.generateNormals();
+        nav().pos(0, 0, 4);
+    }
+
+    void onAnimate(double dt) override {
+        synthManager.setCurrentTime(currentTime());
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Draw synth visuals
+        synthManager.render(g);
+
+        // Draw background
+        g.pushMatrix();
+        g.translate(0, -1, 0);
+        g.color(0.2f, 0.3f, 0.4f);
+        g.draw(backgroundSphere);
+        g.popMatrix();
+
+        // Draw GUI
+        synthManager.drawSynthControlPanel();
+    }
+
+    void onSound(AudioIOData& io) override {
+        synthManager.render(io);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int midiNote = keyToMidi(k.key());
+        if (midiNote > 0) {
+            synthManager.voice()->setInternalParameterValue("frequency", midiToFreq(midiNote));
+            synthManager.triggerOn(midiNote);
+        }
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        int midiNote = keyToMidi(k.key());
+        if (midiNote > 0) {
+            synthManager.triggerOff(midiNote);
+        }
+        return true;
+    }
+};
+
+ALLOLIB_MAIN(MultiFileSynthApp)
+
+/*
+ * To use this example:
+ * 1. Add a new file called "MySynth.hpp" to your project
+ * 2. Copy the MySynth.hpp template code into it
+ * 3. Compile and run - play notes with your keyboard!
+ */
+`,
+  },
+
   // Merge playground examples (from allolib_playground tutorials)
   ...playgroundExamples,
 ]
 
+// Multi-file examples (separate array for better organization)
+export const multiFileExamples: MultiFileExample[] = [
+  {
+    id: 'multi-organized-synth',
+    title: 'Organized Synth Project',
+    description: 'A well-organized multi-file synth with separate voice and effects',
+    category: 'advanced',
+    subcategory: 'multifile',
+    mainFile: 'main.cpp',
+    files: [
+      {
+        path: 'main.cpp',
+        content: `/**
+ * Organized Synth Project
+ *
+ * Demonstrates proper code organization with:
+ * - Separate voice definition (voices/FMVoice.hpp)
+ * - Reusable effect (effects/Reverb.hpp)
+ * - Clean main application file
+ */
+
+#include "al_playground_compat.hpp"
+#include "voices/FMVoice.hpp"
+#include "effects/Reverb.hpp"
+
+using namespace al;
+
+class OrganizedSynthApp : public WebApp {
+public:
+    SynthGUIManager<FMVoice> synthManager;
+    SimpleReverb reverb;
+
+    void onCreate() override {
+        nav().pos(0, 0, 4);
+        reverb.setDecay(0.85f);
+        reverb.setMix(0.3f);
+    }
+
+    void onAnimate(double dt) override {
+        synthManager.setCurrentTime(currentTime());
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        g.lighting(true);
+        g.depthTesting(true);
+        synthManager.render(g);
+        synthManager.drawSynthControlPanel();
+    }
+
+    void onSound(AudioIOData& io) override {
+        synthManager.render(io);
+
+        // Apply reverb to output
+        while (io()) {
+            float left = io.out(0);
+            float right = io.out(1);
+            reverb.process(left, right);
+            io.out(0) = left;
+            io.out(1) = right;
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        int midi = keyToMidi(k.key());
+        if (midi > 0) {
+            synthManager.voice()->setInternalParameterValue("frequency", midiToFreq(midi));
+            synthManager.triggerOn(midi);
+        }
+        return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+        int midi = keyToMidi(k.key());
+        if (midi > 0) synthManager.triggerOff(midi);
+        return true;
+    }
+};
+
+ALLOLIB_MAIN(OrganizedSynthApp)
+`,
+      },
+      {
+        path: 'voices/FMVoice.hpp',
+        content: `#pragma once
+/**
+ * FM Synthesis Voice
+ *
+ * A polyphonic FM voice with:
+ * - Carrier and modulator oscillators
+ * - ADSR envelope
+ * - Visual feedback sphere
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class FMVoice : public SynthVoice {
+public:
+    gam::Sine<> carrier;
+    gam::Sine<> modulator;
+    gam::Env<4> env;
+    gam::Pan<> pan;
+
+    Mesh sphere;
+    float envValue = 0;
+
+    void init() override {
+        // Envelope: Attack, Decay, Sustain level, Release
+        env.levels(0, 1, 0.6, 0);
+        env.lengths(0.01, 0.1, 0.8);
+        env.curve(-4);
+        env.sustainPoint(2);
+
+        // Visual
+        addSphere(sphere, 0.3, 20, 20);
+        sphere.generateNormals();
+
+        // Parameters
+        createInternalTriggerParameter("frequency", 440, 20, 2000);
+        createInternalTriggerParameter("amplitude", 0.2, 0.0, 1.0);
+        createInternalTriggerParameter("modRatio", 2.0, 0.5, 8.0);
+        createInternalTriggerParameter("modIndex", 3.0, 0.0, 10.0);
+        createInternalTriggerParameter("pan", 0.0, -1.0, 1.0);
+        createInternalTriggerParameter("attackTime", 0.01, 0.001, 1.0);
+        createInternalTriggerParameter("releaseTime", 0.8, 0.01, 5.0);
+    }
+
+    void onProcess(AudioIOData& io) override {
+        float freq = getInternalParameterValue("frequency");
+        float amp = getInternalParameterValue("amplitude");
+        float modRatio = getInternalParameterValue("modRatio");
+        float modIndex = getInternalParameterValue("modIndex");
+
+        env.lengths()[0] = getInternalParameterValue("attackTime");
+        env.lengths()[2] = getInternalParameterValue("releaseTime");
+        pan.pos(getInternalParameterValue("pan"));
+
+        modulator.freq(freq * modRatio);
+
+        while (io()) {
+            float mod = modulator() * modIndex * freq;
+            carrier.freq(freq + mod);
+
+            envValue = env();
+            float s1 = carrier() * envValue * amp;
+            float s2;
+            pan(s1, s1, s2);
+
+            io.out(0) += s1;
+            io.out(1) += s2;
+        }
+
+        if (env.done()) free();
+    }
+
+    void onProcess(Graphics& g) override {
+        g.pushMatrix();
+        g.translate(getInternalParameterValue("pan") * 2, 0, 0);
+        g.scale(1 + envValue);
+
+        float freq = getInternalParameterValue("frequency");
+        float hue = log2(freq / 110.0f) / 4.0f;
+        g.color(HSV(hue, 0.7f, 0.5f + envValue * 0.5f));
+        g.draw(sphere);
+        g.popMatrix();
+    }
+
+    void onTriggerOn() override {
+        env.reset();
+    }
+
+    void onTriggerOff() override {
+        env.release();
+    }
+};
+`,
+      },
+      {
+        path: 'effects/Reverb.hpp',
+        content: `#pragma once
+/**
+ * Simple Stereo Reverb Effect
+ *
+ * A basic comb filter reverb for demonstration.
+ * For production, use Gamma's Reverb classes.
+ */
+
+class SimpleReverb {
+public:
+    static const int BUFFER_SIZE = 8192;
+    float bufferL[BUFFER_SIZE];
+    float bufferR[BUFFER_SIZE];
+    int writePos = 0;
+
+    float decay = 0.8f;
+    float mix = 0.3f;
+
+    // Different delay times for each channel (in samples)
+    int delayL = 1557;
+    int delayR = 1617;
+
+    SimpleReverb() {
+        for (int i = 0; i < BUFFER_SIZE; ++i) {
+            bufferL[i] = 0;
+            bufferR[i] = 0;
+        }
+    }
+
+    void setDecay(float d) { decay = d; }
+    void setMix(float m) { mix = m; }
+
+    void process(float& left, float& right) {
+        // Read from delay buffers
+        int readPosL = (writePos - delayL + BUFFER_SIZE) % BUFFER_SIZE;
+        int readPosR = (writePos - delayR + BUFFER_SIZE) % BUFFER_SIZE;
+
+        float delayedL = bufferL[readPosL];
+        float delayedR = bufferR[readPosR];
+
+        // Write to delay buffers (input + feedback)
+        bufferL[writePos] = left + delayedR * decay;
+        bufferR[writePos] = right + delayedL * decay;
+
+        // Mix dry and wet
+        left = left * (1.0f - mix) + delayedL * mix;
+        right = right * (1.0f - mix) + delayedR * mix;
+
+        // Advance write position
+        writePos = (writePos + 1) % BUFFER_SIZE;
+    }
+};
+`,
+      },
+    ],
+  },
+]
+
+// Combined list of all examples (single and multi-file)
+export const allExamples: AnyExample[] = [...examples, ...multiFileExamples]
+
 // Helper function to get examples by category
-export function getExamplesByCategory(categoryId: string): Example[] {
-  return examples.filter((e) => e.category === categoryId)
+export function getExamplesByCategory(categoryId: string): AnyExample[] {
+  return allExamples.filter((e) => e.category === categoryId)
 }
 
 // Helper function to get examples by subcategory
 export function getExamplesBySubcategory(
   categoryId: string,
   subcategoryId: string
-): Example[] {
-  return examples.filter(
+): AnyExample[] {
+  return allExamples.filter(
     (e) => e.category === categoryId && e.subcategory === subcategoryId
   )
 }
@@ -6001,4 +7331,13 @@ export function getSubcategoryTitle(
   const cat = categories.find((c) => c.id === categoryId)
   const sub = cat?.subcategories?.find((s) => s.id === subcategoryId)
   return sub?.title || subcategoryId
+}
+
+// Get the main code for an example (handles both single and multi-file)
+export function getExampleMainCode(example: AnyExample): string {
+  if (isMultiFileExample(example)) {
+    const mainFile = example.files.find(f => f.path === example.mainFile)
+    return mainFile?.content || example.files[0]?.content || ''
+  }
+  return example.code
 }
