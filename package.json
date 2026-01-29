@@ -15,7 +15,14 @@
     "build:frontend": "npm run build --workspace=frontend",
     "build:backend": "npm run build --workspace=backend",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "desktop:setup": "cd desktop && npm install",
+    "desktop:dev": "npm run build && cd desktop && npm run dev",
+    "desktop:build": "npm run build && cd desktop && npm run build && npm run pack",
+    "desktop:dist": "npm run build && cd desktop && npm run build && npm run dist",
+    "desktop:dist:win": "npm run build && cd desktop && npm run build && npm run dist:win",
+    "desktop:dist:mac": "npm run build && cd desktop && npm run build && npm run dist:mac",
+    "desktop:dist:linux": "npm run build && cd desktop && npm run build && npm run dist:linux"
   },
   "keywords": [
     "allolib",

@@ -67,3 +67,14 @@ allolib_playground/
 # Temporary files
 tmp/
 temp/
+
+# Desktop app builds
+desktop/release/
+desktop/dist/
+desktop/node_modules/
+
+# Platform-specific icons (generated)
+# Keep: desktop/resources/README.md
+desktop/resources/*.ico
+desktop/resources/*.icns
+desktop/resources/icons/
