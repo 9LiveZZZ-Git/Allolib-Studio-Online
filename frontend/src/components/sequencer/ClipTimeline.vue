@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { useSequencerStore, type ClipInstance } from '@/stores/sequencer'
+import { useSequencerStore, type ClipInstance, type ParameterLaneConfig, type SequencerClip, type SequencerNote } from '@/stores/sequencer'
 
 const sequencer = useSequencerStore()
 const canvasRef = ref<HTMLCanvasElement>()
@@ -9,12 +9,14 @@ let animFrameId: number | null = null
 
 // Layout constants
 const RULER_H = 24
-const TRACK_H = 48
+const BASE_TRACK_H = 48       // main clip lane height per track
+const AUTO_LANE_H = 40        // expanded automation lane height
+const AUTO_COLLAPSED_H = 16   // collapsed automation lane header
 const HEADER_W = 80
 
 // Interaction state
 const isDragging = ref(false)
-const dragMode = ref<'none' | 'move' | 'resize-right' | 'select-rect'>('none')
+const dragMode = ref<'none' | 'move' | 'resize-right' | 'select-rect' | 'automation-edit'>('none')
 const dragStartX = ref(0)
 const dragStartY = ref(0)
 const dragTarget = ref<ClipInstance | null>(null)
@@ -22,9 +24,56 @@ const dragOriginalStartTime = ref(0)
 const dragOriginalTrackIndex = ref(0)
 const hoveredInstance = ref<ClipInstance | null>(null)
 
+// Note-bar automation drag state
+const dragAutoLane = ref<ParameterLaneConfig | null>(null)
+const dragAutoLaneTop = ref(0)
+const dragAutoNoteId = ref('')
+const dragAutoClipId = ref('')
+const dragAutoParamIndex = ref(-1)
+
 // Drop zone state for external file drag
 const dropTargetTrack = ref<number | null>(null)
 const dropTargetTime = ref<number>(0)
+
+// ── Dynamic track height helpers ─────────────────────────────────────
+
+function getTrackY(trackIndex: number): number {
+  return sequencer.getTrackYOffset(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H, RULER_H)
+}
+
+function getTrackHeight(trackIndex: number): number {
+  return sequencer.getTrackTotalHeight(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H)
+}
+
+function trackIndexFromY(y: number): number {
+  if (y < RULER_H) return -1
+  const trackCount = Math.max(sequencer.arrangementTracks.length, 4)
+  for (let i = 0; i < trackCount; i++) {
+    const ty = getTrackY(i)
+    const th = getTrackHeight(i)
+    if (y >= ty && y < ty + th) return i
+  }
+  return -1
+}
+
+function isYInClipArea(y: number, trackIndex: number): boolean {
+  const ty = getTrackY(trackIndex)
+  return y >= ty && y < ty + BASE_TRACK_H
+}
+
+function getAutomationLaneAtY(y: number, trackIndex: number):
+  { lane: ParameterLaneConfig; laneTop: number; laneH: number; laneIndex: number } | null {
+  const track = sequencer.arrangementTracks[trackIndex]
+  if (!track?.expanded || !track.automationLanes.length) return null
+  let laneY = getTrackY(trackIndex) + BASE_TRACK_H
+  for (let li = 0; li < track.automationLanes.length; li++) {
+    const lane = track.automationLanes[li]
+    const h = lane.collapsed ? AUTO_COLLAPSED_H : AUTO_LANE_H
+    if (y >= laneY && y < laneY + h) return { lane, laneTop: laneY, laneH: h, laneIndex: li }
+    laneY += h
+  }
+  return null
+}
 
 // ── Coordinate transforms ───────────────────────────────────────────
 
@@ -36,16 +85,12 @@ function xToTime(x: number): number {
   return (x - HEADER_W) / sequencer.viewport.zoomX + sequencer.viewport.scrollX
 }
 
-function trackIndexFromY(y: number): number {
-  if (y < RULER_H) return -1
-  return Math.floor((y - RULER_H) / TRACK_H)
-}
-
 // ── Hit testing ─────────────────────────────────────────────────────
 
 function getInstanceAtPoint(x: number, y: number): { instance: ClipInstance; edge: 'body' | 'right' } | null {
   const trackIdx = trackIndexFromY(y)
   if (trackIdx < 0) return null
+  if (!isYInClipArea(y, trackIdx)) return null
 
   for (const inst of sequencer.clipInstances) {
     if (inst.trackIndex !== trackIdx) continue
@@ -54,11 +99,43 @@ function getInstanceAtPoint(x: number, y: number): { instance: ClipInstance; edg
 
     const instX = timeToX(inst.startTime)
     const instW = clip.duration * sequencer.viewport.zoomX
-    const instY = RULER_H + inst.trackIndex * TRACK_H
+    const instY = getTrackY(inst.trackIndex)
 
-    if (x >= instX && x <= instX + instW && y >= instY && y <= instY + TRACK_H) {
+    if (x >= instX && x <= instX + instW && y >= instY && y <= instY + BASE_TRACK_H) {
       const edge = (x > instX + instW - 8) ? 'right' : 'body'
       return { instance: inst, edge }
+    }
+  }
+  return null
+}
+
+/** Find a note bar near the mouse position in an automation lane */
+function getNoteBarAtPoint(
+  x: number, y: number, trackIndex: number, lane: ParameterLaneConfig, laneTop: number, laneH: number,
+): { note: SequencerNote; clipId: string } | null {
+  const BAR_H = 6
+  const HIT_TOLERANCE = 8
+  const range = lane.max - lane.min
+  if (range === 0) return null
+
+  const trackInstances = sequencer.clipInstances.filter(ci => ci.trackIndex === trackIndex)
+
+  for (const inst of trackInstances) {
+    const clip = sequencer.clips.find(c => c.id === inst.clipId)
+    if (!clip) continue
+
+    for (const note of clip.notes) {
+      if (note.muted) continue
+      const paramValue = lane.paramIndex < note.params.length ? note.params[lane.paramIndex] : 0
+      const normalized = Math.max(0, Math.min(1, (paramValue - lane.min) / range))
+
+      const barX = timeToX(inst.startTime + note.startTime)
+      const barW = Math.max(note.duration * sequencer.viewport.zoomX, 4)
+      const barCenterY = laneTop + laneH * (1 - normalized)
+
+      if (x >= barX && x <= barX + barW && Math.abs(y - barCenterY) <= HIT_TOLERANCE) {
+        return { note, clipId: clip.id }
+      }
     }
   }
   return null
@@ -81,25 +158,7 @@ function draw() {
   ctx.fillStyle = '#0d1117'
   ctx.fillRect(0, 0, w, h)
 
-  // ── Track lanes ─────────────────────────────────────────────────
-  for (let i = 0; i < trackCount; i++) {
-    const y = RULER_H + i * TRACK_H
-    if (y > h) break
-
-    // Alternating background
-    ctx.fillStyle = i % 2 === 0 ? '#111827' : '#0f172a'
-    ctx.fillRect(HEADER_W, y, w - HEADER_W, TRACK_H)
-
-    // Lane border
-    ctx.strokeStyle = '#1e293b'
-    ctx.lineWidth = 0.5
-    ctx.beginPath()
-    ctx.moveTo(HEADER_W, y + TRACK_H + 0.5)
-    ctx.lineTo(w, y + TRACK_H + 0.5)
-    ctx.stroke()
-  }
-
-  // ── Beat/bar grid lines ─────────────────────────────────────────
+  // ── Beat/bar grid calculation ─────────────────────────────────
   const beatDur = 60 / sequencer.bpm
   const barDur = beatDur * 4
   const visibleStart = vp.scrollX
@@ -112,7 +171,101 @@ function draw() {
     gridInterval = beatDur / 4
   }
 
-  const gridStart = Math.floor(visibleStart / gridInterval) * gridInterval
+  // ── Track lanes + automation sub-lanes ────────────────────────
+  for (let i = 0; i < trackCount; i++) {
+    const ty = getTrackY(i)
+    if (ty > h) break
+    const track = sequencer.arrangementTracks[i]
+
+    // Main clip lane background
+    ctx.fillStyle = i % 2 === 0 ? '#111827' : '#0f172a'
+    ctx.fillRect(HEADER_W, ty, w - HEADER_W, BASE_TRACK_H)
+
+    // Main lane border
+    ctx.strokeStyle = '#1e293b'
+    ctx.lineWidth = 0.5
+    ctx.beginPath()
+    ctx.moveTo(HEADER_W, ty + BASE_TRACK_H + 0.5)
+    ctx.lineTo(w, ty + BASE_TRACK_H + 0.5)
+    ctx.stroke()
+
+    // Automation sub-lanes (if expanded)
+    if (track?.expanded && track.automationLanes.length > 0) {
+      let laneY = ty + BASE_TRACK_H
+
+      for (let li = 0; li < track.automationLanes.length; li++) {
+        const lane = track.automationLanes[li]
+        const laneH = lane.collapsed ? AUTO_COLLAPSED_H : AUTO_LANE_H
+
+        if (lane.collapsed) {
+          // Collapsed lane: just a thin header
+          ctx.fillStyle = '#0a0f18'
+          ctx.fillRect(HEADER_W, laneY, w - HEADER_W, AUTO_COLLAPSED_H)
+
+          // Border
+          ctx.strokeStyle = '#1e293b'
+          ctx.lineWidth = 0.5
+          ctx.beginPath()
+          ctx.moveTo(HEADER_W, laneY + AUTO_COLLAPSED_H + 0.5)
+          ctx.lineTo(w, laneY + AUTO_COLLAPSED_H + 0.5)
+          ctx.stroke()
+        } else {
+          // Expanded lane background
+          ctx.fillStyle = li % 2 === 0 ? '#0c1322' : '#0a101c'
+          ctx.fillRect(HEADER_W, laneY, w - HEADER_W, AUTO_LANE_H)
+
+          // Grid lines within lane
+          const gridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
+          for (let t = gridStart; t <= visibleEnd; t += gridInterval) {
+            const gx = Math.round(timeToX(t)) + 0.5
+            if (gx < HEADER_W) continue
+            const isBar = Math.abs(t % barDur) < 0.001
+            ctx.strokeStyle = isBar ? '#1e293b' : '#141c2b'
+            ctx.lineWidth = isBar ? 0.5 : 0.25
+            ctx.beginPath()
+            ctx.moveTo(gx, laneY)
+            ctx.lineTo(gx, laneY + AUTO_LANE_H)
+            ctx.stroke()
+          }
+
+          // Zero reference line if 0 is within range
+          if (lane.min < 0 && lane.max > 0) {
+            const zeroNorm = (0 - lane.min) / (lane.max - lane.min)
+            const zeroY = laneY + AUTO_LANE_H * (1 - zeroNorm)
+            ctx.strokeStyle = '#374151'
+            ctx.lineWidth = 0.5
+            ctx.setLineDash([2, 2])
+            ctx.beginPath()
+            ctx.moveTo(HEADER_W, zeroY)
+            ctx.lineTo(w, zeroY)
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+
+          // Draw per-note parameter bars for each clip instance on this track
+          const trackInstances = sequencer.clipInstances.filter(ci => ci.trackIndex === i)
+          for (const inst of trackInstances) {
+            const clip = sequencer.clips.find(c => c.id === inst.clipId)
+            if (!clip) continue
+            drawNoteParamBars(ctx, clip, inst, lane, laneY, AUTO_LANE_H, w)
+          }
+
+          // Lane border
+          ctx.strokeStyle = '#1e293b'
+          ctx.lineWidth = 0.5
+          ctx.beginPath()
+          ctx.moveTo(HEADER_W, laneY + AUTO_LANE_H + 0.5)
+          ctx.lineTo(w, laneY + AUTO_LANE_H + 0.5)
+          ctx.stroke()
+        }
+
+        laneY += laneH
+      }
+    }
+  }
+
+  // ── Main grid lines (over full canvas) ────────────────────────
+  const gridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
   for (let t = gridStart; t <= visibleEnd; t += gridInterval) {
     const x = Math.round(timeToX(t)) + 0.5
     if (x < HEADER_W) continue
@@ -122,7 +275,7 @@ function draw() {
     ctx.lineWidth = isBar ? 1 : 0.5
     ctx.beginPath()
     ctx.moveTo(x, RULER_H)
-    ctx.lineTo(x, h)
+    ctx.lineTo(x, RULER_H + BASE_TRACK_H * trackCount) // only through clip lanes
     ctx.stroke()
   }
 
@@ -157,8 +310,8 @@ function draw() {
 
     const x = timeToX(inst.startTime)
     const clipW = clip.duration * vp.zoomX
-    const y = RULER_H + inst.trackIndex * TRACK_H + 2
-    const clipH = TRACK_H - 4
+    const y = getTrackY(inst.trackIndex) + 2
+    const clipH = BASE_TRACK_H - 4
 
     // Skip if offscreen
     if (x + clipW < HEADER_W || x > w) continue
@@ -219,21 +372,21 @@ function draw() {
   ctx.fillRect(0, RULER_H, HEADER_W, h - RULER_H)
 
   for (let i = 0; i < trackCount; i++) {
-    const y = RULER_H + i * TRACK_H
-    if (y > h) break
-
+    const ty = getTrackY(i)
+    if (ty > h) break
+    const totalH = getTrackHeight(i)
     const track = sequencer.arrangementTracks[i]
 
-    // Track header background
+    // Track header background (spans full track height)
     ctx.fillStyle = i % 2 === 0 ? '#111827' : '#0f172a'
-    ctx.fillRect(0, y, HEADER_W, TRACK_H)
+    ctx.fillRect(0, ty, HEADER_W, totalH)
 
-    // Border
+    // Bottom border
     ctx.strokeStyle = '#1e293b'
     ctx.lineWidth = 0.5
     ctx.beginPath()
-    ctx.moveTo(0, y + TRACK_H + 0.5)
-    ctx.lineTo(HEADER_W, y + TRACK_H + 0.5)
+    ctx.moveTo(0, ty + totalH + 0.5)
+    ctx.lineTo(HEADER_W, ty + totalH + 0.5)
     ctx.stroke()
 
     if (track) {
@@ -241,22 +394,104 @@ function draw() {
       ctx.fillStyle = '#d1d5db'
       ctx.font = '10px sans-serif'
       ctx.textBaseline = 'middle'
-      ctx.fillText(track.name, 4, y + TRACK_H / 2 - 6, HEADER_W - 8)
+      ctx.fillText(track.name, 4, ty + BASE_TRACK_H / 2 - 6, HEADER_W - 20)
 
       // Mute/Solo indicators
       ctx.font = '8px monospace'
       if (track.muted) {
         ctx.fillStyle = '#ef4444'
-        ctx.fillText('M', 4, y + TRACK_H / 2 + 10)
+        ctx.fillText('M', 4, ty + BASE_TRACK_H / 2 + 10)
       }
       if (track.solo) {
         ctx.fillStyle = '#eab308'
-        ctx.fillText('S', 16, y + TRACK_H / 2 + 10)
+        ctx.fillText('S', 16, ty + BASE_TRACK_H / 2 + 10)
       }
 
-      // Color stripe
+      // Expand toggle triangle (bottom-right area of clip lane header)
+      const hasClips = sequencer.clipInstances.some(ci => ci.trackIndex === i)
+      if (hasClips) {
+        const triX = HEADER_W - 14
+        const triY = ty + BASE_TRACK_H - 14
+        ctx.fillStyle = track.expanded ? '#60a5fa' : '#6b7280'
+        ctx.beginPath()
+        if (track.expanded) {
+          // Down-pointing triangle
+          ctx.moveTo(triX, triY)
+          ctx.lineTo(triX + 10, triY)
+          ctx.lineTo(triX + 5, triY + 8)
+        } else {
+          // Right-pointing triangle
+          ctx.moveTo(triX, triY)
+          ctx.lineTo(triX + 8, triY + 5)
+          ctx.lineTo(triX, triY + 10)
+        }
+        ctx.closePath()
+        ctx.fill()
+      }
+
+      // Color stripe (spans full height)
       ctx.fillStyle = track.color
-      ctx.fillRect(HEADER_W - 3, y, 3, TRACK_H)
+      ctx.fillRect(HEADER_W - 3, ty, 3, totalH)
+
+      // Automation lane headers in gutter
+      if (track.expanded && track.automationLanes.length > 0) {
+        let laneY = ty + BASE_TRACK_H
+        for (const lane of track.automationLanes) {
+          const laneH = lane.collapsed ? AUTO_COLLAPSED_H : AUTO_LANE_H
+
+          // Lane header separator
+          ctx.strokeStyle = '#1e293b'
+          ctx.lineWidth = 0.5
+          ctx.beginPath()
+          ctx.moveTo(0, laneY + 0.5)
+          ctx.lineTo(HEADER_W, laneY + 0.5)
+          ctx.stroke()
+
+          // Lane background in gutter
+          ctx.fillStyle = '#0a0f18'
+          ctx.fillRect(0, laneY, HEADER_W - 3, laneH)
+
+          if (lane.collapsed) {
+            // Collapsed: right-pointing triangle + name
+            ctx.fillStyle = '#4b5563'
+            ctx.beginPath()
+            ctx.moveTo(4, laneY + 4)
+            ctx.lineTo(10, laneY + 8)
+            ctx.lineTo(4, laneY + 12)
+            ctx.closePath()
+            ctx.fill()
+
+            ctx.fillStyle = '#6b7280'
+            ctx.font = '8px sans-serif'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(lane.paramName, 14, laneY + AUTO_COLLAPSED_H / 2, HEADER_W - 20)
+          } else {
+            // Expanded: down-pointing triangle + name + range
+            ctx.fillStyle = '#60a5fa'
+            ctx.beginPath()
+            ctx.moveTo(4, laneY + 4)
+            ctx.lineTo(12, laneY + 4)
+            ctx.lineTo(8, laneY + 10)
+            ctx.closePath()
+            ctx.fill()
+
+            ctx.fillStyle = '#9ca3af'
+            ctx.font = '9px sans-serif'
+            ctx.textBaseline = 'top'
+            ctx.fillText(lane.paramName, 14, laneY + 3, HEADER_W - 20)
+
+            // Min/max range
+            ctx.fillStyle = '#4b5563'
+            ctx.font = '7px monospace'
+            ctx.textBaseline = 'bottom'
+            ctx.fillText(lane.max.toFixed(1), 4, laneY + 14)
+            ctx.textBaseline = 'bottom'
+            ctx.fillText(lane.min.toFixed(1), 4, laneY + AUTO_LANE_H - 2)
+          }
+
+          laneY += laneH
+        }
+      }
     }
   }
 
@@ -283,7 +518,7 @@ function draw() {
   ctx.font = '10px monospace'
   ctx.textBaseline = 'top'
 
-  const rulerGridStart = Math.floor(visibleStart / gridInterval) * gridInterval
+  const rulerGridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
   for (let t = rulerGridStart; t <= visibleEnd; t += gridInterval) {
     const x = timeToX(t)
     if (x < HEADER_W) continue
@@ -313,12 +548,12 @@ function draw() {
 
   // ── Drop indicator ──────────────────────────────────────────────
   if (dropTargetTrack.value !== null) {
-    const dropY = RULER_H + dropTargetTrack.value * TRACK_H
+    const dropY = getTrackY(dropTargetTrack.value)
     const dropX = timeToX(dropTargetTime.value)
 
     // Highlight target track lane
     ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'
-    ctx.fillRect(HEADER_W, dropY, w - HEADER_W, TRACK_H)
+    ctx.fillRect(HEADER_W, dropY, w - HEADER_W, BASE_TRACK_H)
 
     // Drop position line
     ctx.strokeStyle = '#3b82f6'
@@ -326,7 +561,7 @@ function draw() {
     ctx.setLineDash([4, 4])
     ctx.beginPath()
     ctx.moveTo(dropX, dropY)
-    ctx.lineTo(dropX, dropY + TRACK_H)
+    ctx.lineTo(dropX, dropY + BASE_TRACK_H)
     ctx.stroke()
     ctx.setLineDash([])
   }
@@ -362,6 +597,61 @@ function draw() {
   ctx.font = '9px monospace'
   ctx.textBaseline = 'middle'
   ctx.fillText(`${sequencer.bpm} BPM`, 4, RULER_H / 2)
+}
+
+function drawNoteParamBars(
+  ctx: CanvasRenderingContext2D,
+  clip: SequencerClip,
+  inst: ClipInstance,
+  lane: ParameterLaneConfig,
+  laneTop: number, laneH: number, canvasW: number,
+) {
+  if (clip.notes.length === 0) return
+
+  const range = lane.max - lane.min
+  if (range === 0) return
+
+  const clipStartX = timeToX(inst.startTime)
+  const clipEndX = timeToX(inst.startTime + clip.duration)
+  const leftBound = Math.max(clipStartX, HEADER_W)
+  const rightBound = Math.min(clipEndX, canvasW)
+  if (leftBound >= rightBound) return
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(leftBound, laneTop, rightBound - leftBound, laneH)
+  ctx.clip()
+
+  const BAR_H = 6
+
+  for (const note of clip.notes) {
+    if (note.muted) continue
+    const paramValue = lane.paramIndex < note.params.length ? note.params[lane.paramIndex] : 0
+    const normalized = Math.max(0, Math.min(1, (paramValue - lane.min) / range))
+
+    const barX = timeToX(inst.startTime + note.startTime)
+    const barW = Math.max(note.duration * sequencer.viewport.zoomX, 4)
+    const barCenterY = laneTop + laneH * (1 - normalized)
+    const barY = barCenterY - BAR_H / 2
+
+    // Filled bar
+    ctx.fillStyle = adjustAlpha(clip.color, 0.7)
+    ctx.fillRect(barX, barY, barW, BAR_H)
+
+    // Bar outline
+    ctx.strokeStyle = adjustAlpha(clip.color, 0.95)
+    ctx.lineWidth = 1
+    ctx.strokeRect(barX, barY, barW, BAR_H)
+
+    // Center dot for grab indication
+    const dotX = barX + barW / 2
+    ctx.beginPath()
+    ctx.arc(dotX, barCenterY, 2, 0, Math.PI * 2)
+    ctx.fillStyle = '#fff'
+    ctx.fill()
+  }
+
+  ctx.restore()
 }
 
 function drawClipNotePreview(
@@ -432,9 +722,59 @@ function handleMouseDown(e: MouseEvent) {
     return
   }
 
-  // Click in header → ignore for now
-  if (x < HEADER_W) return
+  const trackIdx = trackIndexFromY(y)
+  if (trackIdx < 0) return
 
+  // Click in header area
+  if (x < HEADER_W) {
+    const track = sequencer.arrangementTracks[trackIdx]
+    if (!track) return
+
+    // Check if click is on expand toggle triangle
+    const ty = getTrackY(trackIdx)
+    const triX = HEADER_W - 14
+    const triY = ty + BASE_TRACK_H - 14
+    if (x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10) {
+      sequencer.toggleTrackExpanded(trackIdx)
+      requestDraw()
+      return
+    }
+
+    // Check if click is in an automation lane header (collapse toggle)
+    if (track.expanded) {
+      const autoHit = getAutomationLaneAtY(y, trackIdx)
+      if (autoHit && x < 14) {
+        sequencer.toggleTrackAutomationLane(trackIdx, autoHit.lane.paramName)
+        requestDraw()
+        return
+      }
+    }
+
+    return
+  }
+
+  // Check if we're in an automation lane (not clip area)
+  if (!isYInClipArea(y, trackIdx)) {
+    const autoHit = getAutomationLaneAtY(y, trackIdx)
+    if (autoHit && !autoHit.lane.collapsed) {
+      // Hit-test for a note bar in this lane — any edit mode can drag note param values
+      const barHit = getNoteBarAtPoint(x, y, trackIdx, autoHit.lane, autoHit.laneTop, AUTO_LANE_H)
+      if (barHit) {
+        sequencer.pushUndo()
+        isDragging.value = true
+        dragMode.value = 'automation-edit'
+        dragAutoNoteId.value = barHit.note.id
+        dragAutoClipId.value = barHit.clipId
+        dragAutoParamIndex.value = autoHit.lane.paramIndex
+        dragAutoLane.value = autoHit.lane
+        dragAutoLaneTop.value = autoHit.laneTop
+      }
+      requestDraw()
+    }
+    return
+  }
+
+  // From here on, we're in the clip area
   const hit = getInstanceAtPoint(x, y)
 
   if (sequencer.editMode === 'erase') {
@@ -448,9 +788,7 @@ function handleMouseDown(e: MouseEvent) {
   if (sequencer.editMode === 'draw') {
     if (!hit) {
       // Create a new clip and place it
-      const trackIdx = trackIndexFromY(y)
-      if (trackIdx < 0) return
-      const t = xToTime(x)
+      const t = Math.max(0, xToTime(x))
       const synthName = sequencer.synthNames[0] || 'SineEnv'
       const clip = sequencer.createClip(synthName)
       const inst = sequencer.addClipInstance(clip.id, trackIdx, t)
@@ -492,26 +830,80 @@ function handleMouseMove(e: MouseEvent) {
   const y = (e.clientY - rect.top) * (canvas.height / rect.height)
 
   if (!isDragging.value) {
-    const hit = getInstanceAtPoint(x, y)
-    hoveredInstance.value = hit?.instance || null
+    // Update cursor and hover state
+    const trackIdx = trackIndexFromY(y)
 
-    if (hit) {
-      canvas.style.cursor = hit.edge === 'right' ? 'ew-resize' : 'pointer'
-    } else if (y < RULER_H) {
+    if (y < RULER_H) {
       canvas.style.cursor = 'pointer'
-    } else if (sequencer.editMode === 'draw') {
-      canvas.style.cursor = 'crosshair'
+      hoveredInstance.value = null
+    } else if (x < HEADER_W) {
+      // Check for expand toggle or automation lane collapse
+      const track = trackIdx >= 0 ? sequencer.arrangementTracks[trackIdx] : null
+      if (track) {
+        const ty = getTrackY(trackIdx)
+        const triX = HEADER_W - 14
+        const triY = ty + BASE_TRACK_H - 14
+        if (x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10) {
+          canvas.style.cursor = 'pointer'
+        } else if (track.expanded) {
+          const autoHit = getAutomationLaneAtY(y, trackIdx)
+          canvas.style.cursor = (autoHit && x < 14) ? 'pointer' : 'default'
+        } else {
+          canvas.style.cursor = 'default'
+        }
+      } else {
+        canvas.style.cursor = 'default'
+      }
+      hoveredInstance.value = null
+    } else if (trackIdx >= 0 && !isYInClipArea(y, trackIdx)) {
+      // In automation lane area — show ns-resize over note bars
+      const autoHit = getAutomationLaneAtY(y, trackIdx)
+      if (autoHit && !autoHit.lane.collapsed) {
+        const barHit = getNoteBarAtPoint(x, y, trackIdx, autoHit.lane, autoHit.laneTop, AUTO_LANE_H)
+        canvas.style.cursor = barHit ? 'ns-resize' : 'default'
+      } else {
+        canvas.style.cursor = 'default'
+      }
+      hoveredInstance.value = null
     } else {
-      canvas.style.cursor = 'default'
+      const hit = getInstanceAtPoint(x, y)
+      hoveredInstance.value = hit?.instance || null
+
+      if (hit) {
+        canvas.style.cursor = hit.edge === 'right' ? 'ew-resize' : 'pointer'
+      } else if (sequencer.editMode === 'draw') {
+        canvas.style.cursor = 'crosshair'
+      } else {
+        canvas.style.cursor = 'default'
+      }
     }
 
-    if (hoveredInstance.value !== hit?.instance) requestDraw()
+    requestDraw()
+    return
+  }
+
+  // Dragging note-bar in automation lane (change param value)
+  if (dragMode.value === 'automation-edit' && dragAutoLane.value && dragAutoNoteId.value) {
+    const lane = dragAutoLane.value
+    const laneTop = dragAutoLaneTop.value
+    const normalized = 1 - Math.max(0, Math.min(1, (y - laneTop) / AUTO_LANE_H))
+    const newValue = lane.min + normalized * (lane.max - lane.min)
+    const clamped = Math.max(lane.min, Math.min(lane.max, newValue))
+
+    sequencer.updateNoteParamInClip(
+      dragAutoClipId.value,
+      dragAutoNoteId.value,
+      dragAutoParamIndex.value,
+      clamped,
+    )
+
+    requestDraw()
     return
   }
 
   if (dragMode.value === 'move' && dragTarget.value) {
     const dt = (x - dragStartX.value) / sequencer.viewport.zoomX
-    const newTime = sequencer.snapTime(dragOriginalStartTime.value + dt)
+    const newTime = Math.max(0, sequencer.snapTime(dragOriginalStartTime.value + dt))
     const newTrackIdx = trackIndexFromY(y)
 
     sequencer.moveClipInstance(
@@ -527,7 +919,8 @@ function handleMouseMove(e: MouseEvent) {
     if (clip) {
       const endTime = xToTime(x)
       const newDur = sequencer.snapTime(endTime - dragTarget.value.startTime)
-      clip.duration = Math.max(newDur, 0.1)
+      const finalDur = Math.max(newDur, 0.1)
+      clip.duration = finalDur
       requestDraw()
     }
   }
@@ -537,6 +930,10 @@ function handleMouseUp() {
   isDragging.value = false
   dragMode.value = 'none'
   dragTarget.value = null
+  dragAutoLane.value = null
+  dragAutoNoteId.value = ''
+  dragAutoClipId.value = ''
+  dragAutoParamIndex.value = -1
   requestDraw()
 }
 
@@ -574,11 +971,14 @@ function handleWheel(e: WheelEvent) {
     const timeAtCursor = xToTime(x)
     sequencer.viewport.zoomX = Math.max(10, Math.min(500, sequencer.viewport.zoomX * factor))
     sequencer.viewport.scrollX = timeAtCursor - (x - HEADER_W) / sequencer.viewport.zoomX
-    sequencer.viewport.scrollX = Math.max(0, sequencer.viewport.scrollX)
   } else {
-    sequencer.viewport.scrollX = Math.max(0, sequencer.viewport.scrollX + e.deltaY / sequencer.viewport.zoomX)
+    // Use whichever axis has more movement (supports trackpad horizontal swipe + mouse wheel)
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+    sequencer.viewport.scrollX += delta / sequencer.viewport.zoomX
   }
 
+  // Clamp to non-negative time
+  sequencer.viewport.scrollX = Math.max(0, sequencer.viewport.scrollX)
   requestDraw()
 }
 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   parseSynthSequence,
   serializeSynthSequence,
@@ -8,8 +8,9 @@ import {
   type SynthSequenceEvent,
   type SynthSequenceData,
 } from '@/utils/synthsequence-parser'
-import { detectSynthClasses } from '@/utils/synth-detector'
+import { detectSynthClasses, type DetectedSynth, type SynthParamDef } from '@/utils/synth-detector'
 import { useProjectStore } from '@/stores/project'
+import { parameterSystem, ParameterType } from '@/utils/parameter-system'
 import type { AllolibRuntime } from '@/services/runtime'
 import type { LatticeNode } from '@/utils/tone-lattice'
 
@@ -35,8 +36,10 @@ export interface SequencerClip {
   color: string
   notes: SequencerNote[]
   synthName: string        // primary synth for this clip
+  paramNames: string[]     // synth-specific parameter names (from .synthSequence header)
   filePath: string | null  // path to .synthSequence file in project
   isDirty: boolean         // whether in-memory clip differs from file
+  automation: ClipAutomation[]  // per-parameter automation envelopes
 }
 
 export interface ClipInstance {
@@ -53,6 +56,8 @@ export interface ArrangementTrack {
   muted: boolean
   solo: boolean
   synthName: string        // locked to a specific synth class
+  expanded: boolean        // whether automation lanes are shown
+  automationLanes: ParameterLaneConfig[]  // per-track automation lane configs
 }
 
 // ── Lattice interaction types ─────────────────────────────────────
@@ -83,6 +88,36 @@ export interface LatticeContextMenu {
   y: number               // screen pixel Y
   noteId?: string          // for note context menu
   pathId?: string          // for path context menu
+}
+
+// ── Parameter lane types ─────────────────────────────────────────
+
+export interface ParameterLaneConfig {
+  paramIndex: number       // index into note.params[]
+  paramName: string        // display name (e.g., "attackTime")
+  collapsed: boolean       // whether this lane is hidden
+  min: number              // display range minimum
+  max: number              // display range maximum
+}
+
+export interface AutomationPoint {
+  id: string          // for hit-testing and selection
+  time: number        // relative to clip start, 0..clip.duration
+  value: number       // parameter value within [lane.min, lane.max]
+}
+
+export interface ClipAutomation {
+  paramName: string               // matches ParameterLaneConfig.paramName
+  points: AutomationPoint[]       // always sorted ascending by time
+}
+
+const PARAM_DEFAULTS: Record<string, { min: number; max: number }> = {
+  amplitude: { min: 0, max: 1 },
+  frequency: { min: 20, max: 20000 },
+  attackTime: { min: 0, max: 5 },
+  releaseTime: { min: 0, max: 5 },
+  pan: { min: -1, max: 1 },
+  sustain: { min: 0, max: 1 },
 }
 
 // Legacy compat alias
@@ -186,6 +221,13 @@ export const useSequencerStore = defineStore('sequencer', () => {
 
   // Detected synth classes from source code
   const detectedSynthClasses = ref<string[]>([])
+  const detectedSynths = ref<DetectedSynth[]>([])
+
+  // ── Parameter lane state ───────────────────────────────────────
+  const parameterLanes = ref<ParameterLaneConfig[]>([])
+  const parameterLanesVisible = ref(true)
+  let _sequencerIsUpdating = false
+  let _autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
   const viewport = ref<Viewport>({
     scrollX: 0,
@@ -379,6 +421,8 @@ export const useSequencerStore = defineStore('sequencer', () => {
         muted: false,
         solo: false,
         synthName: '',
+        expanded: false,
+        automationLanes: [],
       })
     }
     return arrangementTracks.value[index]
@@ -395,6 +439,8 @@ export const useSequencerStore = defineStore('sequencer', () => {
         muted: false,
         solo: false,
         synthName,
+        expanded: false,
+        automationLanes: [],
       }
       arrangementTracks.value.push(track)
     }
@@ -405,11 +451,38 @@ export const useSequencerStore = defineStore('sequencer', () => {
     const detected = detectSynthClasses(files)
     const newNames = detected.map(d => d.displayName)
     detectedSynthClasses.value = newNames
+    detectedSynths.value = detected
 
     // Create tracks for newly detected synths
     for (const name of newNames) {
       ensureSynthTrack(name)
     }
+
+    // Populate paramNames on existing clips that don't have them yet
+    for (const synth of detected) {
+      if (synth.params.length === 0) continue
+      const pNames = synth.params.map(p => p.name)
+      for (const clip of clips.value) {
+        if (clip.synthName === synth.displayName && clip.paramNames.length === 0) {
+          clip.paramNames = pNames
+        }
+      }
+    }
+
+    // Rebuild automation lanes for expanded tracks now that we have param info
+    for (let i = 0; i < arrangementTracks.value.length; i++) {
+      if (arrangementTracks.value[i].expanded) {
+        rebuildTrackAutomationLanes(i)
+      }
+    }
+  }
+
+  /** Look up detected C++ parameter definitions for a synth class */
+  function getDetectedSynthParams(synthName: string): SynthParamDef[] {
+    const synth = detectedSynths.value.find(
+      s => s.displayName === synthName || s.className === synthName
+    )
+    return synth?.params || []
   }
 
   // ── Clip management ───────────────────────────────────────────────
@@ -419,6 +492,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     duration?: number,
     name?: string,
     filePath?: string | null,
+    paramNames?: string[],
   ): SequencerClip | null {
     // Gate: require detected synth classes before creating clips
     if (detectedSynthClasses.value.length === 0 && !filePath) {
@@ -428,6 +502,16 @@ export const useSequencerStore = defineStore('sequencer', () => {
 
     const barDur = (60 / bpm.value) * 4
     const clipName = name || `Clip ${clips.value.length + 1}`
+
+    // Resolve paramNames: passed > detected from C++ source > empty
+    let resolvedParamNames = paramNames || []
+    if (resolvedParamNames.length === 0) {
+      const detectedParams = getDetectedSynthParams(synthName)
+      if (detectedParams.length > 0) {
+        resolvedParamNames = detectedParams.map(p => p.name)
+      }
+    }
+
     const clip: SequencerClip = {
       id: generateId(),
       name: clipName,
@@ -435,8 +519,10 @@ export const useSequencerStore = defineStore('sequencer', () => {
       color: CLIP_COLORS[clips.value.length % CLIP_COLORS.length],
       notes: [],
       synthName,
+      paramNames: resolvedParamNames,
       filePath: filePath ?? null,
       isDirty: false,
+      automation: [],
     }
     clips.value.push(clip)
 
@@ -455,7 +541,11 @@ export const useSequencerStore = defineStore('sequencer', () => {
         projectStore.createFolder(`${synthName}-data`, 'bin')
       }
 
-      const content = `# ${synthName}\n# @ <start> <dur> ${synthName} <params...>\n`
+      // Write # header with detected param names if available
+      const headerParams = resolvedParamNames.length > 0
+        ? `# ${synthName} ${resolvedParamNames.join(' ')}`
+        : `# ${synthName}`
+      const content = `${headerParams}\n`
       projectStore.createDataFile(path, content)
       clip.filePath = path
       clip.isDirty = false
@@ -478,6 +568,12 @@ export const useSequencerStore = defineStore('sequencer', () => {
     // Give new IDs to all notes
     for (const note of newClip.notes) {
       note.id = generateId()
+    }
+    // Give new IDs to all automation points
+    for (const auto of newClip.automation) {
+      for (const pt of auto.points) {
+        pt.id = generateId()
+      }
     }
     clips.value.push(newClip)
     return newClip
@@ -534,8 +630,9 @@ export const useSequencerStore = defineStore('sequencer', () => {
     if (!inst) return
     inst.startTime = Math.max(0, snapTime(startTime))
     if (trackIndex !== undefined) {
-      ensureTrack(trackIndex)
-      inst.trackIndex = trackIndex
+      // Clamp to existing tracks only — new tracks are created by synth detection
+      const maxTrack = Math.max(0, arrangementTracks.value.length - 1)
+      inst.trackIndex = Math.max(0, Math.min(trackIndex, maxTrack))
     }
   }
 
@@ -573,6 +670,32 @@ export const useSequencerStore = defineStore('sequencer', () => {
     const clip = activeClip.value
     if (!clip) return null
     pushUndo()
+
+    // If no params provided, initialize from detected C++ defaults
+    // so all synth parameters are present (e.g., SineEnv: amplitude frequency attackTime releaseTime pan)
+    let resolvedParams = params
+    let resolvedParamNames = paramNames
+    if (resolvedParams.length === 0 && clip.paramNames.length > 0) {
+      resolvedParamNames = clip.paramNames
+      const detectedParams = getDetectedSynthParams(clip.synthName)
+      resolvedParams = clip.paramNames.map((name, i) => {
+        // Use the C++ default value from createInternalTriggerParameter
+        const detected = detectedParams.find(p => p.name === name)
+        if (detected) {
+          // Override amplitude/frequency with the passed-in values
+          if (name === 'amplitude') return amplitude
+          if (name === 'frequency') return frequency
+          return detected.defaultValue
+        }
+        // Fallback for params not found in C++ detection
+        if (i === 0) return amplitude
+        if (i === 1) return frequency
+        return 0
+      })
+    } else if (resolvedParamNames.length === 0 && clip.paramNames.length > 0) {
+      resolvedParamNames = clip.paramNames
+    }
+
     const note: SequencerNote = {
       id: generateId(),
       startTime: snapTime(startTime),
@@ -580,8 +703,8 @@ export const useSequencerStore = defineStore('sequencer', () => {
       synthName,
       frequency,
       amplitude,
-      params,
-      paramNames,
+      params: resolvedParams,
+      paramNames: resolvedParamNames,
       selected: false,
       muted: false,
     }
@@ -1051,14 +1174,20 @@ export const useSequencerStore = defineStore('sequencer', () => {
       ? Math.max(...resolved.map(e => e.startTime + e.duration), 4)
       : 4
 
+    // Determine per-synth paramNames: prefer synthParamMap, then data.paramNames,
+    // then auto-generate from param count in the data
+    const synthPNames = resolveSynthParamNames(data, synthName, resolved)
+
     const clipName = file.name.replace('.synthSequence', '')
-    const clip = createClip(synthName, maxEnd, clipName, filePath)
+    const clip = createClip(synthName, maxEnd, clipName, filePath, synthPNames)
 
     for (const ev of resolved) {
       const frequency = ev.params.length > 1 ? ev.params[1] : 440
       const amplitude = ev.params.length > 0 ? ev.params[0] : 0.5
+      // Use per-synth paramNames for this event's synth class
+      const evParamNames = data.synthParamMap[ev.synthName] || synthPNames
 
-      clip.notes.push({
+      clip!.notes.push({
         id: generateId(),
         startTime: ev.startTime,
         duration: ev.duration,
@@ -1066,15 +1195,37 @@ export const useSequencerStore = defineStore('sequencer', () => {
         frequency,
         amplitude,
         params: ev.params,
-        paramNames: data.paramNames,
+        paramNames: evParamNames,
         selected: false,
         muted: false,
       })
     }
 
-    clip.isDirty = false
+    clip!.isDirty = false
     if (data.tempo !== 120) bpm.value = data.tempo
     return clip
+  }
+
+  /** Resolve parameter names for a synth from parsed data, with fallbacks */
+  function resolveSynthParamNames(
+    data: SynthSequenceData,
+    synthName: string,
+    resolved: SynthSequenceEvent[],
+  ): string[] {
+    // 1. Check per-synth param map from # headers
+    if (data.synthParamMap[synthName]?.length > 0) {
+      return data.synthParamMap[synthName]
+    }
+    // 2. Fallback to legacy paramNames (single-synth file)
+    if (data.paramNames.length > 0) {
+      return data.paramNames
+    }
+    // 3. Auto-generate from param count in data
+    const firstEvent = resolved.find(e => e.synthName === synthName)
+    if (firstEvent && firstEvent.params.length > 0) {
+      return firstEvent.params.map((_, i) => `param${i}`)
+    }
+    return []
   }
 
   function exportClipToSynthSequence(clip: SequencerClip): string {
@@ -1088,10 +1239,19 @@ export const useSequencerStore = defineStore('sequencer', () => {
         params: n.params.length > 0 ? n.params : [n.amplitude, n.frequency],
       }))
 
+    // Build per-synth param map from clip's own paramNames
+    const synthParamMap: Record<string, string[]> = {}
+    if (clip.paramNames.length > 0) {
+      synthParamMap[clip.synthName] = clip.paramNames
+    } else if (clip.notes[0]?.paramNames?.length > 0) {
+      synthParamMap[clip.synthName] = clip.notes[0].paramNames
+    }
+
     return serializeSynthSequence({
       events,
       tempo: bpm.value,
-      paramNames: clip.notes[0]?.paramNames || [],
+      paramNames: clip.paramNames.length > 0 ? clip.paramNames : (clip.notes[0]?.paramNames || []),
+      synthParamMap,
       comments: [],
     })
   }
@@ -1126,11 +1286,16 @@ export const useSequencerStore = defineStore('sequencer', () => {
       projectStore.createFolder(`${synthName}-data`, 'bin')
     }
 
-    // Create template .synthSequence content
-    const content = `# ${synthName}\n# @ <start> <dur> ${synthName} <params...>\n`
+    // Create template .synthSequence content with detected param names
+    const detectedParams = getDetectedSynthParams(synthName)
+    const pNames = detectedParams.map(p => p.name)
+    const headerParams = pNames.length > 0
+      ? `# ${synthName} ${pNames.join(' ')}`
+      : `# ${synthName}`
+    const content = `${headerParams}\n`
     projectStore.createDataFile(path, content)
 
-    const clip = createClip(synthName, undefined, baseName, path)
+    const clip = createClip(synthName, undefined, baseName, path, pNames)
     if (clip) clip.isDirty = false
     return clip
   }
@@ -1244,15 +1409,18 @@ export const useSequencerStore = defineStore('sequencer', () => {
 
     let trackIdx = 0
     for (const [synthName, events] of synthGroups) {
+      // Resolve per-synth paramNames
+      const synthPNames = resolveSynthParamNames(data, synthName, resolved)
+
       // Create a clip for this synth group
       const maxEnd = Math.max(...events.map(e => e.startTime + e.duration), 4)
-      const clip = createClip(synthName, maxEnd, `${synthName} Clip`)
+      const clip = createClip(synthName, maxEnd, `${synthName} Clip`, undefined, synthPNames)
 
       for (const ev of events) {
         const frequency = ev.params.length > 1 ? ev.params[1] : 440
         const amplitude = ev.params.length > 0 ? ev.params[0] : 0.5
 
-        clip.notes.push({
+        clip!.notes.push({
           id: generateId(),
           startTime: ev.startTime,
           duration: ev.duration,
@@ -1260,7 +1428,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
           frequency,
           amplitude,
           params: ev.params,
-          paramNames: data.paramNames,
+          paramNames: synthPNames,
           selected: false,
           muted: false,
         })
@@ -1269,11 +1437,11 @@ export const useSequencerStore = defineStore('sequencer', () => {
       // Place clip on arrangement
       const track = ensureSynthTrack(synthName)
       const tIdx = arrangementTracks.value.indexOf(track)
-      addClipInstance(clip.id, tIdx, 0)
+      addClipInstance(clip!.id, tIdx, 0)
 
       // Also build legacy track
       const legacyTrack = getOrCreateTrack(synthName)
-      legacyTrack.events = clip.notes
+      legacyTrack.events = clip!.notes
 
       trackIdx++
     }
@@ -1299,20 +1467,27 @@ export const useSequencerStore = defineStore('sequencer', () => {
 
   function exportToSynthSequence(): string {
     const events: SynthSequenceEvent[] = []
-    let paramNames: string[] = []
+    const synthParamMap: Record<string, string[]> = {}
 
     // Gather all notes from all clip instances in arrangement order
+    // and collect per-synth paramNames
     for (const inst of clipInstances.value) {
       const clip = clips.value.find(c => c.id === inst.clipId)
       if (!clip) continue
       const track = arrangementTracks.value[inst.trackIndex]
       if (track?.muted) continue
 
+      // Collect per-synth paramNames from clips
+      if (!synthParamMap[clip.synthName]) {
+        if (clip.paramNames.length > 0) {
+          synthParamMap[clip.synthName] = clip.paramNames
+        } else if (clip.notes[0]?.paramNames?.length > 0) {
+          synthParamMap[clip.synthName] = clip.notes[0].paramNames
+        }
+      }
+
       for (const note of clip.notes) {
         if (note.muted) continue
-        if (paramNames.length === 0 && note.paramNames.length > 0) {
-          paramNames = note.paramNames
-        }
         events.push({
           type: '@',
           startTime: inst.startTime + note.startTime,
@@ -1323,23 +1498,523 @@ export const useSequencerStore = defineStore('sequencer', () => {
       }
     }
 
+    // First synth's paramNames as legacy fallback
+    const firstParamNames = Object.values(synthParamMap)[0] || []
+
     const seqData: SynthSequenceData = {
       events,
       tempo: bpm.value,
-      paramNames,
+      paramNames: firstParamNames,
+      synthParamMap,
       comments: [],
     }
 
     return serializeSynthSequence(seqData)
   }
 
+  // ── Parameter Lane Methods ──────────────────────────────────────
+
+  function rebuildParameterLanes() {
+    const clip = activeClip.value
+    if (!clip || clip.notes.length === 0) {
+      parameterLanes.value = []
+      return
+    }
+
+    const names = clip.paramNames.length > 0
+      ? clip.paramNames
+      : clip.notes[0].paramNames
+    if (names.length === 0) {
+      parameterLanes.value = []
+      return
+    }
+
+    // Preserve collapsed state from previous lanes
+    const prevCollapsed = new Map<string, boolean>()
+    for (const lane of parameterLanes.value) {
+      prevCollapsed.set(lane.paramName, lane.collapsed)
+    }
+
+    // Get detected C++ params for min/max
+    const detectedParams = getDetectedSynthParams(clip.synthName)
+
+    parameterLanes.value = names.map((name, index) => {
+      let min: number, max: number
+
+      // 1. Check detected C++ param definition
+      const detectedP = detectedParams.find(p => p.name === name)
+      if (detectedP) {
+        min = detectedP.min
+        max = detectedP.max
+      } else {
+        const defaults = PARAM_DEFAULTS[name]
+        if (defaults) {
+          min = defaults.min
+          max = defaults.max
+        } else {
+          // Scan all notes for this param index to determine range
+          let lo = Infinity, hi = -Infinity
+          for (const note of clip.notes) {
+            if (index < note.params.length) {
+              lo = Math.min(lo, note.params[index])
+              hi = Math.max(hi, note.params[index])
+            }
+          }
+          if (!isFinite(lo)) { lo = 0; hi = 1 }
+          const margin = (hi - lo) * 0.1 || 0.5
+          min = lo - margin
+          max = hi + margin
+        }
+      }
+
+      return {
+        paramIndex: index,
+        paramName: name,
+        collapsed: prevCollapsed.get(name) ?? false,
+        min,
+        max,
+      }
+    })
+  }
+
+  function toggleParameterLane(paramIndex: number) {
+    const lane = parameterLanes.value.find(l => l.paramIndex === paramIndex)
+    if (lane) lane.collapsed = !lane.collapsed
+  }
+
+  function setParameterLaneRange(paramIndex: number, min: number, max: number) {
+    const lane = parameterLanes.value.find(l => l.paramIndex === paramIndex)
+    if (lane) {
+      lane.min = min
+      lane.max = max
+    }
+  }
+
+  function updateNoteParam(noteId: string, paramIndex: number, value: number) {
+    const clip = activeClip.value
+    if (!clip) return
+    const note = clip.notes.find(n => n.id === noteId)
+    if (!note) return
+
+    // Ensure params array is long enough
+    while (note.params.length <= paramIndex) {
+      note.params.push(0)
+    }
+    note.params[paramIndex] = value
+
+    // Keep amplitude/frequency in sync
+    if (paramIndex === 0) note.amplitude = value
+    if (paramIndex === 1) note.frequency = value
+
+    clip.isDirty = true
+  }
+
+  /** Update a note parameter in any clip (not just active), for clip timeline automation lanes */
+  function updateNoteParamInClip(clipId: string, noteId: string, paramIndex: number, value: number) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+    const note = clip.notes.find(n => n.id === noteId)
+    if (!note) return
+
+    // Ensure params array is long enough
+    while (note.params.length <= paramIndex) {
+      note.params.push(0)
+    }
+    note.params[paramIndex] = value
+
+    // Keep amplitude/frequency in sync
+    if (paramIndex === 0) note.amplitude = value
+    if (paramIndex === 1) note.frequency = value
+
+    clip.isDirty = true
+  }
+
+  // Rebuild lanes when active clip changes
+  watch(() => activeClipId.value, () => rebuildParameterLanes())
+
+  // ── Track-Level Automation Lane Methods ──────────────────────────
+
+  function rebuildTrackAutomationLanes(trackIndex: number) {
+    const track = arrangementTracks.value[trackIndex]
+    if (!track) return
+
+    // Find clips on this track to determine synth-specific parameters
+    const trackClips = findClipsForTrack(trackIndex)
+    const synthName = track.synthName
+
+    // Primary source: detected C++ params from createInternalTriggerParameter
+    const detectedParams = getDetectedSynthParams(synthName)
+
+    // Get paramNames: detected C++ > clip paramNames > parameterSystem fallback
+    let pNames: string[] = []
+    if (detectedParams.length > 0) {
+      pNames = detectedParams.map(p => p.name)
+    } else {
+      for (const clip of trackClips) {
+        if (clip.paramNames.length > 0) {
+          pNames = clip.paramNames
+          break
+        }
+        if (clip.notes.length > 0 && clip.notes[0].paramNames.length > 0) {
+          pNames = clip.notes[0].paramNames
+          break
+        }
+      }
+    }
+
+    // Last resort fallback: parameterSystem (runtime C++ params)
+    if (pNames.length === 0) {
+      const allParams = parameterSystem.getAll()
+        .filter(p =>
+          p.type === ParameterType.FLOAT ||
+          p.type === ParameterType.INT ||
+          p.type === ParameterType.BOOL ||
+          p.type === ParameterType.MENU
+        )
+      if (allParams.length > 0) {
+        pNames = allParams.map(p => p.name)
+      }
+    }
+
+    if (pNames.length === 0) {
+      track.automationLanes = []
+      return
+    }
+
+    // Preserve collapsed state from existing lanes
+    const prevCollapsed = new Map<string, boolean>()
+    for (const lane of track.automationLanes) {
+      prevCollapsed.set(lane.paramName, lane.collapsed)
+    }
+
+    // Determine min/max: detected C++ > PARAM_DEFAULTS > parameterSystem > data scan
+    track.automationLanes = pNames.map((name, index) => {
+      let min: number, max: number
+
+      // 1. Check detected C++ param definition
+      const detectedP = detectedParams.find(p => p.name === name)
+      if (detectedP) {
+        min = detectedP.min
+        max = detectedP.max
+      } else {
+        const defaults = PARAM_DEFAULTS[name]
+        if (defaults) {
+          min = defaults.min
+          max = defaults.max
+        } else {
+          // Try parameterSystem for range info
+          const runtimeParam = parameterSystem.getAll().find(p => p.name === name)
+          if (runtimeParam) {
+            min = runtimeParam.min
+            max = runtimeParam.max
+          } else {
+            // Scan clip notes for this param index to determine range
+            let lo = Infinity, hi = -Infinity
+            for (const clip of trackClips) {
+              for (const note of clip.notes) {
+                if (index < note.params.length) {
+                  lo = Math.min(lo, note.params[index])
+                  hi = Math.max(hi, note.params[index])
+                }
+              }
+            }
+            if (!isFinite(lo)) { lo = 0; hi = 1 }
+            const margin = (hi - lo) * 0.1 || 0.5
+            min = lo - margin
+            max = hi + margin
+          }
+        }
+      }
+
+      return {
+        paramIndex: index,
+        paramName: name,
+        collapsed: prevCollapsed.get(name) ?? false,
+        min,
+        max,
+      }
+    })
+  }
+
+  /** Find all clips placed on a given track */
+  function findClipsForTrack(trackIndex: number): SequencerClip[] {
+    const clipIds = new Set<string>()
+    for (const inst of clipInstances.value) {
+      if (inst.trackIndex === trackIndex) {
+        clipIds.add(inst.clipId)
+      }
+    }
+    return clips.value.filter(c => clipIds.has(c.id))
+  }
+
+  function toggleTrackExpanded(trackIndex: number) {
+    const track = arrangementTracks.value[trackIndex]
+    if (!track) return
+    track.expanded = !track.expanded
+    if (track.expanded && track.automationLanes.length === 0) {
+      rebuildTrackAutomationLanes(trackIndex)
+    }
+  }
+
+  function toggleTrackAutomationLane(trackIndex: number, paramName: string) {
+    const track = arrangementTracks.value[trackIndex]
+    if (!track) return
+    const lane = track.automationLanes.find(l => l.paramName === paramName)
+    if (lane) lane.collapsed = !lane.collapsed
+  }
+
+  function getTrackTotalHeight(trackIndex: number, baseH: number, laneH: number, collapsedH: number): number {
+    const track = arrangementTracks.value[trackIndex]
+    if (!track || !track.expanded) return baseH
+    if (track.automationLanes.length === 0) return baseH + collapsedH
+    let h = baseH
+    for (const lane of track.automationLanes) {
+      h += lane.collapsed ? collapsedH : laneH
+    }
+    return h
+  }
+
+  function getTrackYOffset(trackIndex: number, baseH: number, laneH: number, collapsedH: number, rulerH: number): number {
+    let y = rulerH
+    for (let i = 0; i < trackIndex; i++) {
+      y += getTrackTotalHeight(i, baseH, laneH, collapsedH)
+    }
+    return y
+  }
+
+  // ── Clip Automation Methods ──────────────────────────────────────
+
+  function addAutomationPoint(
+    clipId: string, paramName: string, time: number, value: number,
+  ): AutomationPoint | null {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return null
+
+    let autoEnv = clip.automation.find(a => a.paramName === paramName)
+    if (!autoEnv) {
+      autoEnv = { paramName, points: [] }
+      clip.automation.push(autoEnv)
+    }
+
+    const clampedTime = Math.max(0, Math.min(clip.duration, snapTime(time)))
+    const point: AutomationPoint = { id: generateId(), time: clampedTime, value }
+
+    const idx = autoEnv.points.findIndex(p => p.time > clampedTime)
+    if (idx < 0) autoEnv.points.push(point)
+    else autoEnv.points.splice(idx, 0, point)
+
+    clip.isDirty = true
+    return point
+  }
+
+  function removeAutomationPoint(clipId: string, paramName: string, pointId: string) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+    const autoEnv = clip.automation.find(a => a.paramName === paramName)
+    if (!autoEnv) return
+    autoEnv.points = autoEnv.points.filter(p => p.id !== pointId)
+    if (autoEnv.points.length === 0) {
+      clip.automation = clip.automation.filter(a => a !== autoEnv)
+    }
+    clip.isDirty = true
+  }
+
+  function moveAutomationPoint(
+    clipId: string, paramName: string, pointId: string, newTime: number, newValue: number,
+  ) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+    const autoEnv = clip.automation.find(a => a.paramName === paramName)
+    if (!autoEnv) return
+    const point = autoEnv.points.find(p => p.id === pointId)
+    if (!point) return
+    point.time = Math.max(0, Math.min(clip.duration, snapTime(newTime)))
+    point.value = newValue
+    autoEnv.points.sort((a, b) => a.time - b.time)
+    clip.isDirty = true
+  }
+
+  function clipAutomationToNewDuration(clipId: string, newDuration: number) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+    for (const autoEnv of clip.automation) {
+      autoEnv.points = autoEnv.points.filter(p => p.time <= newDuration)
+    }
+    clip.automation = clip.automation.filter(a => a.points.length > 0)
+  }
+
+  function addAutomationPointsBatch(
+    clipId: string, paramName: string, newPoints: Array<{ time: number; value: number }>,
+  ) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+
+    let autoEnv = clip.automation.find(a => a.paramName === paramName)
+    if (!autoEnv) {
+      autoEnv = { paramName, points: [] }
+      clip.automation.push(autoEnv)
+    }
+
+    const minT = Math.min(...newPoints.map(p => p.time))
+    const maxT = Math.max(...newPoints.map(p => p.time))
+    // Remove existing points in the drawn range
+    autoEnv.points = autoEnv.points.filter(p => p.time < minT || p.time > maxT)
+
+    for (const np of newPoints) {
+      autoEnv.points.push({
+        id: generateId(),
+        time: Math.max(0, Math.min(clip.duration, np.time)),
+        value: np.value,
+      })
+    }
+    autoEnv.points.sort((a, b) => a.time - b.time)
+    clip.isDirty = true
+  }
+
+  function removeAutomationPointsInRange(
+    clipId: string, paramName: string, startTime: number, endTime: number,
+  ) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+    const autoEnv = clip.automation.find(a => a.paramName === paramName)
+    if (!autoEnv) return
+    const tMin = Math.min(startTime, endTime)
+    const tMax = Math.max(startTime, endTime)
+    autoEnv.points = autoEnv.points.filter(p => p.time < tMin || p.time > tMax)
+    if (autoEnv.points.length === 0) {
+      clip.automation = clip.automation.filter(a => a !== autoEnv)
+    }
+    clip.isDirty = true
+  }
+
+  // ── Bidirectional File Sync ───────────────────────────────────────
+
+  function scheduleAutoSave(clipId: string) {
+    if (_autoSaveTimer) clearTimeout(_autoSaveTimer)
+    _autoSaveTimer = setTimeout(() => {
+      _autoSaveTimer = null
+      const clip = clips.value.find(c => c.id === clipId)
+      if (!clip || !clip.filePath || !clip.isDirty) return
+
+      _sequencerIsUpdating = true
+      const content = exportClipToSynthSequence(clip)
+      const projectStore = useProjectStore()
+      projectStore.updateFileContent(clip.filePath, content)
+      clip.isDirty = false
+      setTimeout(() => { _sequencerIsUpdating = false }, 0)
+    }, 500)
+  }
+
+  // Auto-save dirty clips to their files
+  watch(
+    () => clips.value.filter(c => c.isDirty && c.filePath).map(c => c.id),
+    (dirtyClipIds) => {
+      if (dirtyClipIds.length > 0) {
+        scheduleAutoSave(dirtyClipIds[0])
+      }
+    },
+  )
+
+  // Reload clip when its file changes externally (e.g., edited in Monaco)
+  watch(
+    () => {
+      const projectStore = useProjectStore()
+      return clips.value
+        .filter(c => c.filePath)
+        .map(c => {
+          const file = projectStore.getFileByPath(c.filePath!)
+          return { clipId: c.id, content: file?.content || '' }
+        })
+    },
+    (entries, oldEntries) => {
+      if (_sequencerIsUpdating) return
+      if (!oldEntries) return
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i]
+        const old = oldEntries[i]
+        if (!old || entry.content === old.content) continue
+        reloadClipFromFileContent(entry.clipId, entry.content)
+      }
+    },
+    { deep: true },
+  )
+
+  function reloadClipFromFileContent(clipId: string, fileContent: string) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (!clip) return
+
+    const data = parseSynthSequence(fileContent)
+    const resolved = resolveTriggerPairs(data)
+
+    // Update clip-level paramNames from file headers
+    const synthPNames = resolveSynthParamNames(data, clip.synthName, resolved)
+    if (synthPNames.length > 0) {
+      clip.paramNames = synthPNames
+    }
+
+    // Preserve selection state by matching startTime+frequency
+    const oldSelectionMap = new Map<string, boolean>()
+    for (const note of clip.notes) {
+      oldSelectionMap.set(`${note.startTime}_${note.frequency}`, note.selected)
+    }
+
+    clip.notes = resolved.map(ev => {
+      const frequency = ev.params.length > 1 ? ev.params[1] : 440
+      const amplitude = ev.params.length > 0 ? ev.params[0] : 0.5
+      const evParamNames = data.synthParamMap[ev.synthName] || synthPNames
+      return {
+        id: generateId(),
+        startTime: ev.startTime,
+        duration: ev.duration,
+        synthName: ev.synthName,
+        frequency,
+        amplitude,
+        params: ev.params,
+        paramNames: evParamNames,
+        selected: oldSelectionMap.get(`${ev.startTime}_${frequency}`) || false,
+        muted: false,
+      }
+    })
+
+    if (resolved.length > 0) {
+      clip.duration = Math.max(clip.duration, Math.max(...resolved.map(e => e.startTime + e.duration)))
+    }
+    if (data.tempo !== 120) bpm.value = data.tempo
+    clip.isDirty = false
+    rebuildParameterLanes()
+
+    // Rebuild automation lanes for any tracks containing this clip
+    for (let i = 0; i < arrangementTracks.value.length; i++) {
+      if (arrangementTracks.value[i].expanded) {
+        const hasClip = clipInstances.value.some(ci => ci.clipId === clipId && ci.trackIndex === i)
+        if (hasClip) rebuildTrackAutomationLanes(i)
+      }
+    }
+  }
+
   // ── Cleanup ───────────────────────────────────────────────────────
+
+  // Auto-rebuild automation lanes when C++ parameters are detected on run
+  // (used as fallback when clips don't have their own synth-specific paramNames)
+  const _unsubParams = parameterSystem.subscribe(() => {
+    for (let i = 0; i < arrangementTracks.value.length; i++) {
+      const track = arrangementTracks.value[i]
+      if (track.expanded && track.automationLanes.length === 0) {
+        rebuildTrackAutomationLanes(i)
+      }
+    }
+  })
 
   function dispose() {
     if (animFrameId !== null) {
       cancelAnimationFrame(animFrameId)
       animFrameId = null
     }
+    if (_autoSaveTimer) {
+      clearTimeout(_autoSaveTimer)
+      _autoSaveTimer = null
+    }
+    _unsubParams()
   }
 
   return {
@@ -1385,8 +2060,14 @@ export const useSequencerStore = defineStore('sequencer', () => {
     latticePendingChord,
     latticeContextMenu,
 
+    // Parameter lanes
+    parameterLanes,
+    parameterLanesVisible,
+
     // Detected synths
     detectedSynthClasses,
+    detectedSynths,
+    getDetectedSynthParams,
 
     // Computed
     activeClip,
@@ -1414,6 +2095,19 @@ export const useSequencerStore = defineStore('sequencer', () => {
     ensureTrack,
     ensureSynthTrack,
     updateDetectedSynths,
+    toggleTrackExpanded,
+    toggleTrackAutomationLane,
+    rebuildTrackAutomationLanes,
+    getTrackTotalHeight,
+    getTrackYOffset,
+
+    // Clip automation
+    addAutomationPoint,
+    removeAutomationPoint,
+    moveAutomationPoint,
+    clipAutomationToNewDuration,
+    addAutomationPointsBatch,
+    removeAutomationPointsInRange,
 
     // Clip management
     createClip,
@@ -1452,6 +2146,13 @@ export const useSequencerStore = defineStore('sequencer', () => {
     copySelected,
     cutSelected,
     paste,
+
+    // Parameter lane management
+    rebuildParameterLanes,
+    toggleParameterLane,
+    setParameterLaneRange,
+    updateNoteParam,
+    updateNoteParamInClip,
 
     // Lattice interaction
     findNotesByFrequency,

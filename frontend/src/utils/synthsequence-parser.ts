@@ -23,7 +23,8 @@ export interface SynthSequenceEvent {
 export interface SynthSequenceData {
   events: SynthSequenceEvent[]
   tempo: number           // BPM (default 120 if not specified)
-  paramNames: string[]    // extracted from trailing # comments
+  paramNames: string[]    // extracted from trailing # comments (first/only synth)
+  synthParamMap: Record<string, string[]>  // per-synth param names (synthName → paramNames)
   comments: string[]      // raw comment lines preserved for round-trip
 }
 
@@ -35,6 +36,7 @@ export function parseSynthSequence(text: string): SynthSequenceData {
   const comments: string[] = []
   let tempo = 120
   let paramNames: string[] = []
+  const synthParamMap: Record<string, string[]> = {}
 
   for (const raw of lines) {
     const line = raw.trim()
@@ -53,6 +55,7 @@ export function parseSynthSequence(text: string): SynthSequenceData {
         const first = tokens[0]
         if (/^[A-Z]/.test(first) && tokens.length >= 3) {
           paramNames = tokens.slice(1)
+          synthParamMap[first] = tokens.slice(1)
         } else if (paramNames.length === 0 && tokens.every(t => /^[a-zA-Z]/.test(t))) {
           paramNames = tokens
         }
@@ -108,7 +111,7 @@ export function parseSynthSequence(text: string): SynthSequenceData {
     }
   }
 
-  return { events, tempo, paramNames, comments }
+  return { events, tempo, paramNames, synthParamMap, comments }
 }
 
 // ── Serializer ──────────────────────────────────────────────────────
@@ -116,9 +119,15 @@ export function parseSynthSequence(text: string): SynthSequenceData {
 export function serializeSynthSequence(data: SynthSequenceData): string {
   const lines: string[] = []
 
-  // Write param name comment header if available
-  if (data.paramNames.length > 0) {
-    // Find a representative synth name from events
+  // Write per-synth param name comment headers
+  if (data.synthParamMap && Object.keys(data.synthParamMap).length > 0) {
+    for (const [synthName, pNames] of Object.entries(data.synthParamMap)) {
+      if (pNames.length > 0) {
+        lines.push(`# ${synthName} ${pNames.join(' ')}`)
+      }
+    }
+  } else if (data.paramNames.length > 0) {
+    // Fallback: single header from legacy paramNames
     const synthName = data.events.find(e => e.type === '@' || e.type === '+')?.synthName || 'Synth'
     lines.push(`# ${synthName} ${data.paramNames.join(' ')}`)
   }

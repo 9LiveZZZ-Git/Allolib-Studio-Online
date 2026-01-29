@@ -147,27 +147,51 @@ function handleFileDragStart(e: DragEvent, filePath: string) {
           <div
             v-for="(track, idx) in sequencer.arrangementTracks"
             :key="track.id"
-            class="flex items-center gap-1 px-2 py-1.5 rounded bg-editor-bg border border-editor-border mb-1"
+            class="flex flex-col gap-0 rounded bg-editor-bg border border-editor-border mb-1"
           >
-            <div class="w-2 h-6 rounded-sm shrink-0" :style="{ backgroundColor: track.color }"></div>
-            <div class="flex-1 min-w-0">
-              <div class="text-xs text-white truncate">{{ track.name }}</div>
-              <div class="text-[10px] text-gray-500">
-                {{ sequencer.clipInstances.filter(ci => ci.trackIndex === idx).length }} clips
+            <div class="flex items-center gap-1 px-2 py-1.5">
+              <div class="w-2 h-6 rounded-sm shrink-0" :style="{ backgroundColor: track.color }"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs text-white truncate">{{ track.name }}</div>
+                <div class="text-[10px] text-gray-500">
+                  {{ sequencer.clipInstances.filter(ci => ci.trackIndex === idx).length }} clips
+                </div>
               </div>
+              <button
+                @click="sequencer.toggleTrackExpanded(idx)"
+                class="px-1 py-0.5 text-[10px] rounded transition-colors"
+                :class="track.expanded ? 'bg-purple-500/30 text-purple-400' : 'text-gray-500 hover:text-white'"
+                title="Toggle automation lanes"
+              >A</button>
+              <button
+                @click="toggleTrackMute(idx)"
+                class="px-1 py-0.5 text-[10px] rounded transition-colors"
+                :class="track.muted ? 'bg-red-500/30 text-red-400' : 'text-gray-500 hover:text-white'"
+                title="Mute"
+              >M</button>
+              <button
+                @click="toggleTrackSolo(idx)"
+                class="px-1 py-0.5 text-[10px] rounded transition-colors"
+                :class="track.solo ? 'bg-yellow-500/30 text-yellow-400' : 'text-gray-500 hover:text-white'"
+                title="Solo"
+              >S</button>
             </div>
-            <button
-              @click="toggleTrackMute(idx)"
-              class="px-1 py-0.5 text-[10px] rounded transition-colors"
-              :class="track.muted ? 'bg-red-500/30 text-red-400' : 'text-gray-500 hover:text-white'"
-              title="Mute"
-            >M</button>
-            <button
-              @click="toggleTrackSolo(idx)"
-              class="px-1 py-0.5 text-[10px] rounded transition-colors"
-              :class="track.solo ? 'bg-yellow-500/30 text-yellow-400' : 'text-gray-500 hover:text-white'"
-              title="Solo"
-            >S</button>
+            <!-- Automation lane toggles when expanded -->
+            <div v-if="track.expanded && track.automationLanes.length > 0" class="px-2 pb-1.5 flex flex-wrap gap-1">
+              <button
+                v-for="lane in track.automationLanes"
+                :key="lane.paramName"
+                @click="sequencer.toggleTrackAutomationLane(idx, lane.paramName)"
+                class="px-1.5 py-0.5 text-[9px] rounded transition-colors border"
+                :class="lane.collapsed
+                  ? 'border-editor-border text-gray-500 hover:text-white'
+                  : 'border-purple-500/40 bg-purple-500/20 text-purple-300'"
+                :title="lane.collapsed ? 'Show ' + lane.paramName : 'Hide ' + lane.paramName"
+              >{{ lane.paramName }}</button>
+            </div>
+            <div v-else-if="track.expanded" class="px-2 pb-1.5">
+              <div class="text-[9px] text-gray-500 italic">No parameters detected</div>
+            </div>
           </div>
         </div>
 

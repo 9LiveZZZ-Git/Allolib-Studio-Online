@@ -7,6 +7,7 @@ import ClipTimeline from './sequencer/ClipTimeline.vue'
 import SequencerTimeline from './sequencer/SequencerTimeline.vue'
 import SequencerSidebar from './sequencer/SequencerSidebar.vue'
 import ToneLattice from './sequencer/ToneLattice.vue'
+import ParameterLanes from './sequencer/ParameterLanes.vue'
 
 const emit = defineEmits<{
   resize: [height: number]
@@ -102,7 +103,10 @@ onBeforeUnmount(() => {
     <div class="flex-1 flex overflow-hidden min-h-0">
       <!-- Clip Timeline / Frequency Roll / Tone Lattice -->
       <ClipTimeline v-if="sequencer.viewMode === 'clipTimeline'" class="flex-1 min-w-0" />
-      <SequencerTimeline v-else-if="sequencer.viewMode === 'frequencyRoll'" class="flex-1 min-w-0" />
+      <div v-else-if="sequencer.viewMode === 'frequencyRoll'" class="flex-1 min-w-0 flex flex-col">
+        <SequencerTimeline class="flex-1 min-w-0" />
+        <ParameterLanes v-if="sequencer.parameterLanesVisible" class="shrink-0" />
+      </div>
       <ToneLattice v-else class="flex-1 min-w-0" />
 
       <!-- Sidebar -->
