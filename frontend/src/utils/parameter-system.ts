@@ -398,6 +398,53 @@ class ParameterSystem {
   get hasParameters(): boolean {
     return this.parameters.size > 0
   }
+
+  /**
+   * Populate parameters from detected C++ synth definitions.
+   * This supplements the WASM-reported params with statically-detected ones
+   * from parsing createInternalTriggerParameter calls in source code.
+   */
+  populateFromDetectedSynths(
+    detectedParams: Array<{ name: string; defaultValue: number; min: number; max: number }>
+  ): void {
+    // Check which params we already have by name
+    const existingNames = new Set<string>()
+    for (const param of this.parameters.values()) {
+      existingNames.add(param.name)
+    }
+
+    // Add any missing params from detected synths
+    let added = 0
+    for (const detected of detectedParams) {
+      if (existingNames.has(detected.name)) continue
+
+      // Find next available index
+      let nextIndex = 0
+      while (this.parameters.has(nextIndex)) nextIndex++
+
+      const param: Parameter = {
+        name: detected.name,
+        displayName: detected.name,
+        group: 'Parameters',
+        value: detected.defaultValue,
+        min: detected.min,
+        max: detected.max,
+        defaultValue: detected.defaultValue,
+        type: ParameterType.FLOAT,
+        index: nextIndex,
+        step: 0.01,
+      }
+
+      this.parameters.set(nextIndex, param)
+      existingNames.add(detected.name)
+      added++
+    }
+
+    if (added > 0) {
+      console.log(`[ParameterSystem] Added ${added} parameters from C++ source detection`)
+      this.notifyChange()
+    }
+  }
 }
 
 // Global parameter system instance

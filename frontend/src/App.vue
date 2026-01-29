@@ -13,6 +13,7 @@ import SequencerPanel from './components/SequencerPanel.vue'
 import { defaultCode } from '@/utils/monaco-config'
 import { wsService } from '@/services/websocket'
 import type { AllolibRuntime } from '@/services/runtime'
+import { parameterSystem } from '@/utils/parameter-system'
 import {
   transpileToWeb,
   transpileToNative,
@@ -136,6 +137,9 @@ const handleFileExport = () => {
 }
 
 const handleFileExportZip = async () => {
+  // Save arrangement state before export to ensure it's included
+  sequencerStore.saveArrangement()
+
   const zip = new JSZip()
   const project = projectStore.project
   const projectName = project.name || 'allolib-project'
@@ -288,6 +292,13 @@ watch(() => appStore.status, (newStatus) => {
       .filter(f => /\.(cpp|hpp|h)$/i.test(f.path))
       .map(f => ({ name: f.path, content: f.content }))
     sequencerStore.updateDetectedSynths(sourceFiles)
+
+    // Also populate parameter system with detected C++ params
+    // This supplements WASM-reported params with statically-detected ones
+    const allParams = sequencerStore.detectedSynths.flatMap(synth => synth.params)
+    if (allParams.length > 0) {
+      parameterSystem.populateFromDetectedSynths(allParams)
+    }
   }
 })
 

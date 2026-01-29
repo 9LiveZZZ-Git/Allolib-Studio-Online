@@ -23,6 +23,7 @@ const dragTarget = ref<ClipInstance | null>(null)
 const dragOriginalStartTime = ref(0)
 const dragOriginalTrackIndex = ref(0)
 const hoveredInstance = ref<ClipInstance | null>(null)
+const hoveredTrackHeaderIndex = ref<number>(-1)
 
 // Note-bar automation drag state
 const dragAutoLane = ref<ParameterLaneConfig | null>(null)
@@ -38,7 +39,16 @@ const dropTargetTime = ref<number>(0)
 // ── Dynamic track height helpers ─────────────────────────────────────
 
 function getTrackY(trackIndex: number): number {
-  return sequencer.getTrackYOffset(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H, RULER_H)
+  return sequencer.getTrackYOffset(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H, RULER_H) - sequencer.viewport.scrollY
+}
+
+function getTotalContentHeight(): number {
+  const trackCount = Math.max(sequencer.arrangementTracks.length, 4)
+  let h = RULER_H
+  for (let i = 0; i < trackCount; i++) {
+    h += getTrackHeight(i)
+  }
+  return h
 }
 
 function getTrackHeight(trackIndex: number): number {
@@ -53,6 +63,9 @@ function trackIndexFromY(y: number): number {
     const th = getTrackHeight(i)
     if (y >= ty && y < ty + th) return i
   }
+  // Check if we're below all tracks (could be scrolled)
+  const lastTrackBottom = getTrackY(trackCount - 1) + getTrackHeight(trackCount - 1)
+  if (y >= lastTrackBottom) return trackCount - 1
   return -1
 }
 
@@ -394,7 +407,30 @@ function draw() {
       ctx.fillStyle = '#d1d5db'
       ctx.font = '10px sans-serif'
       ctx.textBaseline = 'middle'
-      ctx.fillText(track.name, 4, ty + BASE_TRACK_H / 2 - 6, HEADER_W - 20)
+      ctx.fillText(track.name, 4, ty + BASE_TRACK_H / 2 - 6, HEADER_W - 36)
+
+      // Delete button (X) - shown on hover
+      if (hoveredTrackHeaderIndex.value === i && ty >= RULER_H) {
+        const delX = HEADER_W - 18
+        const delY = ty + 4
+        const delSize = 12
+
+        // Button background
+        ctx.fillStyle = '#374151'
+        ctx.beginPath()
+        ctx.arc(delX + delSize/2, delY + delSize/2, delSize/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
+
+        // X icon
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(delX + 3, delY + 3)
+        ctx.lineTo(delX + delSize - 3, delY + delSize - 3)
+        ctx.moveTo(delX + delSize - 3, delY + 3)
+        ctx.lineTo(delX + 3, delY + delSize - 3)
+        ctx.stroke()
+      }
 
       // Mute/Solo indicators
       ctx.font = '8px monospace'
@@ -730,8 +766,20 @@ function handleMouseDown(e: MouseEvent) {
     const track = sequencer.arrangementTracks[trackIdx]
     if (!track) return
 
-    // Check if click is on expand toggle triangle
     const ty = getTrackY(trackIdx)
+
+    // Check if click is on delete button
+    const delX = HEADER_W - 18
+    const delY = ty + 4
+    const delSize = 12
+    if (x >= delX && x <= delX + delSize + 4 && y >= delY && y <= delY + delSize + 4 && isYInClipArea(y, trackIdx)) {
+      sequencer.deleteTrack(trackIdx)
+      hoveredTrackHeaderIndex.value = -1
+      requestDraw()
+      return
+    }
+
+    // Check if click is on expand toggle triangle
     const triX = HEADER_W - 14
     const triY = ty + BASE_TRACK_H - 14
     if (x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10) {
@@ -836,14 +884,27 @@ function handleMouseMove(e: MouseEvent) {
     if (y < RULER_H) {
       canvas.style.cursor = 'pointer'
       hoveredInstance.value = null
+      hoveredTrackHeaderIndex.value = -1
     } else if (x < HEADER_W) {
       // Check for expand toggle or automation lane collapse
       const track = trackIdx >= 0 ? sequencer.arrangementTracks[trackIdx] : null
       if (track) {
         const ty = getTrackY(trackIdx)
+
+        // Check if hovering over delete button area
+        const delX = HEADER_W - 18
+        const delY = ty + 4
+        const delSize = 12
+        const isOverDelete = x >= delX && x <= delX + delSize + 4 && y >= delY && y <= delY + delSize + 4
+
+        // Check expand toggle
         const triX = HEADER_W - 14
         const triY = ty + BASE_TRACK_H - 14
-        if (x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10) {
+        const isOverExpand = x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10
+
+        if (isOverDelete) {
+          canvas.style.cursor = 'pointer'
+        } else if (isOverExpand) {
           canvas.style.cursor = 'pointer'
         } else if (track.expanded) {
           const autoHit = getAutomationLaneAtY(y, trackIdx)
@@ -851,8 +912,12 @@ function handleMouseMove(e: MouseEvent) {
         } else {
           canvas.style.cursor = 'default'
         }
+
+        // Track header hover state for delete button visibility
+        hoveredTrackHeaderIndex.value = isYInClipArea(y, trackIdx) ? trackIdx : -1
       } else {
         canvas.style.cursor = 'default'
+        hoveredTrackHeaderIndex.value = -1
       }
       hoveredInstance.value = null
     } else if (trackIdx >= 0 && !isYInClipArea(y, trackIdx)) {
@@ -865,9 +930,11 @@ function handleMouseMove(e: MouseEvent) {
         canvas.style.cursor = 'default'
       }
       hoveredInstance.value = null
+      hoveredTrackHeaderIndex.value = -1
     } else {
       const hit = getInstanceAtPoint(x, y)
       hoveredInstance.value = hit?.instance || null
+      hoveredTrackHeaderIndex.value = -1
 
       if (hit) {
         canvas.style.cursor = hit.edge === 'right' ? 'ew-resize' : 'pointer'
@@ -967,14 +1034,23 @@ function handleWheel(e: WheelEvent) {
   const x = (e.clientX - rect.left) * (canvas.width / rect.width)
 
   if (e.ctrlKey || e.metaKey) {
+    // Zoom horizontally
     const factor = e.deltaY > 0 ? 0.9 : 1.1
     const timeAtCursor = xToTime(x)
     sequencer.viewport.zoomX = Math.max(10, Math.min(500, sequencer.viewport.zoomX * factor))
     sequencer.viewport.scrollX = timeAtCursor - (x - HEADER_W) / sequencer.viewport.zoomX
-  } else {
-    // Use whichever axis has more movement (supports trackpad horizontal swipe + mouse wheel)
-    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+  } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    // Horizontal scroll (shift+wheel or trackpad horizontal swipe)
+    const delta = e.shiftKey ? e.deltaY : e.deltaX
     sequencer.viewport.scrollX += delta / sequencer.viewport.zoomX
+  } else {
+    // Vertical scroll
+    sequencer.viewport.scrollY += e.deltaY
+    // Clamp vertical scroll
+    const totalHeight = getTotalContentHeight()
+    const visibleHeight = canvas.height
+    const maxScrollY = Math.max(0, totalHeight - visibleHeight + 50)
+    sequencer.viewport.scrollY = Math.max(0, Math.min(maxScrollY, sequencer.viewport.scrollY))
   }
 
   // Clamp to non-negative time

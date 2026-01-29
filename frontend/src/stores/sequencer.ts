@@ -1315,22 +1315,47 @@ export const useSequencerStore = defineStore('sequencer', () => {
     loopEnabled: boolean
     loopStart: number
     loopEnd: number
-    tracks: Array<{ synthName: string; muted: boolean; solo: boolean }>
+    viewport?: { scrollX: number; scrollY: number; zoomX: number; zoomY: number }
+    tracks: Array<{
+      synthName: string
+      name: string
+      color: string
+      muted: boolean
+      solo: boolean
+      expanded: boolean
+      automationLanes: Array<{ paramIndex: number; paramName: string; collapsed: boolean; min: number; max: number }>
+    }>
     clipInstances: Array<{ filePath: string; trackSynthName: string; startTime: number }>
   }
 
   function saveArrangement() {
     const projectStore = useProjectStore()
     const data: ArrangementFileData = {
-      version: 1,
+      version: 2,
       bpm: bpm.value,
       loopEnabled: loopEnabled.value,
       loopStart: loopStart.value,
       loopEnd: loopEnd.value,
+      viewport: {
+        scrollX: viewport.value.scrollX,
+        scrollY: viewport.value.scrollY,
+        zoomX: viewport.value.zoomX,
+        zoomY: viewport.value.zoomY,
+      },
       tracks: arrangementTracks.value.map(t => ({
         synthName: t.synthName,
+        name: t.name,
+        color: t.color,
         muted: t.muted,
         solo: t.solo,
+        expanded: t.expanded,
+        automationLanes: t.automationLanes.map(lane => ({
+          paramIndex: lane.paramIndex,
+          paramName: lane.paramName,
+          collapsed: lane.collapsed,
+          min: lane.min,
+          max: lane.max,
+        })),
       })),
       clipInstances: clipInstances.value.map(ci => {
         const clip = clips.value.find(c => c.id === ci.clipId)
@@ -1357,11 +1382,36 @@ export const useSequencerStore = defineStore('sequencer', () => {
       loopStart.value = data.loopStart
       loopEnd.value = data.loopEnd
 
-      // Ensure tracks exist
+      // Restore viewport (version 2+)
+      if (data.viewport) {
+        viewport.value.scrollX = data.viewport.scrollX
+        viewport.value.scrollY = data.viewport.scrollY
+        viewport.value.zoomX = data.viewport.zoomX
+        viewport.value.zoomY = data.viewport.zoomY
+      }
+
+      // Clear existing tracks and recreate from saved data
+      arrangementTracks.value = []
+
+      // Restore tracks with full state
       for (const td of data.tracks) {
         const track = ensureSynthTrack(td.synthName)
+        // Restore additional properties (version 2+)
+        if (td.name) track.name = td.name
+        if (td.color) track.color = td.color
         track.muted = td.muted
         track.solo = td.solo
+        track.expanded = td.expanded ?? false
+        // Restore automation lanes (version 2+)
+        if (td.automationLanes && td.automationLanes.length > 0) {
+          track.automationLanes = td.automationLanes.map(lane => ({
+            paramIndex: lane.paramIndex,
+            paramName: lane.paramName,
+            collapsed: lane.collapsed,
+            min: lane.min,
+            max: lane.max,
+          }))
+        }
       }
 
       // Load each referenced clip file and place on arrangement
@@ -1770,6 +1820,29 @@ export const useSequencerStore = defineStore('sequencer', () => {
     if (lane) lane.collapsed = !lane.collapsed
   }
 
+  /**
+   * Delete a track and all clip instances on it.
+   * Clip instances on higher tracks are shifted down.
+   */
+  function deleteTrack(trackIndex: number) {
+    if (trackIndex < 0 || trackIndex >= arrangementTracks.value.length) return
+
+    pushUndo()
+
+    // Remove clip instances on this track
+    clipInstances.value = clipInstances.value.filter(ci => ci.trackIndex !== trackIndex)
+
+    // Shift clip instances on higher tracks down
+    for (const ci of clipInstances.value) {
+      if (ci.trackIndex > trackIndex) {
+        ci.trackIndex--
+      }
+    }
+
+    // Remove the track
+    arrangementTracks.value.splice(trackIndex, 1)
+  }
+
   function getTrackTotalHeight(trackIndex: number, baseH: number, laneH: number, collapsedH: number): number {
     const track = arrangementTracks.value[trackIndex]
     if (!track || !track.expanded) return baseH
@@ -2012,6 +2085,37 @@ export const useSequencerStore = defineStore('sequencer', () => {
     }
   })
 
+  // Auto-save arrangement when state changes (debounced)
+  let _arrangementSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+  function scheduleArrangementSave() {
+    if (_arrangementSaveTimer) clearTimeout(_arrangementSaveTimer)
+    _arrangementSaveTimer = setTimeout(() => {
+      _arrangementSaveTimer = null
+      saveArrangement()
+    }, 2000) // Save 2 seconds after last change
+  }
+
+  // Watch arrangement-related state for auto-save
+  watch(
+    () => [
+      arrangementTracks.value,
+      clipInstances.value,
+      bpm.value,
+      loopEnabled.value,
+      loopStart.value,
+      loopEnd.value,
+      viewport.value.scrollX,
+      viewport.value.scrollY,
+      viewport.value.zoomX,
+      viewport.value.zoomY,
+    ],
+    () => {
+      scheduleArrangementSave()
+    },
+    { deep: true }
+  )
+
   function dispose() {
     if (animFrameId !== null) {
       cancelAnimationFrame(animFrameId)
@@ -2020,6 +2124,10 @@ export const useSequencerStore = defineStore('sequencer', () => {
     if (_autoSaveTimer) {
       clearTimeout(_autoSaveTimer)
       _autoSaveTimer = null
+    }
+    if (_arrangementSaveTimer) {
+      clearTimeout(_arrangementSaveTimer)
+      _arrangementSaveTimer = null
     }
     _unsubParams()
   }
@@ -2104,6 +2212,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     updateDetectedSynths,
     toggleTrackExpanded,
     toggleTrackAutomationLane,
+    deleteTrack,
     rebuildTrackAutomationLanes,
     getTrackTotalHeight,
     getTrackYOffset,
