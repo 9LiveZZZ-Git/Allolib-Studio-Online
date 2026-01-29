@@ -24,7 +24,7 @@ const nativeToWebPatterns: Array<{
   replacement: string | ((match: string, ...groups: string[]) => string)
   description: string
 }> = [
-  // Include transformations
+  // Include transformations - Core App
   {
     pattern: /#include\s*["<]al\/app\/al_App\.hpp[">]/g,
     replacement: '#include "al_WebApp.hpp"',
@@ -37,9 +37,55 @@ const nativeToWebPatterns: Array<{
   },
   {
     pattern: /#include\s*["<]al\/app\/al_GUIDomain\.hpp[">]/g,
-    replacement: '// GUI not supported in web\n// #include "al/app/al_GUIDomain.hpp"',
-    description: 'GUI include (not supported)'
+    replacement: '// GUI Domain not needed in web (handled by Vue)\n// #include "al/app/al_GUIDomain.hpp"',
+    description: 'GUIDomain include (not needed)'
   },
+
+  // Include transformations - Playground UI classes
+  {
+    pattern: /#include\s*["<]al\/ui\/al_ControlGUI\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides WebControlGUI',
+    description: 'ControlGUI include'
+  },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_ParameterGUI\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides ParameterGUI stub',
+    description: 'ParameterGUI include'
+  },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_PresetHandler\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides PresetHandler stub',
+    description: 'PresetHandler include'
+  },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_PresetSequencer\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides PresetSequencer stub',
+    description: 'PresetSequencer include'
+  },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_ParameterMIDI\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides ParameterMIDI stub',
+    description: 'ParameterMIDI include'
+  },
+
+  // Include transformations - Scene/Synth classes
+  {
+    pattern: /#include\s*["<]al\/scene\/al_PolySynth\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides PolySynth',
+    description: 'PolySynth include'
+  },
+  {
+    pattern: /#include\s*["<]al\/scene\/al_SynthSequencer\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides SynthSequencer',
+    description: 'SynthSequencer include'
+  },
+  {
+    pattern: /#include\s*["<]al\/scene\/al_SynthRecorder\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides SynthRecorder',
+    description: 'SynthRecorder include'
+  },
+
+  // Include transformations - Other I/O
   {
     pattern: /#include\s*["<]al\/io\/al_MIDI\.hpp[">]/g,
     replacement: '#include "al_WebMIDI.hpp"',
@@ -167,7 +213,7 @@ const webToNativePatterns: Array<{
   replacement: string | ((match: string, ...groups: string[]) => string)
   description: string
 }> = [
-  // Include transformations
+  // Include transformations - Core App
   {
     pattern: /#include\s*["<]al_WebApp\.hpp[">]/g,
     replacement: '#include "al/app/al_App.hpp"',
@@ -178,6 +224,36 @@ const webToNativePatterns: Array<{
     replacement: '#include "al/app/al_App.hpp"',
     description: 'Compat include'
   },
+
+  // Include transformations - Playground compat header (expands to multiple native includes)
+  {
+    pattern: /#include\s*["<]al_playground_compat\.hpp[">].*$/gm,
+    replacement: `#include "al/app/al_App.hpp"
+#include "al/scene/al_PolySynth.hpp"
+#include "al/scene/al_SynthSequencer.hpp"
+#include "al/scene/al_SynthRecorder.hpp"
+#include "al/ui/al_ControlGUI.hpp"
+#include "al/ui/al_ParameterGUI.hpp"
+#include "al/ui/al_PresetHandler.hpp"
+#include "al/ui/al_Parameter.hpp"
+#include "al/ui/al_ParameterBundle.hpp"
+#include "al/graphics/al_Light.hpp"`,
+    description: 'Playground compat header'
+  },
+
+  // Include transformations - Web Control GUI
+  {
+    pattern: /#include\s*["<]al_WebControlGUI\.hpp[">]/g,
+    replacement: '#include "al/ui/al_ControlGUI.hpp"',
+    description: 'WebControlGUI include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebSequencerBridge\.hpp[">]/g,
+    replacement: '// WebSequencerBridge is web-only (native uses SynthSequencer directly)',
+    description: 'WebSequencerBridge include'
+  },
+
+  // Include transformations - Other I/O
   {
     pattern: /#include\s*["<]al_WebMIDI\.hpp[">]/g,
     replacement: '#include "al/io/al_MIDI.hpp"',
@@ -274,6 +350,11 @@ const webToNativePatterns: Array<{
     replacement: 'Image',
     description: 'WebImage type'
   },
+  {
+    pattern: /\bWebControlGUI\b/g,
+    replacement: 'ControlGUI',
+    description: 'WebControlGUI type'
+  },
 
   // Platform detection
   {
@@ -295,16 +376,23 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
   // Check for web-specific markers
   if (code.includes('al_WebApp.hpp') ||
       code.includes('al_compat.hpp') ||
+      code.includes('al_playground_compat.hpp') ||
+      code.includes('al_WebControlGUI.hpp') ||
+      code.includes('al_WebSequencerBridge.hpp') ||
       code.includes('ALLOLIB_WEB_MAIN') ||
       code.includes('configureWebAudio') ||
       code.includes('WebSamplePlayer') ||
       code.includes('WebMIDI') ||
-      code.includes('WebOSC')) {
+      code.includes('WebOSC') ||
+      code.includes('WebControlGUI')) {
     return 'web'
   }
 
   // Check for native-specific markers
   if (code.includes('al/app/al_App.hpp') ||
+      code.includes('al/ui/al_ControlGUI.hpp') ||
+      code.includes('al/ui/al_ParameterGUI.hpp') ||
+      code.includes('al/scene/al_PolySynth.hpp') ||
       code.includes('al::App') ||
       (code.includes('int main(') && code.includes('.start()')) ||
       code.includes('al/io/al_MIDI.hpp') ||
@@ -348,13 +436,21 @@ export function transpileToWeb(code: string): TranspileResult {
     warnings.push('DistributedApp is not supported in web. Network features need alternative implementation.')
   }
   if (result.includes('imgui') || result.includes('ImGui')) {
-    warnings.push('ImGui is not currently supported in AlloLib Online.')
+    warnings.push('ImGui is not supported in AlloLib Online. Parameter UI is handled by Vue.')
   }
   if (result.includes('SerialIO')) {
     errors.push('SerialIO is not available in web browsers.')
   }
   if (result.includes('osc::Recv') || result.includes('osc::Send')) {
     warnings.push('OSC has been replaced with WebOSC. You\'ll need an OSC-WebSocket bridge server.')
+  }
+
+  // Notes about playground features
+  if (code.includes('SynthGUIManager') || code.includes('ControlGUI')) {
+    warnings.push('SynthGUIManager/ControlGUI use web-based parameter panel instead of ImGui.')
+  }
+  if (code.includes('PresetHandler') || code.includes('storePreset') || code.includes('recallPreset')) {
+    warnings.push('PresetHandler is stubbed. Use the web UI preset system instead.')
   }
 
   // Validate result
@@ -398,6 +494,11 @@ export function transpileToNative(code: string): TranspileResult {
   }
   if (result.includes('WebFont')) {
     warnings.push('WebFont has no direct equivalent. Consider using a font library like FreeType.')
+  }
+
+  // Check for playground features that need ImGui in native
+  if (result.includes('SynthGUIManager') || result.includes('ControlGUI')) {
+    warnings.push('SynthGUIManager/ControlGUI requires ImGui setup in native builds. See allolib_playground for examples.')
   }
 
   // Add standard headers if missing
