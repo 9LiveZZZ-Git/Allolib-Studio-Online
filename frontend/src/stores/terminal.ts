@@ -84,9 +84,11 @@ export const useTerminalStore = defineStore('terminal', () => {
   let savedInput = ''
 
   // User-defined scripts/functions
+  type ScriptType = 'shell' | 'js'
   interface UserScript {
     name: string
-    body: string[]           // array of command lines
+    body: string[]           // array of command lines (shell) or single JS code block
+    type: ScriptType         // 'shell' for terminal commands, 'js' for JavaScript
     description: string      // user documentation
     args: string[]           // argument names for documentation
     createdAt: number
@@ -102,7 +104,14 @@ export const useTerminalStore = defineStore('terminal', () => {
     try {
       const saved = localStorage.getItem('alloterm-scripts')
       if (saved) {
-        userScripts.value = JSON.parse(saved)
+        const parsed = JSON.parse(saved) as Record<string, UserScript>
+        // Ensure all scripts have a type (for backwards compatibility)
+        for (const script of Object.values(parsed)) {
+          if (!script.type) {
+            script.type = 'shell'
+          }
+        }
+        userScripts.value = parsed
       }
     } catch { /* ignore */ }
   }
@@ -864,10 +873,233 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   /**
+   * Create JavaScript execution context with rich API access.
+   * This provides a sandboxed environment with access to terminal functions,
+   * sequencer, project store, and utility functions.
+   */
+  function createJsContext(args: string[]) {
+    const ps = getProjectStore()
+    const sequencer = useSequencerStore()
+    const app = useAppStore()
+
+    return {
+      // Arguments
+      args,
+      $1: args[0], $2: args[1], $3: args[2], $4: args[3], $5: args[4],
+      $6: args[5], $7: args[6], $8: args[7], $9: args[8],
+
+      // Terminal output
+      print: (...vals: unknown[]) => writeln(vals.map(String).join(' ')),
+      println: (...vals: unknown[]) => writeln(vals.map(String).join(' ')),
+      echo: (...vals: unknown[]) => writeln(vals.map(String).join(' ')),
+      error: (msg: string) => writeError(msg),
+      warn: (msg: string) => writeln(`${C.yellow}${msg}${C.reset}`),
+      info: (msg: string) => writeln(`${C.cyan}${msg}${C.reset}`),
+      success: (msg: string) => writeln(`${C.green}${msg}${C.reset}`),
+      clear: () => terminal.value?.clear(),
+
+      // Colors for formatting
+      colors: { ...C },
+      color: (name: keyof typeof C, text: string) => `${C[name]}${text}${C.reset}`,
+
+      // Execute terminal commands
+      exec: (cmd: string) => {
+        executeScriptLine(cmd)
+      },
+      run: (cmd: string) => {
+        executeScriptLine(cmd)
+      },
+
+      // File system operations
+      fs: {
+        read: (path: string): string | null => {
+          const absPath = resolvePath(path)
+          const projPath = toProjectPath(absPath)
+          const file = ps.project.files.find(f => f.path === projPath || f.path === path)
+          return file?.content ?? null
+        },
+        write: (path: string, content: string) => {
+          const absPath = resolvePath(path)
+          const projPath = toProjectPath(absPath)
+          const existing = ps.project.files.find(f => f.path === projPath)
+          if (existing) {
+            existing.content = content
+            existing.updatedAt = Date.now()
+            existing.isDirty = true
+          } else {
+            const name = projPath.includes('/') ? projPath.split('/').pop()! : projPath
+            ps.project.files.push({
+              name,
+              path: projPath,
+              content,
+              language: name.endsWith('.cpp') || name.endsWith('.hpp') ? 'cpp' :
+                        name.endsWith('.js') ? 'javascript' :
+                        name.endsWith('.json') ? 'json' : 'plaintext',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              isDirty: true,
+            })
+          }
+        },
+        exists: (path: string): boolean => {
+          const absPath = resolvePath(path)
+          const projPath = toProjectPath(absPath)
+          return ps.project.files.some(f => f.path === projPath || f.path === path)
+        },
+        list: (path?: string): string[] => {
+          const dir = path ? resolvePath(path) : cwd.value
+          const prefix = dir === '/' ? '' : dir + '/'
+          return ps.project.files
+            .filter(f => f.path.startsWith(prefix.slice(1)))
+            .map(f => f.path)
+        },
+        delete: (path: string): boolean => {
+          const absPath = resolvePath(path)
+          const projPath = toProjectPath(absPath)
+          const idx = ps.project.files.findIndex(f => f.path === projPath)
+          if (idx >= 0) {
+            ps.project.files.splice(idx, 1)
+            return true
+          }
+          return false
+        },
+      },
+
+      // Project operations
+      project: {
+        get name() { return ps.project.name },
+        set name(n: string) { ps.project.name = n },
+        get files() { return ps.project.files.map(f => f.path) },
+        getFile: (path: string) => ps.project.files.find(f => f.path === path),
+        compile: () => { executeScriptLine('compile') },
+        run: () => { executeScriptLine('run') },
+        stop: () => { executeScriptLine('stop') },
+      },
+
+      // Sequencer operations
+      seq: {
+        get bpm() { return sequencer.bpm },
+        set bpm(v: number) { sequencer.bpm = v },
+        get currentTime() { return sequencer.currentTime },
+        get isPlaying() { return sequencer.isPlaying },
+        play: () => sequencer.play(),
+        pause: () => sequencer.pause(),
+        stop: () => sequencer.stop(),
+        seek: (time: number) => sequencer.seek(time),
+        get tracks() { return sequencer.tracks },
+        get clips() { return sequencer.clips },
+        get synths() { return sequencer.availableSynths },
+        addNote: (clipId: string, freq: number, time: number, dur: number, amp = 0.5) => {
+          const clip = sequencer.clips.find(c => c.id === clipId)
+          if (clip) {
+            clip.notes.push({
+              id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              frequency: freq,
+              amplitude: amp,
+              startTime: time,
+              duration: dur,
+              params: [],
+            })
+          }
+        },
+      },
+
+      // Environment
+      env: { ...env.value },
+      cwd: cwd.value,
+
+      // Utility functions
+      sleep: (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
+      prompt: (msg: string): string | null => window.prompt(msg),
+      confirm: (msg: string): boolean => window.confirm(msg),
+      alert: (msg: string) => window.alert(msg),
+
+      // Math utilities
+      Math,
+      random: (min = 0, max = 1) => Math.random() * (max - min) + min,
+      randomInt: (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min,
+      clamp: (val: number, min: number, max: number) => Math.max(min, Math.min(max, val)),
+      lerp: (a: number, b: number, t: number) => a + (b - a) * t,
+
+      // Music utilities
+      mtof: (midi: number) => 440 * Math.pow(2, (midi - 69) / 12),
+      ftom: (freq: number) => 69 + 12 * Math.log2(freq / 440),
+      noteToFreq: (note: string): number => {
+        const notes: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+        const match = note.match(/^([A-Ga-g])([#b]?)(\d+)?$/)
+        if (!match) return 440
+        let semitone = notes[match[1].toUpperCase()] || 0
+        if (match[2] === '#') semitone++
+        if (match[2] === 'b') semitone--
+        const octave = parseInt(match[3] || '4')
+        const midi = semitone + (octave + 1) * 12
+        return 440 * Math.pow(2, (midi - 69) / 12)
+      },
+
+      // JSON helpers
+      JSON,
+      parse: JSON.parse,
+      stringify: JSON.stringify,
+
+      // Console (for debugging)
+      console,
+      log: console.log.bind(console),
+      debug: console.debug.bind(console),
+
+      // Date/time
+      Date,
+      now: () => Date.now(),
+      timestamp: () => new Date().toISOString(),
+    }
+  }
+
+  /**
+   * Execute JavaScript code with the terminal context.
+   */
+  function executeJavaScript(code: string, args: string[] = []): unknown {
+    const ctx = createJsContext(args)
+
+    // Create function with context variables as parameters
+    const contextKeys = Object.keys(ctx)
+    const contextValues = Object.values(ctx)
+
+    try {
+      // Wrap in async IIFE to support await
+      const asyncCode = `
+        return (async () => {
+          ${code}
+        })()
+      `
+      const fn = new Function(...contextKeys, asyncCode)
+      const result = fn(...contextValues)
+
+      // Handle promise results
+      if (result instanceof Promise) {
+        result.catch((err: Error) => {
+          writeError(`JS Error: ${err.message}`)
+        })
+      }
+
+      return result
+    } catch (err) {
+      writeError(`JS Error: ${(err as Error).message}`)
+      return undefined
+    }
+  }
+
+  /**
    * Execute a user-defined script with argument substitution.
-   * Supports: $1, $2... for positional args, $@ for all args, $# for arg count
+   * Supports both shell scripts and JavaScript scripts.
    */
   function executeUserScript(script: UserScript, args: string[]) {
+    // Handle JavaScript scripts
+    if (script.type === 'js') {
+      const code = script.body.join('\n')
+      executeJavaScript(code, args)
+      return
+    }
+
+    // Handle shell scripts
     // Save current script args context (for nested scripts)
     const prevArgs = scriptArgs
     scriptArgs = args
@@ -2037,19 +2269,27 @@ export const useTerminalStore = defineStore('terminal', () => {
         writeln(`${C.bold}fn${C.reset} - Define a custom command/script`)
         writeln('')
         writeln(`${C.cyan}Usage:${C.reset}`)
-        writeln(`  ${C.green}fn <name> <command>${C.reset}       Single-line function`)
-        writeln(`  ${C.green}fn <name> { ... }${C.reset}        Multi-line function`)
+        writeln(`  ${C.green}fn <name> <command>${C.reset}          Single-line shell function`)
+        writeln(`  ${C.green}fn <name> { ... }${C.reset}           Multi-line shell function`)
+        writeln(`  ${C.green}fn <name> js { ... }${C.reset}        JavaScript function`)
         writeln('')
-        writeln(`${C.cyan}Examples:${C.reset}`)
+        writeln(`${C.cyan}Shell Examples:${C.reset}`)
         writeln(`  ${C.dim}fn greet echo "Hello, $1!"${C.reset}`)
         writeln(`  ${C.dim}fn build-run compile && run${C.reset}`)
         writeln(`  ${C.dim}fn status { seq status; echo "---"; ls }${C.reset}`)
         writeln('')
-        writeln(`${C.cyan}Arguments:${C.reset}`)
+        writeln(`${C.cyan}JavaScript Examples:${C.reset}`)
+        writeln(`  ${C.dim}fn hello js { print("Hello, " + $1) }${C.reset}`)
+        writeln(`  ${C.dim}fn chord js { seq.addNote("clip1", 440, 0, 1); seq.addNote("clip1", 550, 0, 1) }${C.reset}`)
+        writeln(`  ${C.dim}fn freqs js { for(let i=0; i<5; i++) print(mtof(60+i)) }${C.reset}`)
+        writeln('')
+        writeln(`${C.cyan}Shell Arguments:${C.reset}`)
         writeln(`  ${C.dim}$1, $2, ...${C.reset}  Positional arguments`)
         writeln(`  ${C.dim}$@${C.reset}          All arguments`)
         writeln(`  ${C.dim}$#${C.reset}          Number of arguments`)
         writeln('')
+        writeln(`${C.cyan}JS Context:${C.reset} args, print, fs, seq, project, exec, Math, mtof, etc.`)
+        writeln(`Use ${C.green}help js${C.reset} for full JavaScript API`)
         writeln(`Use ${C.green}script list${C.reset} to see defined functions`)
         return
       }
@@ -2060,12 +2300,30 @@ export const useTerminalStore = defineStore('terminal', () => {
         return
       }
 
-      // Check for multi-line { ... } syntax
+      // Check for JavaScript function: fn name js { code }
       const rest = ctx.rawArgs.slice(name.length).trim()
       let body: string[]
+      let scriptType: ScriptType = 'shell'
 
-      if (rest.startsWith('{')) {
-        // Multi-line: extract commands between { }
+      if (rest.startsWith('js ') || rest.startsWith('js{')) {
+        // JavaScript function
+        scriptType = 'js'
+        const jsCode = rest.slice(rest.startsWith('js ') ? 3 : 2).trim()
+
+        if (jsCode.startsWith('{')) {
+          // Extract code between { }
+          const match = jsCode.match(/^\{([\s\S]*)\}$/)
+          if (!match) {
+            writeError('fn: unclosed brace for JavaScript function')
+            return
+          }
+          body = [match[1].trim()]
+        } else {
+          // Single expression
+          body = [jsCode]
+        }
+      } else if (rest.startsWith('{')) {
+        // Multi-line shell: extract commands between { }
         const match = rest.match(/^\{([^}]*)\}$/)
         if (!match) {
           writeError('fn: unclosed brace, use { commands; ... }')
@@ -2074,7 +2332,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         // Split by ; for multiple commands
         body = match[1].split(';').map(s => s.trim()).filter(Boolean)
       } else {
-        // Single-line command
+        // Single-line shell command
         body = [rest]
       }
 
@@ -2086,13 +2344,15 @@ export const useTerminalStore = defineStore('terminal', () => {
       userScripts.value[name] = {
         name,
         body,
+        type: scriptType,
         description: '',
         args: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }
       saveUserScripts()
-      writeln(`Defined function: ${C.green}${name}${C.reset}`)
+      const typeLabel = scriptType === 'js' ? `${C.yellow}JS${C.reset} ` : ''
+      writeln(`Defined ${typeLabel}function: ${C.green}${name}${C.reset}`)
     },
 
     // ──────────────────────────────────────────────── script (manage scripts)
@@ -2123,14 +2383,16 @@ export const useTerminalStore = defineStore('terminal', () => {
           if (scripts.length === 0) {
             writeln(`${C.dim}No custom scripts defined${C.reset}`)
             writeln(`Use ${C.green}fn <name> <command>${C.reset} to create one`)
+            writeln(`Use ${C.green}fn <name> js { code }${C.reset} for JavaScript`)
             return
           }
           writeln(`${C.bold}Custom Scripts${C.reset} (${scripts.length})`)
           writeln('')
           for (const s of scripts) {
+            const typeTag = s.type === 'js' ? `${C.yellow}[JS]${C.reset} ` : ''
             const desc = s.description ? ` ${C.dim}- ${s.description}${C.reset}` : ''
             const lineCount = s.body.length
-            writeln(`  ${C.green}${s.name}${C.reset}${desc} ${C.dim}(${lineCount} line${lineCount !== 1 ? 's' : ''})${C.reset}`)
+            writeln(`  ${typeTag}${C.green}${s.name}${C.reset}${desc} ${C.dim}(${lineCount} line${lineCount !== 1 ? 's' : ''})${C.reset}`)
           }
           break
         }
@@ -2146,7 +2408,8 @@ export const useTerminalStore = defineStore('terminal', () => {
             writeError(`script show: '${scriptName}' not found`)
             return
           }
-          writeln(`${C.bold}${s.name}${C.reset}${s.description ? ` - ${s.description}` : ''}`)
+          const typeTag = s.type === 'js' ? ` ${C.yellow}[JavaScript]${C.reset}` : ''
+          writeln(`${C.bold}${s.name}${C.reset}${typeTag}${s.description ? ` - ${s.description}` : ''}`)
           writeln(`${C.dim}─────────────────────────────${C.reset}`)
           for (let i = 0; i < s.body.length; i++) {
             writeln(`${C.dim}${String(i + 1).padStart(3)}│${C.reset} ${s.body[i]}`)
@@ -2159,40 +2422,67 @@ export const useTerminalStore = defineStore('terminal', () => {
             writeError('script edit: missing script name')
             return
           }
-          const s = userScripts.value[scriptName]
+          let s = userScripts.value[scriptName]
+
+          // Check if user wants to create a JS script with 'edit name js'
+          const isNewJs = ctx.args[2] === 'js'
+
           if (!s) {
             // Create new script
+            const scriptType: ScriptType = isNewJs ? 'js' : 'shell'
             userScripts.value[scriptName] = {
               name: scriptName,
-              body: ['# Your script here', 'echo "Hello from ' + scriptName + '"'],
+              body: isNewJs
+                ? ['// Your JavaScript code here', 'print("Hello from ' + scriptName + '!")']
+                : ['# Your script here', 'echo "Hello from ' + scriptName + '"'],
+              type: scriptType,
               description: '',
               args: [],
               createdAt: Date.now(),
               updatedAt: Date.now(),
             }
             saveUserScripts()
+            s = userScripts.value[scriptName]
           }
-          // Create a virtual .sh file in the project for editing
-          const content = `#!/bin/alloterm
+
+          const isJs = s.type === 'js'
+          const ext = isJs ? 'js' : 'sh'
+
+          // Create content based on script type
+          let content: string
+          if (isJs) {
+            content = `// Script: ${scriptName}
+// ${s.description || 'Add description with: script doc ' + scriptName + ' "description"'}
+//
+// Available: print, fs, seq, project, exec, Math, mtof, args, $1-$9
+// Run with: ${scriptName} [args...]
+
+${s.body.join('\n')}
+`
+          } else {
+            content = `#!/bin/alloterm
 # Script: ${scriptName}
-# ${userScripts.value[scriptName].description || 'Add description with: script doc ' + scriptName + ' "description"'}
+# ${s.description || 'Add description with: script doc ' + scriptName + ' "description"'}
 #
 # Arguments: $1, $2, ... (positional), $@ (all), $# (count)
 # Run with: ${scriptName} [args...]
 
-${userScripts.value[scriptName].body.join('\n')}
+${s.body.join('\n')}
 `
+          }
+
           const ps = getProjectStore()
-          const filePath = `/scripts/${scriptName}.sh`
+          const filePath = `scripts/${scriptName}.${ext}`
           const existing = ps.project.files.find(f => f.path === filePath)
           if (existing) {
             existing.content = content
             existing.updatedAt = Date.now()
           } else {
             ps.project.files.push({
-              name: `${scriptName}.sh`,
+              name: `${scriptName}.${ext}`,
               path: filePath,
               content,
+              language: isJs ? 'javascript' : 'shell',
               isMain: false,
               isDirty: false,
               createdAt: Date.now(),
@@ -2277,25 +2567,45 @@ ${s.body.join('\n')}
             writeError(`script import: file not found '${filePath}'`)
             return
           }
+
+          // Determine script type based on file extension
+          const isJs = file.name.endsWith('.js')
+          const scriptType: ScriptType = isJs ? 'js' : 'shell'
+
           // Parse the script file
           const lines = file.content.split('\n')
           const body: string[] = []
-          let name = file.name.replace(/\.sh$/, '')
+          let name = file.name.replace(/\.(sh|js)$/, '')
           let description = ''
 
-          for (const line of lines) {
-            const trimmed = line.trim()
-            if (trimmed.startsWith('#!/')) continue  // Skip shebang
-            if (trimmed.startsWith('# Script:')) {
-              name = trimmed.slice(9).trim()
-              continue
+          if (isJs) {
+            // For JS files, preserve the full content (comments are valid JS)
+            const content = file.content.trim()
+            // Extract description from first line comment if present
+            const firstLine = lines[0]?.trim()
+            if (firstLine?.startsWith('//')) {
+              description = firstLine.slice(2).trim()
+            } else if (firstLine?.startsWith('/*')) {
+              const match = file.content.match(/\/\*\s*(.*?)\s*\*\//)
+              if (match) description = match[1]
             }
-            if (trimmed.startsWith('#') && !description && trimmed.length > 2) {
-              description = trimmed.slice(1).trim()
-              continue
-            }
-            if (trimmed && !trimmed.startsWith('#')) {
-              body.push(trimmed)
+            body.push(content)
+          } else {
+            // Shell script parsing
+            for (const line of lines) {
+              const trimmed = line.trim()
+              if (trimmed.startsWith('#!/')) continue  // Skip shebang
+              if (trimmed.startsWith('# Script:')) {
+                name = trimmed.slice(9).trim()
+                continue
+              }
+              if (trimmed.startsWith('#') && !description && trimmed.length > 2) {
+                description = trimmed.slice(1).trim()
+                continue
+              }
+              if (trimmed && !trimmed.startsWith('#')) {
+                body.push(trimmed)
+              }
             }
           }
 
@@ -2307,13 +2617,15 @@ ${s.body.join('\n')}
           userScripts.value[name] = {
             name,
             body,
+            type: scriptType,
             description,
             args: [],
             createdAt: Date.now(),
             updatedAt: Date.now(),
           }
           saveUserScripts()
-          writeln(`Imported script: ${C.green}${name}${C.reset} (${body.length} lines)`)
+          const typeLabel = isJs ? `${C.yellow}JS${C.reset} ` : ''
+          writeln(`Imported ${typeLabel}script: ${C.green}${name}${C.reset} (${body.length} line${body.length !== 1 ? 's' : ''})`)
           break
         }
 
@@ -2390,6 +2702,65 @@ ${s.body.join('\n')}
     // ──────────────────────────────────────────────── . (alias for source)
     '.'(ctx) {
       commands.source(ctx)
+    },
+
+    // ──────────────────────────────────────────────── js (execute JavaScript)
+    js(ctx) {
+      if (!ctx.rawArgs.trim()) {
+        writeln(`${C.bold}js${C.reset} - Execute JavaScript code`)
+        writeln('')
+        writeln(`${C.cyan}Usage:${C.reset}`)
+        writeln(`  ${C.green}js <code>${C.reset}            Execute inline JavaScript`)
+        writeln(`  ${C.green}js { <code> }${C.reset}       Multi-line JavaScript`)
+        writeln(`  ${C.green}js <file.js>${C.reset}        Execute JavaScript file`)
+        writeln('')
+        writeln(`${C.cyan}Examples:${C.reset}`)
+        writeln(`  ${C.dim}js print("Hello, World!")${C.reset}`)
+        writeln(`  ${C.dim}js { for(let i=0; i<5; i++) print(mtof(60+i)) }${C.reset}`)
+        writeln(`  ${C.dim}js seq.bpm = 140${C.reset}`)
+        writeln(`  ${C.dim}js fs.write("test.txt", "content")${C.reset}`)
+        writeln('')
+        writeln(`${C.cyan}Available in context:${C.reset}`)
+        writeln(`  ${C.yellow}Output:${C.reset}     print, echo, error, warn, info, success, clear`)
+        writeln(`  ${C.yellow}Colors:${C.reset}     colors, color(name, text)`)
+        writeln(`  ${C.yellow}Commands:${C.reset}   exec(cmd), run(cmd)`)
+        writeln(`  ${C.yellow}Files:${C.reset}      fs.read, fs.write, fs.exists, fs.list, fs.delete`)
+        writeln(`  ${C.yellow}Project:${C.reset}    project.name, project.files, project.compile()`)
+        writeln(`  ${C.yellow}Sequencer:${C.reset}  seq.bpm, seq.play(), seq.stop(), seq.addNote()`)
+        writeln(`  ${C.yellow}Music:${C.reset}      mtof(midi), ftom(freq), noteToFreq("C4")`)
+        writeln(`  ${C.yellow}Math:${C.reset}       Math, random(), randomInt(), clamp(), lerp()`)
+        writeln(`  ${C.yellow}Utility:${C.reset}    sleep(ms), prompt(), confirm(), JSON`)
+        writeln(`  ${C.yellow}Args:${C.reset}       args, $1-$9 (when used in fn)`)
+        writeln('')
+        writeln(`Use ${C.green}help js${C.reset} for full API documentation`)
+        return
+      }
+
+      let code = ctx.rawArgs.trim()
+
+      // Check if it's a file path
+      if (code.endsWith('.js') && !code.includes(' ') && !code.startsWith('{')) {
+        const absPath = resolvePath(code)
+        const projPath = toProjectPath(absPath)
+        const ps = getProjectStore()
+        const file = ps.project.files.find(f => f.path === projPath || f.path === code)
+        if (file) {
+          executeJavaScript(file.content)
+          return
+        }
+      }
+
+      // Handle braced code block
+      if (code.startsWith('{') && code.endsWith('}')) {
+        code = code.slice(1, -1).trim()
+      }
+
+      executeJavaScript(code)
+    },
+
+    // ──────────────────────────────────────────────── eval (alias for js)
+    eval(ctx) {
+      commands.js(ctx)
     },
 
     // ──────────────────────────────────────────────── version
@@ -3013,33 +3384,105 @@ ${s.body.join('\n')}
     ${C.dim}status${C.reset}             Show sequencer state
     ${C.dim}synths${C.reset}             List detected synths`,
     fn: `${C.bold}fn${C.reset} <name> <command>
-  Define a custom function/script.
+  Define a custom function/script (shell or JavaScript).
 
-  ${C.cyan}Single-line:${C.reset}
+  ${C.cyan}Shell Functions:${C.reset}
     ${C.dim}fn greet echo "Hello, $1!"${C.reset}
     ${C.dim}fn rebuild compile && run${C.reset}
-
-  ${C.cyan}Multi-line:${C.reset}
     ${C.dim}fn setup { mkdir src; touch src/main.cpp }${C.reset}
 
-  ${C.cyan}Arguments:${C.reset}
+  ${C.cyan}JavaScript Functions:${C.reset}
+    ${C.dim}fn hello js { print("Hello, " + $1) }${C.reset}
+    ${C.dim}fn freqs js { for(let i=0; i<5; i++) print(mtof(60+i)) }${C.reset}
+    ${C.dim}fn chord js { seq.addNote("c1", 440, 0, 1) }${C.reset}
+
+  ${C.cyan}Shell Arguments:${C.reset}
     ${C.dim}$1, $2, ...${C.reset}  Positional arguments
     ${C.dim}$@${C.reset}          All arguments
     ${C.dim}$#${C.reset}          Number of arguments
 
-  ${C.cyan}Example:${C.reset}
-    ${C.dim}fn greet echo "Hello, $1!"${C.reset}
-    ${C.dim}greet World${C.reset}  → Hello, World!`,
+  ${C.cyan}JS Context:${C.reset}
+    ${C.dim}args, $1-$9${C.reset}  Arguments array and shortcuts
+    ${C.dim}print, fs, seq, project, exec, Math, mtof${C.reset}
+    See ${C.green}help js${C.reset} for full API`,
+    js: `${C.bold}js${C.reset} <code>
+  Execute JavaScript code with full API access.
+
+  ${C.cyan}Usage:${C.reset}
+    ${C.dim}js print("Hello!")${C.reset}
+    ${C.dim}js { for(let i=0; i<5; i++) print(i) }${C.reset}
+    ${C.dim}js myscript.js${C.reset}  (execute file)
+
+  ${C.cyan}Output:${C.reset}
+    ${C.dim}print(...), echo(...)${C.reset}  Print to terminal
+    ${C.dim}error(msg), warn(msg)${C.reset}  Colored output
+    ${C.dim}info(msg), success(msg)${C.reset}
+    ${C.dim}clear()${C.reset}               Clear terminal
+
+  ${C.cyan}Commands:${C.reset}
+    ${C.dim}exec(cmd), run(cmd)${C.reset}   Run terminal command
+
+  ${C.cyan}File System:${C.reset}
+    ${C.dim}fs.read(path)${C.reset}         Read file content
+    ${C.dim}fs.write(path, content)${C.reset}
+    ${C.dim}fs.exists(path)${C.reset}       Check if file exists
+    ${C.dim}fs.list(path)${C.reset}         List directory
+    ${C.dim}fs.delete(path)${C.reset}       Delete file
+
+  ${C.cyan}Project:${C.reset}
+    ${C.dim}project.name${C.reset}          Project name (r/w)
+    ${C.dim}project.files${C.reset}         Array of file paths
+    ${C.dim}project.compile()${C.reset}     Compile project
+    ${C.dim}project.run()${C.reset}         Run project
+    ${C.dim}project.stop()${C.reset}        Stop execution
+
+  ${C.cyan}Sequencer:${C.reset}
+    ${C.dim}seq.bpm${C.reset}               Tempo (r/w)
+    ${C.dim}seq.currentTime${C.reset}       Playhead position
+    ${C.dim}seq.isPlaying${C.reset}         Playback state
+    ${C.dim}seq.play(), pause(), stop()${C.reset}
+    ${C.dim}seq.seek(time)${C.reset}        Jump to time
+    ${C.dim}seq.tracks, seq.clips${C.reset}
+    ${C.dim}seq.addNote(clipId, freq, time, dur, amp)${C.reset}
+
+  ${C.cyan}Music:${C.reset}
+    ${C.dim}mtof(midi)${C.reset}            MIDI to frequency
+    ${C.dim}ftom(freq)${C.reset}            Frequency to MIDI
+    ${C.dim}noteToFreq("C4")${C.reset}      Note name to freq
+
+  ${C.cyan}Math:${C.reset}
+    ${C.dim}Math.*${C.reset}                Standard Math object
+    ${C.dim}random(min, max)${C.reset}      Random float
+    ${C.dim}randomInt(min, max)${C.reset}   Random integer
+    ${C.dim}clamp(val, min, max)${C.reset}
+    ${C.dim}lerp(a, b, t)${C.reset}         Linear interpolation
+
+  ${C.cyan}Utility:${C.reset}
+    ${C.dim}sleep(ms)${C.reset}             Async delay
+    ${C.dim}prompt(msg)${C.reset}           Show input dialog
+    ${C.dim}confirm(msg)${C.reset}          Show confirm dialog
+    ${C.dim}JSON.parse/stringify${C.reset}
+    ${C.dim}console.log${C.reset}           Browser console
+
+  ${C.cyan}Arguments (in fn):${C.reset}
+    ${C.dim}args${C.reset}                  Arguments array
+    ${C.dim}$1, $2, ... $9${C.reset}        Positional args
+
+  ${C.cyan}Examples:${C.reset}
+    ${C.dim}js seq.bpm = 140${C.reset}
+    ${C.dim}js { let f = fs.read("main.cpp"); print(f.length) }${C.reset}
+    ${C.dim}fn scale js { for(let i=0;i<8;i++) print(mtof(60+i)) }${C.reset}`,
     script: `${C.bold}script${C.reset} <cmd> [args]
-  Manage custom scripts.
+  Manage custom scripts (shell and JavaScript).
 
   ${C.cyan}Commands:${C.reset}
     ${C.dim}list${C.reset}              List all scripts
     ${C.dim}show <name>${C.reset}       Show script source
-    ${C.dim}edit <name>${C.reset}       Edit in Monaco editor
+    ${C.dim}edit <name>${C.reset}       Edit shell script in editor
+    ${C.dim}edit <name> js${C.reset}    Edit/create JS script
     ${C.dim}del <name>${C.reset}        Delete a script
-    ${C.dim}export <name>${C.reset}     Save to .sh file
-    ${C.dim}import <file>${C.reset}     Load from .sh file
+    ${C.dim}export <name>${C.reset}     Save to file
+    ${C.dim}import <file>${C.reset}     Load .sh or .js file
     ${C.dim}doc <name> <text>${C.reset} Set description
 
   Scripts are saved to localStorage and persist
