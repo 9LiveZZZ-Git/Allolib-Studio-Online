@@ -110,15 +110,12 @@ out vec2 vTexCoord;
 void main() {
     vec4 viewPos = al_ModelViewMatrix * vec4(position, 1.0);
     vViewPos = viewPos.xyz;
-    vLocalPos = position;  // Pass local position
+    vLocalPos = position;
 
-    // Compute normal from position (works for spheres at origin)
-    vec3 objNormal = normalize(position);
-
-    // Transform normal to view space using upper-left 3x3 of ModelViewMatrix
-    // This is equivalent to al_NormalMatrix for uniform scaling
+    // Use actual vertex normal from mesh (location 3)
+    // Transform to view space using upper-left 3x3 of ModelViewMatrix
     mat3 normalMatrix = mat3(al_ModelViewMatrix);
-    vViewNormal = normalize(normalMatrix * objNormal);
+    vViewNormal = normalize(normalMatrix * normal);
 
     vTexCoord = texcoord;
     gl_Position = al_ProjectionMatrix * viewPos;

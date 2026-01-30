@@ -135,13 +135,10 @@ void main() {
     vPosition = worldPos.xyz;
     vLocalPos = position;
 
-    // Compute normal from position (works for spheres at origin)
-    // al_NormalMatrix isn't set correctly for custom shaders
-    vec3 objNormal = normalize(position);
-
-    // Transform normal to world space using upper-left 3x3 of ModelViewMatrix
+    // Use actual vertex normal from mesh (location 3)
+    // Transform to world space using upper-left 3x3 of ModelViewMatrix
     mat3 normalMatrix = mat3(al_ModelViewMatrix);
-    vNormal = normalize(normalMatrix * objNormal);
+    vNormal = normalize(normalMatrix * normal);
 
     vViewDir = normalize(cameraPos - worldPos.xyz);
 
