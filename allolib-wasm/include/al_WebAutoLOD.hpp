@@ -92,8 +92,10 @@ public:
     AutoLODManager()
         : mEnabled(false)
         , mNumLevels(4)
+        , mMaxLevels(16)  // Support up to 16 LOD levels
         , mReductionFactor(0.5f)
         , mBias(1.0f)
+        , mDistanceScale(1.0f)  // Unified distance scale multiplier
         , mMinVertices(100)
         , mCameraPos(0, 0, 5)
         , mSelectionMode(LODSelectionMode::ScreenSize)
@@ -104,17 +106,22 @@ public:
         , mCurrentTriangles(0)
         , mTargetScreenPixels(100.0f)  // Target pixels for LOD 0
         , mScreenErrorThreshold(2.0f)  // Max pixels of error before switching LOD
-        , mStatsEnabled(false)
+        , mMinFullQualityDistance(5.0f)  // Always use LOD 0 within this distance
+        , mUnloadDistance(500.0f)  // Distance at which to unload (return empty mesh)
+        , mUnloadEnabled(false)   // Whether unloading is enabled
+        , mStatsEnabled(0)  // Using int instead of bool to avoid potential optimization issues
         , mTotalTriangles(0)
         , mMeshCount(0)
         , mFrameTime(0.016f)
         , mAdaptiveEnabled(true)
     {
-        // Default distance thresholds (used for Distance mode)
-        mDistances = {10.0f, 25.0f, 50.0f, 100.0f};
+        // Default distance thresholds (used for Distance mode) - up to 16 levels
+        mDistances = {10.0f, 20.0f, 35.0f, 55.0f, 80.0f, 120.0f, 180.0f, 250.0f,
+                      350.0f, 500.0f, 700.0f, 1000.0f, 1500.0f, 2000.0f, 3000.0f, 5000.0f};
 
-        // Screen size thresholds (fraction of screen height)
-        mScreenSizeThresholds = {0.5f, 0.25f, 0.1f, 0.05f};
+        // Screen size thresholds (fraction of screen height) - up to 16 levels
+        mScreenSizeThresholds = {0.5f, 0.35f, 0.25f, 0.18f, 0.12f, 0.08f, 0.05f, 0.03f,
+                                  0.02f, 0.012f, 0.008f, 0.005f, 0.003f, 0.002f, 0.001f, 0.0005f};
     }
 
     // =========================================================================
@@ -136,8 +143,16 @@ public:
     // Configuration
     // =========================================================================
 
-    void setLevels(int levels) { mNumLevels = std::max(1, std::min(levels, 8)); }
+    void setLevels(int levels) {
+        int newLevels = std::max(1, std::min(levels, mMaxLevels));
+        if (newLevels != mNumLevels) {
+            mNumLevels = newLevels;
+            clearCache();  // Regenerate all meshes with new level count
+            printf("[AutoLOD] Levels changed to %d, cache cleared for regeneration\n", mNumLevels);
+        }
+    }
     int levels() const { return mNumLevels; }
+    int maxLevels() const { return mMaxLevels; }
 
     void setReductionFactor(float factor) { mReductionFactor = std::max(0.1f, std::min(factor, 0.9f)); }
     float reductionFactor() const { return mReductionFactor; }
@@ -181,6 +196,23 @@ public:
     // Target screen pixels for LOD 0 (for ScreenSize mode)
     void setTargetScreenPixels(float pixels) { mTargetScreenPixels = std::max(10.0f, pixels); }
     float targetScreenPixels() const { return mTargetScreenPixels; }
+
+    // Minimum distance for full quality (LOD 0) - always use full quality within this range
+    void setMinFullQualityDistance(float distance) { mMinFullQualityDistance = std::max(0.0f, distance); }
+    float minFullQualityDistance() const { return mMinFullQualityDistance; }
+
+    // Distance scale - unified multiplier for all LOD distances (maintains ratios)
+    // Higher = objects stay higher quality at distance, Lower = more aggressive LOD
+    void setDistanceScale(float scale) { mDistanceScale = std::max(0.1f, std::min(scale, 10.0f)); }
+    float distanceScale() const { return mDistanceScale; }
+
+    // Unload distance - beyond this distance, mesh is not drawn (returns empty mesh)
+    void setUnloadDistance(float distance) { mUnloadDistance = std::max(1.0f, distance); }
+    float unloadDistance() const { return mUnloadDistance; }
+
+    // Enable/disable unloading at max distance
+    void setUnloadEnabled(bool enabled) { mUnloadEnabled = enabled; }
+    bool unloadEnabled() const { return mUnloadEnabled; }
 
     // =========================================================================
     // View Settings (updated each frame)
@@ -233,7 +265,8 @@ public:
     // Statistics
     // =========================================================================
 
-    void enableStats(bool e = true) { mStatsEnabled = e; }
+    void enableStats(bool e = true) { mStatsEnabled = e ? 1 : 0; }
+    bool statsEnabled() const { return mStatsEnabled != 0; }
 
     void resetFrameStats() {
         mTotalTriangles = 0;
@@ -263,6 +296,16 @@ public:
                 mCurrentTriangles += tris;
             }
             return mesh;
+        }
+
+        // Calculate distance for unload check
+        Vec3f objectPos(modelMatrix[12], modelMatrix[13], modelMatrix[14]);
+        float rawDistance = (mCameraPos - objectPos).mag();
+
+        // Check for unload (return empty mesh)
+        if (mUnloadEnabled && rawDistance > mUnloadDistance * mDistanceScale) {
+            // Don't count triangles for unloaded meshes
+            return mEmptyMesh;
         }
 
         // Only process triangle meshes
@@ -298,10 +341,8 @@ public:
             return mesh;
         }
 
-        // Extract object position from model matrix
-        Vec3f objectPos(modelMatrix[12], modelMatrix[13], modelMatrix[14]);
-
         // Extract scale from model matrix (approximate)
+        // (objectPos already calculated above for unload check)
         float scaleX = Vec3f(modelMatrix[0], modelMatrix[1], modelMatrix[2]).mag();
         float scaleY = Vec3f(modelMatrix[4], modelMatrix[5], modelMatrix[6]).mag();
         float scaleZ = Vec3f(modelMatrix[8], modelMatrix[9], modelMatrix[10]).mag();
@@ -396,6 +437,14 @@ private:
         float distance = (mCameraPos - objectPos).mag();
         float boundingRadius = cached->boundingSphereRadius * scale;
 
+        // Apply distance scale (all distances are scaled by this)
+        float scaledMinFullQuality = mMinFullQualityDistance * mDistanceScale;
+
+        // ALWAYS use LOD 0 (full quality) within minimum distance
+        if (distance < scaledMinFullQuality) {
+            return 0;
+        }
+
         switch (mSelectionMode) {
             case LODSelectionMode::Distance:
                 return selectByDistance(distance);
@@ -416,9 +465,10 @@ private:
      * Classic distance-based selection
      */
     int selectByDistance(float distance) {
-        distance *= mBias;
+        // Apply both bias and distance scale
+        float effectiveDistance = distance * mBias / mDistanceScale;
         for (size_t i = 0; i < mDistances.size() && i < (size_t)mNumLevels; i++) {
-            if (distance < mDistances[i]) return i;
+            if (effectiveDistance < mDistances[i]) return i;
         }
         return mNumLevels - 1;
     }
@@ -434,8 +484,8 @@ private:
         float projectedSize = (boundingRadius / std::max(0.001f, distance)) *
                               (mScreenHeight / (2.0f * tanHalfFOV));
 
-        // Apply bias
-        projectedSize /= mBias;
+        // Apply bias and distance scale (higher distance scale = more detail at distance)
+        projectedSize = projectedSize * mDistanceScale / mBias;
 
         // Select LOD based on screen coverage
         float screenFraction = projectedSize / mScreenHeight;
@@ -488,11 +538,16 @@ private:
     // Settings
     bool mEnabled;
     int mNumLevels;
+    int mMaxLevels;
     float mReductionFactor;
     float mBias;
+    float mDistanceScale;  // Unified distance scale
     int mMinVertices;
     Vec3f mCameraPos;
     LODSelectionMode mSelectionMode;
+
+    // Empty mesh for unloading
+    Mesh mEmptyMesh;
 
     // View settings
     int mScreenWidth;
@@ -508,6 +563,9 @@ private:
     int mCurrentTriangles;
     float mTargetScreenPixels;
     float mScreenErrorThreshold;
+    float mMinFullQualityDistance;
+    float mUnloadDistance;
+    bool mUnloadEnabled;
 
     // Adaptive
     bool mAdaptiveEnabled;
@@ -517,8 +575,8 @@ private:
     // Cache
     std::unordered_map<MeshIdentity, CachedLODMesh, MeshIdentityHash> mCache;
 
-    // Stats
-    bool mStatsEnabled;
+    // Stats - using int instead of bool to avoid potential WASM optimization issues
+    int mStatsEnabled;
     int mTotalTriangles;
     int mMeshCount;
 };
@@ -532,51 +590,76 @@ inline void setGlobalAutoLOD(AutoLODManager* lod) {
     gAutoLODInstance = lod;
 }
 
+// =========================================================================
+// Global drawLOD() function for easy transpiler compatibility
+// =========================================================================
+
+/**
+ * Global drawLOD function - draws a mesh with automatic LOD selection.
+ *
+ * This is a convenience function that can be called from anywhere without
+ * needing access to the WebApp instance. It uses the global AutoLODManager
+ * that is automatically set up when WebApp::start() is called.
+ *
+ * Usage:
+ *   void onDraw(Graphics& g) {
+ *       al::drawLOD(g, myMesh);  // Automatic LOD based on camera distance
+ *   }
+ *
+ * If auto-LOD is not enabled or no global instance exists, this falls back
+ * to drawing the original mesh without LOD.
+ */
+inline void drawLOD(Graphics& g, const Mesh& mesh) {
+    if (gAutoLODInstance && gAutoLODInstance->enabled()) {
+        const Mesh& selected = gAutoLODInstance->selectMesh(mesh, g.modelMatrix());
+        g.draw(selected);
+    } else {
+        g.draw(mesh);
+    }
+}
+
+/**
+ * Enable auto-LOD globally with default settings.
+ * Call this in onCreate() to enable automatic LOD for all drawLOD() calls.
+ */
+inline void enableAutoLOD(int levels = 4) {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->enable();
+        gAutoLODInstance->setLevels(levels);
+    }
+}
+
+/**
+ * Disable auto-LOD globally.
+ */
+inline void disableAutoLOD() {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->disable();
+    }
+}
+
 } // namespace al
 
 // =========================================================================
 // JavaScript bridge functions (called from frontend settings)
+// Declarations only - definitions are in al_WebApp.cpp
 // =========================================================================
 extern "C" {
-
-EMSCRIPTEN_KEEPALIVE
-void al_autolod_set_bias(float bias) {
-    if (al::gAutoLODInstance) {
-        al::gAutoLODInstance->setBias(bias);
-    }
-}
-
-EMSCRIPTEN_KEEPALIVE
-void al_autolod_set_enabled(int enabled) {
-    if (al::gAutoLODInstance) {
-        al::gAutoLODInstance->enable(enabled != 0);
-    }
-}
-
-EMSCRIPTEN_KEEPALIVE
-void al_autolod_set_budget(int budget) {
-    if (al::gAutoLODInstance) {
-        al::gAutoLODInstance->setTriangleBudget(budget);
-    }
-}
-
-EMSCRIPTEN_KEEPALIVE
-void al_autolod_set_mode(int mode) {
-    if (al::gAutoLODInstance) {
-        al::gAutoLODInstance->setSelectionMode(static_cast<al::LODSelectionMode>(mode));
-    }
-}
-
-EMSCRIPTEN_KEEPALIVE
-int al_autolod_get_triangles() {
-    return al::gAutoLODInstance ? al::gAutoLODInstance->frameTriangles() : 0;
-}
-
-EMSCRIPTEN_KEEPALIVE
-float al_autolod_get_bias() {
-    return al::gAutoLODInstance ? al::gAutoLODInstance->bias() : 1.0f;
-}
-
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_bias(float bias);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_enabled(int enabled);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_budget(int budget);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_mode(int mode);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_min_full_quality_distance(float distance);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_distances(float d0, float d1, float d2, float d3);
+    EMSCRIPTEN_KEEPALIVE int al_autolod_get_triangles();
+    EMSCRIPTEN_KEEPALIVE float al_autolod_get_bias();
+    // New functions for enhanced LOD control
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_distance_scale(float scale);
+    EMSCRIPTEN_KEEPALIVE float al_autolod_get_distance_scale();
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_levels(int levels);
+    EMSCRIPTEN_KEEPALIVE int al_autolod_get_levels();
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_unload_distance(float distance);
+    EMSCRIPTEN_KEEPALIVE void al_autolod_set_unload_enabled(int enabled);
 }
 
 #endif // AL_WEB_AUTO_LOD_HPP

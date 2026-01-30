@@ -1721,21 +1721,33 @@ int main() {
   // ==========================================================================
   {
     id: 'studio-mesh-lod-demo',
-    title: 'Automatic LOD Demo',
-    description: 'Automatic mesh simplification - just enable and draw!',
+    title: 'Unified LOD System',
+    description: 'Up to 16 LOD levels with distance scale and unload support',
     category: 'studio-meshes',
     subcategory: 'procedural',
     code: `/**
- * Automatic LOD Demo
+ * Advanced Automatic LOD System Demo
  *
- * Demonstrates the automatic Level of Detail system.
- * Simply enable autoLOD() and use drawLOD() - the system
- * automatically generates simplified meshes and selects
- * the right one based on camera distance!
+ * Demonstrates automatic mesh simplification using Quadric Error Metrics.
+ * Now with support for up to 16 LOD levels, unified distance scaling,
+ * and mesh unloading at extreme distances.
+ *
+ * NEW FEATURES:
+ * - Up to 16 LOD levels (for gradual quality reduction)
+ * - Distance Scale: Unified control to scale ALL distances proportionally
+ * - Unload: Meshes can be completely hidden at extreme distances
+ *
+ * KEY CONCEPT: Use drawLOD(g, mesh) instead of g.draw(mesh) to enable
+ * automatic LOD selection. LOD levels are generated on first draw.
  *
  * Controls:
  *   Arrow keys: Orbit camera
  *   W/S: Zoom in/out (watch LOD change!)
+ *   L: Toggle LOD on/off
+ *   1-4: Set LOD levels (4, 8, 12, 16)
+ *   D/F: Decrease/Increase distance scale
+ *   U: Toggle unload feature
+ *   M: Cycle selection mode
  *   +/-: Adjust exposure
  */
 
@@ -1755,28 +1767,47 @@ public:
     float camAngleX = 0.5f, camAngleY = 0.3f;
     float camDist = 5.0f;
     bool meshLoaded = false;
+    int lodMode = 1;  // 0=distance, 1=screenSize, 2=screenError
+    int numLevels = 8;
+    float distScale = 1.0f;
+    bool unloadEnabled = false;
+    float unloadDist = 50.0f;
 
     void onCreate() override {
-        // Enable automatic LOD - that's all you need!
-        enableAutoLOD(4);  // 4 LOD levels
-        autoLOD().setDistances({5, 15, 30, 60});
+        // Enable Auto-LOD system with extended features
+        autoLOD().enable(true);
+        autoLOD().setLevels(numLevels);  // Start with 8 LOD levels
+        autoLOD().setMinFullQualityDistance(3.0f);  // Always LOD 0 within 3 units
+        autoLOD().setDistanceScale(distScale);  // Unified distance scale
+        autoLOD().setUnloadEnabled(unloadEnabled);
+        autoLOD().setUnloadDistance(unloadDist);
+        autoLOD().setSelectionMode(LODSelectionMode::ScreenSize);
+        autoLOD().enableStats(true);
+
+        printf("[LOD Demo] Advanced Auto-LOD enabled!\\n");
+        printf("  - %d LOD levels (supports up to 16)\\n", numLevels);
+        printf("  - Distance scale: %.1f (D/F to adjust)\\n", distScale);
+        printf("  - Unload: %s at %.0f units (U to toggle)\\n",
+               unloadEnabled ? "ON" : "OFF", unloadDist);
+        printf("  - Keys: 1-4=levels, D/F=scale, U=unload, M=mode\\n");
 
         // Load HDR environment
         env.load("/assets/environments/forest_slope_1k.hdr");
         env.exposure(1.4f);
 
-        // Load mesh - no manual LOD generation needed!
+        // Load mesh - LOD levels generated automatically on first drawLOD()!
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
             if (success) {
                 bunnyMesh = loader.mesh();
                 bunnyMesh.fitToSphere(1.0);
                 bunnyMesh.generateNormals();
                 meshLoaded = true;
-                printf("Mesh loaded - Auto-LOD will generate levels on first draw\\n");
+                printf("Mesh loaded: %zu vertices\\n", bunnyMesh.vertices().size());
+                printf("LOD levels generated on first draw (watch console)\\n");
             }
         });
 
-        // Floor
+        // Floor (simple geometry - no LOD needed)
         addSurface(floor, 15, 15, 10, 10);
         floor.generateNormals();
 
@@ -1803,22 +1834,30 @@ public:
         g.depthTesting(true);
 
         if (meshLoaded) {
-            // Draw with automatic LOD - just use drawLOD()!
+            // Use drawLOD() for automatic LOD selection!
             env.beginReflect(g, nav().pos(), 0.6f);
             g.pushMatrix();
             g.translate(0, 0.3, 0);
             g.rotate(angle, 0, 1, 0);
-            drawLOD(g, bunnyMesh);  // Automatic LOD selection!
+            drawLOD(g, bunnyMesh);  // <-- Auto LOD with up to 16 levels!
             g.popMatrix();
             env.endReflect();
 
-            // Show current LOD level
-            int level = autoLOD().getLevelForDistance(camDist);
-            printf("\\rDist: %.1f  LOD: %d  Cache: %zu meshes    ",
-                   camDist, level, autoLOD().cacheSize());
+            // Show LOD info
+            int tris = autoLOD().frameTriangles();
+            const char* modeNames[] = {"Distance", "ScreenSize", "ScreenError", "Budget"};
+
+            // Check if unloaded (0 triangles beyond unload distance)
+            if (tris == 0 && unloadEnabled && camDist > unloadDist * distScale) {
+                printf("\\rDist: %.1f | UNLOADED (beyond %.0f) | Scale: %.1f | Levels: %d    ",
+                       camDist, unloadDist * distScale, distScale, numLevels);
+            } else {
+                printf("\\rDist: %.1f | Tris: %d | Scale: %.1f | Levels: %d | Mode: %s    ",
+                       camDist, tris, distScale, numLevels, modeNames[lodMode]);
+            }
         }
 
-        // Floor (too simple for LOD, use regular draw)
+        // Floor
         g.lighting(true);
         g.pushMatrix();
         g.translate(0, -0.5, 0);
@@ -1834,10 +1873,55 @@ public:
             case Keyboard::RIGHT: camAngleX += 0.15f; break;
             case Keyboard::UP:    camAngleY = std::min(1.2f, camAngleY + 0.1f); break;
             case Keyboard::DOWN:  camAngleY = std::max(-0.1f, camAngleY - 0.1f); break;
-            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 1.5f); break;
-            case 's': case 'S':   camDist = std::min(80.0f, camDist + 2.0f); break;
+            case 'w': case 'W':   camDist = std::max(1.5f, camDist - 1.5f); break;
+            case 's': case 'S':   camDist = std::min(100.0f, camDist + 2.0f); break;
             case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
             case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+
+            // Toggle LOD
+            case 'l': case 'L': {
+                bool enabled = !autoLOD().enabled();
+                autoLOD().enable(enabled);
+                printf("\\nLOD %s\\n", enabled ? "ENABLED" : "DISABLED");
+            } break;
+
+            // Set LOD levels (1=4, 2=8, 3=12, 4=16)
+            case '1': numLevels = 4;  autoLOD().setLevels(4);
+                      printf("\\nLOD Levels: 4\\n"); break;
+            case '2': numLevels = 8;  autoLOD().setLevels(8);
+                      printf("\\nLOD Levels: 8\\n"); break;
+            case '3': numLevels = 12; autoLOD().setLevels(12);
+                      printf("\\nLOD Levels: 12\\n"); break;
+            case '4': numLevels = 16; autoLOD().setLevels(16);
+                      printf("\\nLOD Levels: 16 (maximum)\\n"); break;
+
+            // Adjust distance scale (unified slider concept)
+            case 'd': case 'D':
+                distScale = std::max(0.25f, distScale - 0.25f);
+                autoLOD().setDistanceScale(distScale);
+                printf("\\nDistance Scale: %.2f (lower = more aggressive LOD)\\n", distScale);
+                break;
+            case 'f': case 'F':
+                distScale = std::min(4.0f, distScale + 0.25f);
+                autoLOD().setDistanceScale(distScale);
+                printf("\\nDistance Scale: %.2f (higher = more detail at distance)\\n", distScale);
+                break;
+
+            // Toggle unload
+            case 'u': case 'U':
+                unloadEnabled = !unloadEnabled;
+                autoLOD().setUnloadEnabled(unloadEnabled);
+                printf("\\nUnload: %s (meshes hidden beyond %.0f * scale)\\n",
+                       unloadEnabled ? "ENABLED" : "DISABLED", unloadDist);
+                break;
+
+            // Cycle selection mode
+            case 'm': case 'M': {
+                lodMode = (lodMode + 1) % 3;
+                autoLOD().setSelectionMode(static_cast<LODSelectionMode>(lodMode));
+                const char* names[] = {"Distance", "ScreenSize", "ScreenError"};
+                printf("\\nLOD Mode: %s\\n", names[lodMode]);
+            } break;
         }
         updateCamera();
         return true;
@@ -1854,19 +1938,24 @@ int main() {
   {
     id: 'studio-mesh-lod-group',
     title: 'Auto-LOD Many Objects',
-    description: 'Automatic LOD for hundreds of objects',
+    description: 'LOD + unload for hundreds of objects with distance scale',
     category: 'studio-meshes',
     subcategory: 'procedural',
     code: `/**
- * Auto-LOD Many Objects
+ * Auto-LOD Many Objects with Unload
  *
- * Shows automatic LOD working seamlessly with
- * many objects. Each mesh automatically gets its
- * own LOD based on distance - no manual management!
+ * Shows automatic LOD working seamlessly with many objects.
+ * Features distance scale and unload for performance optimization.
+ *
+ * NEW: Objects beyond unload distance are completely hidden!
+ * This dramatically improves performance for large scenes.
  *
  * Controls:
  *   Arrow keys: Orbit camera
  *   W/S: Zoom in/out
+ *   D/F: Decrease/Increase distance scale
+ *   U: Toggle unload feature
+ *   1-4: Set LOD levels (4, 8, 12, 16)
  *   +/-: Adjust exposure
  */
 
@@ -1886,12 +1975,23 @@ public:
     double time = 0;
     float camAngleX = 0.3f, camAngleY = 0.4f;
     float camDist = 20.0f;
+    float distScale = 1.0f;
+    bool unloadEnabled = true;
+    float unloadDist = 35.0f;
+    int numLevels = 8;
 
     void onCreate() override {
-        // Enable automatic LOD - works for all meshes!
-        enableAutoLOD(4);
-        autoLOD().setDistances({8, 20, 40, 100});
-        autoLOD().enableStats(true);  // Track triangle counts
+        // Enable Auto-LOD with extended features
+        autoLOD().enable(true);
+        autoLOD().setLevels(numLevels);  // 8 LOD levels for smooth transitions
+        autoLOD().setDistanceScale(distScale);
+        autoLOD().setUnloadEnabled(unloadEnabled);  // Enable unloading!
+        autoLOD().setUnloadDistance(unloadDist);  // Unload beyond 35 units
+        autoLOD().enableStats(true);
+
+        printf("[LOD Many] %d levels, unload at %.0f, scale %.1f\\n",
+               numLevels, unloadDist, distScale);
+        printf("  D/F: distance scale, U: toggle unload, 1-4: levels\\n");
 
         // Load HDR environment
         env.load("/assets/environments/kloppenheim_02_puresky_1k.hdr");
@@ -1901,18 +2001,18 @@ public:
         addSphere(sphere, 0.4, 32, 32);
         sphere.generateNormals();
 
-        // Create grid of object positions
-        for (int x = -5; x <= 5; x++) {
-            for (int z = -5; z <= 5; z++) {
+        // Create larger grid of object positions
+        for (int x = -7; x <= 7; x++) {
+            for (int z = -7; z <= 7; z++) {
                 positions.push_back(Vec3f(x * 2.5f, 0.4f, z * 2.5f));
             }
         }
 
         // Floor
-        addSurface(floor, 40, 40, 20, 20);
+        addSurface(floor, 50, 50, 20, 20);
         floor.generateNormals();
 
-        printf("Created %zu objects with automatic LOD\\n", positions.size());
+        printf("Created %zu objects - some will be unloaded at distance!\\n", positions.size());
         updateCamera();
     }
 
@@ -1935,12 +2035,12 @@ public:
         env.drawSkybox(g);
         g.depthTesting(true);
 
-        // Draw all spheres with automatic LOD!
+        // Draw all spheres - LOD + unload is automatic!
         env.beginReflect(g, nav().pos(), 0.7f);
         for (const auto& pos : positions) {
             g.pushMatrix();
             g.translate(pos);
-            drawLOD(g, sphere);  // Auto-LOD selects best detail for each!
+            drawLOD(g, sphere);  // Auto-LOD + unload!
             g.popMatrix();
         }
         env.endReflect();
@@ -1953,8 +2053,11 @@ public:
         g.draw(floor);
         g.popMatrix();
 
-        printf("\\rObjects: %zu  Triangles: %d    ",
-               positions.size(), autoLOD().frameTriangles());
+        // Count visible objects (those with triangles)
+        int tris = autoLOD().frameTriangles();
+        printf("\\rObjects: %zu | Tris: %d | Scale: %.1f | Unload: %s@%.0f    ",
+               positions.size(), tris, distScale,
+               unloadEnabled ? "ON" : "OFF", unloadDist * distScale);
     }
 
     bool onKeyDown(Keyboard const& k) override {
@@ -1963,10 +2066,39 @@ public:
             case Keyboard::RIGHT: camAngleX += 0.12f; break;
             case Keyboard::UP:    camAngleY = std::min(1.3f, camAngleY + 0.1f); break;
             case Keyboard::DOWN:  camAngleY = std::max(0.1f, camAngleY - 0.1f); break;
-            case 'w': case 'W':   camDist = std::max(8.0f, camDist - 2.0f); break;
-            case 's': case 'S':   camDist = std::min(60.0f, camDist + 2.0f); break;
+            case 'w': case 'W':   camDist = std::max(5.0f, camDist - 3.0f); break;
+            case 's': case 'S':   camDist = std::min(80.0f, camDist + 3.0f); break;
             case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
             case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+
+            // Distance scale
+            case 'd': case 'D':
+                distScale = std::max(0.25f, distScale - 0.25f);
+                autoLOD().setDistanceScale(distScale);
+                printf("\\nDistance Scale: %.2f\\n", distScale);
+                break;
+            case 'f': case 'F':
+                distScale = std::min(4.0f, distScale + 0.25f);
+                autoLOD().setDistanceScale(distScale);
+                printf("\\nDistance Scale: %.2f\\n", distScale);
+                break;
+
+            // Toggle unload
+            case 'u': case 'U':
+                unloadEnabled = !unloadEnabled;
+                autoLOD().setUnloadEnabled(unloadEnabled);
+                printf("\\nUnload: %s\\n", unloadEnabled ? "ENABLED" : "DISABLED");
+                break;
+
+            // LOD levels
+            case '1': numLevels = 4;  autoLOD().setLevels(4);
+                      printf("\\nLOD Levels: 4\\n"); break;
+            case '2': numLevels = 8;  autoLOD().setLevels(8);
+                      printf("\\nLOD Levels: 8\\n"); break;
+            case '3': numLevels = 12; autoLOD().setLevels(12);
+                      printf("\\nLOD Levels: 12\\n"); break;
+            case '4': numLevels = 16; autoLOD().setLevels(16);
+                      printf("\\nLOD Levels: 16\\n"); break;
         }
         updateCamera();
         return true;
@@ -1990,8 +2122,10 @@ int main() {
  * Auto-LOD with PBR Materials
  *
  * Shows how automatic LOD integrates seamlessly with
- * PBR materials. The mesh LOD is handled automatically
- * while you focus on the visual quality!
+ * PBR materials. AUTO-LOD IS ON BY DEFAULT!
+ * Just use g.draw() normally - LOD is transparent.
+ *
+ * Uses Unreal Engine-style screen-size selection.
  *
  * Controls:
  *   Arrow keys: Orbit camera
@@ -2017,10 +2151,12 @@ public:
     bool meshLoaded = false;
 
     void onCreate() override {
-        // Enable automatic LOD - integrates with any shader!
-        enableAutoLOD(4);
-        autoLOD().setDistances({8, 20, 40, 80});
-        autoLOD().enableStats(true);
+        // Enable Auto-LOD with custom settings (call methods directly)
+        autoLOD().enable(true);  // Enable LOD system
+        autoLOD().setLevels(4);  // 4 LOD levels
+        autoLOD().setDistances({8, 20, 40, 80});  // Custom thresholds
+        autoLOD().enableStats(true);  // Track triangle counts
+        printf("[LOD Init] Enabled: %d\\n", autoLOD().enabled());
 
         // Load high-poly mesh
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
@@ -2078,7 +2214,7 @@ public:
         g.pushMatrix();
         g.translate(0, 0.3, 0);
         g.rotate(angle, 0, 1, 0);
-        drawLOD(g, bunnyMesh);  // Automatic LOD + PBR!
+        g.draw(bunnyMesh);  // Auto-LOD + PBR - just works!
         g.popMatrix();
         pbr.end();
 

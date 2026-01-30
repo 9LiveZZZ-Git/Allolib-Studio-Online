@@ -47,6 +47,10 @@ export interface GraphicsSettings {
   // LOD distance settings
   lodMinFullQualityDistance: number  // Distance below which always use full quality (LOD 0)
   lodDistances: [number, number, number, number]  // Distance thresholds for LOD 1, 2, 3, 4
+  lodDistanceScale: number  // Unified distance scale multiplier (0.1-10, default 1.0)
+  lodLevels: number  // Number of LOD levels (1-16)
+  lodUnloadEnabled: boolean  // Enable unloading at max distance
+  lodUnloadDistance: number  // Distance at which to unload meshes
   shadowsEnabled: boolean
   shadowMapSize: 256 | 512 | 1024 | 2048
   reflectionsEnabled: boolean
@@ -115,6 +119,10 @@ export const useSettingsStore = defineStore('settings', () => {
     // LOD distance settings
     lodMinFullQualityDistance: 5.0,  // Full quality within 5 units
     lodDistances: [10, 25, 50, 100],  // LOD transitions at these distances
+    lodDistanceScale: 1.0,  // Unified distance scale (higher = more detail at distance)
+    lodLevels: 4,  // Default 4 LOD levels
+    lodUnloadEnabled: false,  // Don't unload by default
+    lodUnloadDistance: 500,  // Default unload distance
     shadowsEnabled: true,
     shadowMapSize: 1024,
     reflectionsEnabled: true,
@@ -223,6 +231,10 @@ export const useSettingsStore = defineStore('settings', () => {
       // LOD distance settings
       lodMinFullQualityDistance: 5.0,
       lodDistances: [10, 25, 50, 100],
+      lodDistanceScale: 1.0,
+      lodLevels: 4,
+      lodUnloadEnabled: false,
+      lodUnloadDistance: 500,
       shadowsEnabled: true,
       shadowMapSize: 1024,
       reflectionsEnabled: true,
@@ -254,6 +266,10 @@ export const useSettingsStore = defineStore('settings', () => {
         // LOD distances - aggressive reduction
         graphics.value.lodMinFullQualityDistance = 2
         graphics.value.lodDistances = [5, 15, 30, 60]
+        graphics.value.lodDistanceScale = 0.5  // More aggressive LOD
+        graphics.value.lodLevels = 8  // More levels for mobile
+        graphics.value.lodUnloadEnabled = true
+        graphics.value.lodUnloadDistance = 200
         graphics.value.shadowsEnabled = false
         graphics.value.shadowMapSize = 256
         graphics.value.reflectionsEnabled = false
@@ -277,6 +293,10 @@ export const useSettingsStore = defineStore('settings', () => {
         // LOD distances - moderate
         graphics.value.lodMinFullQualityDistance = 5
         graphics.value.lodDistances = [10, 25, 50, 100]
+        graphics.value.lodDistanceScale = 0.75
+        graphics.value.lodLevels = 6
+        graphics.value.lodUnloadEnabled = true
+        graphics.value.lodUnloadDistance = 400
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 512
         graphics.value.reflectionsEnabled = true
@@ -300,6 +320,10 @@ export const useSettingsStore = defineStore('settings', () => {
         // LOD distances - balanced
         graphics.value.lodMinFullQualityDistance = 8
         graphics.value.lodDistances = [15, 35, 70, 150]
+        graphics.value.lodDistanceScale = 1.0
+        graphics.value.lodLevels = 4
+        graphics.value.lodUnloadEnabled = false
+        graphics.value.lodUnloadDistance = 500
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 1024
         graphics.value.reflectionsEnabled = true
@@ -323,6 +347,10 @@ export const useSettingsStore = defineStore('settings', () => {
         // LOD distances - maximum quality
         graphics.value.lodMinFullQualityDistance = 15
         graphics.value.lodDistances = [25, 60, 120, 250]
+        graphics.value.lodDistanceScale = 2.0  // Keep quality longer
+        graphics.value.lodLevels = 4  // Fewer levels for max quality
+        graphics.value.lodUnloadEnabled = false
+        graphics.value.lodUnloadDistance = 1000
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 2048
         graphics.value.reflectionsEnabled = true
@@ -363,6 +391,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Send LOD settings to auto-LOD system
     if (w.allolib?.autoLOD) {
+      // Enable auto-LOD when texture LOD is enabled (they're related features)
+      // Ultra preset disables both for maximum quality
+      w.allolib.autoLOD.setEnabled(graphics.value.textureLODEnabled)
+
       // LOD bias from settings
       w.allolib.autoLOD.setBias(graphics.value.lodBias)
 
@@ -370,6 +402,12 @@ export const useSettingsStore = defineStore('settings', () => {
       w.allolib.autoLOD.setMinFullQualityDistance(graphics.value.lodMinFullQualityDistance)
       const d = graphics.value.lodDistances
       w.allolib.autoLOD.setDistances(d[0], d[1], d[2], d[3])
+
+      // New LOD settings
+      w.allolib.autoLOD.setDistanceScale(graphics.value.lodDistanceScale)
+      w.allolib.autoLOD.setLevels(graphics.value.lodLevels)
+      w.allolib.autoLOD.setUnloadEnabled(graphics.value.lodUnloadEnabled)
+      w.allolib.autoLOD.setUnloadDistance(graphics.value.lodUnloadDistance)
 
       // Triangle budget based on quality preset
       const budgets: Record<string, number> = {
@@ -393,12 +431,18 @@ export const useSettingsStore = defineStore('settings', () => {
       w.allolib.autoLOD.setMode(modes[graphics.value.qualityPreset] || 1)
 
       console.log(
-        '[Settings] LOD settings applied: bias=' +
+        '[Settings] LOD settings applied: enabled=' +
+          graphics.value.textureLODEnabled +
+          ', bias=' +
           graphics.value.lodBias +
-          ', minFullQualityDist=' +
-          graphics.value.lodMinFullQualityDistance +
-          ', distances=' +
-          graphics.value.lodDistances.join(',') +
+          ', distanceScale=' +
+          graphics.value.lodDistanceScale +
+          ', levels=' +
+          graphics.value.lodLevels +
+          ', unload=' +
+          graphics.value.lodUnloadEnabled +
+          '@' +
+          graphics.value.lodUnloadDistance +
           ', preset=' +
           graphics.value.qualityPreset
       )

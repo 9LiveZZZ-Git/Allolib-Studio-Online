@@ -72,7 +72,8 @@ function handleFileAction(action: string) {
 
 // Settings dropdown state
 const showSettings = ref(false)
-const activeSettingsTab = ref<'editor' | 'audio' | 'compiler' | 'display'>('editor')
+const activeSettingsTab = ref<'editor' | 'audio' | 'compiler' | 'display' | 'graphics'>('editor')
+const showLODDistances = ref(false)
 
 function closeSettings() {
   showSettings.value = false
@@ -516,6 +517,9 @@ function getPlatformBadgeClass(platform: string) {
                 <svg v-if="group.id === 'allolib'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
+                <svg v-else-if="group.id === 'studio'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                </svg>
                 <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                 </svg>
@@ -640,7 +644,7 @@ function getPlatformBadgeClass(platform: string) {
         <!-- Header with tabs -->
         <div class="flex items-center border-b border-editor-border">
           <button
-            v-for="tab in ['editor', 'audio', 'compiler', 'display'] as const"
+            v-for="tab in ['editor', 'audio', 'compiler', 'display', 'graphics'] as const"
             :key="tab"
             :class="[
               'flex-1 px-3 py-2 text-xs font-medium transition-colors capitalize',
@@ -1025,6 +1029,472 @@ function getPlatformBadgeClass(platform: string) {
             class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
           >
             Reset Display Settings
+          </button>
+        </div>
+
+        <!-- Graphics Settings -->
+        <div v-if="activeSettingsTab === 'graphics'" class="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Quality Preset</label>
+            <select
+              v-model="settings.graphics.qualityPreset"
+              @change="settings.applyQualityPreset(settings.graphics.qualityPreset); handleSettingChange()"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option value="auto">Auto (Adaptive)</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="ultra">Ultra</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Target FPS</label>
+            <select
+              v-model.number="settings.graphics.targetFPS"
+              @change="handleSettingChange"
+              class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+            >
+              <option :value="30">30 FPS</option>
+              <option :value="60">60 FPS</option>
+              <option :value="120">120 FPS</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-300">Resolution Scale</label>
+            <div class="flex items-center gap-2">
+              <input
+                type="range"
+                v-model.number="settings.graphics.resolutionScale"
+                @input="handleSettingChange()"
+                min="0.25"
+                max="1.5"
+                step="0.05"
+                class="w-20 accent-allolib-blue"
+              />
+              <span class="text-xs text-gray-400 w-12 text-right">{{ (settings.graphics.resolutionScale * 100).toFixed(0) }}%</span>
+            </div>
+          </div>
+
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="text-xs text-gray-400 mb-2 font-medium">Effects</div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Shadows</label>
+              <button
+                @click="settings.graphics.shadowsEnabled = !settings.graphics.shadowsEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.shadowsEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.shadowsEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div v-if="settings.graphics.shadowsEnabled" class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Shadow Quality</label>
+              <select
+                v-model.number="settings.graphics.shadowMapSize"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option :value="256">Low (256)</option>
+                <option :value="512">Medium (512)</option>
+                <option :value="1024">High (1024)</option>
+                <option :value="2048">Ultra (2048)</option>
+              </select>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Reflections</label>
+              <button
+                @click="settings.graphics.reflectionsEnabled = !settings.graphics.reflectionsEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.reflectionsEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.reflectionsEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Bloom</label>
+              <button
+                @click="settings.graphics.bloomEnabled = !settings.graphics.bloomEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.bloomEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.bloomEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Ambient Occlusion</label>
+              <button
+                @click="settings.graphics.ambientOcclusion = !settings.graphics.ambientOcclusion; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.ambientOcclusion ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.ambientOcclusion ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Anti-Aliasing</label>
+              <select
+                v-model="settings.graphics.antiAliasing"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option value="none">None</option>
+                <option value="fxaa">FXAA</option>
+                <option value="msaa4x">MSAA 4x</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="text-xs text-gray-400 mb-2 font-medium">Performance</div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">LOD Bias</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.graphics.lodBias"
+                  @input="handleSettingChange()"
+                  min="0.5"
+                  max="3"
+                  step="0.25"
+                  class="w-20 accent-allolib-blue"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.graphics.lodBias.toFixed(2) }}</span>
+              </div>
+            </div>
+
+            <!-- LOD Distance Settings -->
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Full Quality Distance</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.graphics.lodMinFullQualityDistance"
+                  @input="handleSettingChange()"
+                  min="0"
+                  max="20"
+                  step="1"
+                  class="w-20 accent-allolib-blue"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.graphics.lodMinFullQualityDistance }}</span>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <button
+                @click="showLODDistances = !showLODDistances"
+                class="flex items-center gap-1 text-sm text-gray-300 hover:text-white"
+              >
+                <span :class="showLODDistances ? 'rotate-90' : ''" class="transition-transform">▶</span>
+                LOD Distances
+              </button>
+              <div v-if="showLODDistances" class="mt-2 pl-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">LOD 1</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model.number="settings.graphics.lodDistances[0]"
+                      @input="handleSettingChange()"
+                      min="5"
+                      max="50"
+                      step="5"
+                      class="w-16 accent-allolib-blue"
+                    />
+                    <span class="text-xs text-gray-400 w-8 text-right">{{ settings.graphics.lodDistances[0] }}</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">LOD 2</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model.number="settings.graphics.lodDistances[1]"
+                      @input="handleSettingChange()"
+                      min="10"
+                      max="100"
+                      step="5"
+                      class="w-16 accent-allolib-blue"
+                    />
+                    <span class="text-xs text-gray-400 w-8 text-right">{{ settings.graphics.lodDistances[1] }}</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">LOD 3</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model.number="settings.graphics.lodDistances[2]"
+                      @input="handleSettingChange()"
+                      min="25"
+                      max="200"
+                      step="10"
+                      class="w-16 accent-allolib-blue"
+                    />
+                    <span class="text-xs text-gray-400 w-8 text-right">{{ settings.graphics.lodDistances[2] }}</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">LOD 4</label>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="range"
+                      v-model.number="settings.graphics.lodDistances[3]"
+                      @input="handleSettingChange()"
+                      min="50"
+                      max="500"
+                      step="25"
+                      class="w-16 accent-allolib-blue"
+                    />
+                    <span class="text-xs text-gray-400 w-8 text-right">{{ settings.graphics.lodDistances[3] }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NEW: Distance Scale (unified control) -->
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300" title="Scales all LOD distances proportionally. Higher = more detail at distance.">Distance Scale</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.graphics.lodDistanceScale"
+                  @input="handleSettingChange()"
+                  min="0.25"
+                  max="4"
+                  step="0.25"
+                  class="w-20 accent-allolib-blue"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.graphics.lodDistanceScale.toFixed(2) }}x</span>
+              </div>
+            </div>
+
+            <!-- NEW: LOD Levels -->
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300" title="Number of LOD levels (more = smoother transitions)">LOD Levels</label>
+              <select
+                v-model.number="settings.graphics.lodLevels"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option :value="4">4</option>
+                <option :value="6">6</option>
+                <option :value="8">8</option>
+                <option :value="12">12</option>
+                <option :value="16">16</option>
+              </select>
+            </div>
+
+            <!-- NEW: Unload Settings -->
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300" title="Hide meshes beyond unload distance">Enable Unload</label>
+              <button
+                @click="settings.graphics.lodUnloadEnabled = !settings.graphics.lodUnloadEnabled; handleSettingChange()"
+                :class="settings.graphics.lodUnloadEnabled ? 'bg-allolib-blue' : 'bg-gray-600'"
+                class="w-10 h-5 rounded-full relative transition-colors"
+              >
+                <span
+                  :class="settings.graphics.lodUnloadEnabled ? 'translate-x-5' : 'translate-x-0.5'"
+                  class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full transition-transform"
+                ></span>
+              </button>
+            </div>
+
+            <div v-if="settings.graphics.lodUnloadEnabled" class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Unload Distance</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.graphics.lodUnloadDistance"
+                  @input="handleSettingChange()"
+                  min="50"
+                  max="1000"
+                  step="50"
+                  class="w-20 accent-allolib-blue"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.graphics.lodUnloadDistance }}</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Max Lights</label>
+              <select
+                v-model.number="settings.graphics.maxLights"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option :value="2">2</option>
+                <option :value="4">4</option>
+                <option :value="8">8</option>
+                <option :value="16">16</option>
+              </select>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Max Particles</label>
+              <select
+                v-model.number="settings.graphics.maxParticles"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option :value="1000">1K</option>
+                <option :value="5000">5K</option>
+                <option :value="10000">10K</option>
+                <option :value="50000">50K</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Texture LOD Settings -->
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="text-xs text-gray-400 mb-2 font-medium">Texture LOD</div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Texture LOD</label>
+              <button
+                @click="settings.graphics.textureLODEnabled = !settings.graphics.textureLODEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.textureLODEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.textureLODEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Texture Quality</label>
+              <select
+                v-model="settings.graphics.textureQuality"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="ultra">Ultra</option>
+              </select>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Max Texture Size</label>
+              <select
+                v-model.number="settings.graphics.maxTextureSize"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option :value="512">512px</option>
+                <option :value="1024">1024px</option>
+                <option :value="2048">2048px</option>
+                <option :value="4096">4096px</option>
+              </select>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Texture LOD Bias</label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="range"
+                  v-model.number="settings.graphics.textureLODBias"
+                  @input="handleSettingChange()"
+                  min="0.5"
+                  max="3"
+                  step="0.25"
+                  class="w-20 accent-allolib-blue"
+                />
+                <span class="text-xs text-gray-400 w-12 text-right">{{ settings.graphics.textureLODBias.toFixed(2) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shader LOD Settings -->
+          <div class="border-t border-editor-border pt-3 mt-3">
+            <div class="text-xs text-gray-400 mb-2 font-medium">Shader LOD</div>
+
+            <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300">Shader LOD</label>
+              <button
+                @click="settings.graphics.shaderLODEnabled = !settings.graphics.shaderLODEnabled; handleSettingChange()"
+                :class="[
+                  'w-12 h-6 rounded-full transition-colors relative',
+                  settings.graphics.shaderLODEnabled ? 'bg-allolib-blue' : 'bg-gray-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                    settings.graphics.shaderLODEnabled ? 'left-7' : 'left-1'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <label class="text-sm text-gray-300">Shader Complexity</label>
+              <select
+                v-model="settings.graphics.shaderComplexity"
+                @change="handleSettingChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option value="minimal">Minimal</option>
+                <option value="simple">Simple</option>
+                <option value="standard">Standard</option>
+                <option value="full">Full PBR</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="text-xs text-gray-500 bg-editor-sidebar p-2 rounded">
+            <strong>Auto:</strong> Dynamically adjusts settings based on FPS. Higher LOD bias = lower detail at closer distances. Texture/Shader LOD reduce quality for distant objects.
+          </div>
+
+          <button
+            @click="settings.resetGraphics(); handleSettingChange()"
+            class="w-full py-1.5 text-xs text-gray-400 hover:text-white hover:bg-editor-active rounded transition-colors"
+          >
+            Reset Graphics Settings
           </button>
         </div>
 

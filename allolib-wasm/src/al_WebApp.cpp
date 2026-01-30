@@ -46,11 +46,36 @@ EM_JS(void, registerAutoLODJSBridge, (), {
         setMode: function(mode) {
             Module.ccall('al_autolod_set_mode', null, ['number'], [mode]);
         },
+        setMinFullQualityDistance: function(distance) {
+            Module.ccall('al_autolod_set_min_full_quality_distance', null, ['number'], [distance]);
+        },
+        setDistances: function(d0, d1, d2, d3) {
+            Module.ccall('al_autolod_set_distances', null, ['number', 'number', 'number', 'number'], [d0, d1, d2, d3]);
+        },
         getTriangles: function() {
             return Module.ccall('al_autolod_get_triangles', 'number', [], []);
         },
         getBias: function() {
             return Module.ccall('al_autolod_get_bias', 'number', [], []);
+        },
+        // New functions for enhanced LOD control
+        setDistanceScale: function(scale) {
+            Module.ccall('al_autolod_set_distance_scale', null, ['number'], [scale]);
+        },
+        getDistanceScale: function() {
+            return Module.ccall('al_autolod_get_distance_scale', 'number', [], []);
+        },
+        setLevels: function(levels) {
+            Module.ccall('al_autolod_set_levels', null, ['number'], [levels]);
+        },
+        getLevels: function() {
+            return Module.ccall('al_autolod_get_levels', 'number', [], []);
+        },
+        setUnloadDistance: function(distance) {
+            Module.ccall('al_autolod_set_unload_distance', null, ['number'], [distance]);
+        },
+        setUnloadEnabled: function(enabled) {
+            Module.ccall('al_autolod_set_unload_enabled', null, ['number'], [enabled ? 1 : 0]);
         }
     };
     console.log('[AlloLib] Auto-LOD JS bridge registered');
@@ -646,6 +671,58 @@ int al_autolod_get_triangles() {
 EMSCRIPTEN_KEEPALIVE
 float al_autolod_get_bias() {
     return al::gAutoLODInstance ? al::gAutoLODInstance->bias() : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_min_full_quality_distance(float distance) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setMinFullQualityDistance(distance);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_distances(float d0, float d1, float d2, float d3) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setDistances({d0, d1, d2, d3});
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_distance_scale(float scale) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setDistanceScale(scale);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+float al_autolod_get_distance_scale() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->distanceScale() : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_levels(int levels) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setLevels(levels);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_autolod_get_levels() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->levels() : 4;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_unload_distance(float distance) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setUnloadDistance(distance);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_unload_enabled(int enabled) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setUnloadEnabled(enabled != 0);
+    }
 }
 
 } // extern "C"
