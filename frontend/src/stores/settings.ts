@@ -44,6 +44,9 @@ export interface GraphicsSettings {
   targetFPS: number
   resolutionScale: number
   lodBias: number
+  // LOD distance settings
+  lodMinFullQualityDistance: number  // Distance below which always use full quality (LOD 0)
+  lodDistances: [number, number, number, number]  // Distance thresholds for LOD 1, 2, 3, 4
   shadowsEnabled: boolean
   shadowMapSize: 256 | 512 | 1024 | 2048
   reflectionsEnabled: boolean
@@ -109,6 +112,9 @@ export const useSettingsStore = defineStore('settings', () => {
     targetFPS: 60,
     resolutionScale: 1.0,
     lodBias: 1.0,
+    // LOD distance settings
+    lodMinFullQualityDistance: 5.0,  // Full quality within 5 units
+    lodDistances: [10, 25, 50, 100],  // LOD transitions at these distances
     shadowsEnabled: true,
     shadowMapSize: 1024,
     reflectionsEnabled: true,
@@ -214,6 +220,9 @@ export const useSettingsStore = defineStore('settings', () => {
       targetFPS: 60,
       resolutionScale: 1.0,
       lodBias: 1.0,
+      // LOD distance settings
+      lodMinFullQualityDistance: 5.0,
+      lodDistances: [10, 25, 50, 100],
       shadowsEnabled: true,
       shadowMapSize: 1024,
       reflectionsEnabled: true,
@@ -242,6 +251,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'low':
         graphics.value.resolutionScale = 0.5
         graphics.value.lodBias = 2.0
+        // LOD distances - aggressive reduction
+        graphics.value.lodMinFullQualityDistance = 2
+        graphics.value.lodDistances = [5, 15, 30, 60]
         graphics.value.shadowsEnabled = false
         graphics.value.shadowMapSize = 256
         graphics.value.reflectionsEnabled = false
@@ -262,6 +274,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'medium':
         graphics.value.resolutionScale = 0.75
         graphics.value.lodBias = 1.5
+        // LOD distances - moderate
+        graphics.value.lodMinFullQualityDistance = 5
+        graphics.value.lodDistances = [10, 25, 50, 100]
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 512
         graphics.value.reflectionsEnabled = true
@@ -282,6 +297,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'high':
         graphics.value.resolutionScale = 1.0
         graphics.value.lodBias = 1.0
+        // LOD distances - balanced
+        graphics.value.lodMinFullQualityDistance = 8
+        graphics.value.lodDistances = [15, 35, 70, 150]
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 1024
         graphics.value.reflectionsEnabled = true
@@ -302,6 +320,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'ultra':
         graphics.value.resolutionScale = 1.0
         graphics.value.lodBias = 0.75
+        // LOD distances - maximum quality
+        graphics.value.lodMinFullQualityDistance = 15
+        graphics.value.lodDistances = [25, 60, 120, 250]
         graphics.value.shadowsEnabled = true
         graphics.value.shadowMapSize = 2048
         graphics.value.reflectionsEnabled = true
@@ -345,6 +366,11 @@ export const useSettingsStore = defineStore('settings', () => {
       // LOD bias from settings
       w.allolib.autoLOD.setBias(graphics.value.lodBias)
 
+      // LOD distance thresholds
+      w.allolib.autoLOD.setMinFullQualityDistance(graphics.value.lodMinFullQualityDistance)
+      const d = graphics.value.lodDistances
+      w.allolib.autoLOD.setDistances(d[0], d[1], d[2], d[3])
+
       // Triangle budget based on quality preset
       const budgets: Record<string, number> = {
         low: 100000,
@@ -369,9 +395,24 @@ export const useSettingsStore = defineStore('settings', () => {
       console.log(
         '[Settings] LOD settings applied: bias=' +
           graphics.value.lodBias +
+          ', minFullQualityDist=' +
+          graphics.value.lodMinFullQualityDistance +
+          ', distances=' +
+          graphics.value.lodDistances.join(',') +
           ', preset=' +
           graphics.value.qualityPreset
       )
+    }
+  }
+
+  // Send display settings to WASM module
+  function notifyDisplayChange() {
+    const w = window as any
+
+    // Send point size to graphics system
+    if (w.allolib?.graphics?.setPointSize) {
+      w.allolib.graphics.setPointSize(display.value.defaultPointSize)
+      console.log('[Settings] Point size set to:', display.value.defaultPointSize)
     }
   }
 
@@ -385,6 +426,11 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // Watch for changes and auto-save
   watch([editor, audio, compiler, display, graphics], saveSettings, { deep: true })
+
+  // Watch display settings and notify WASM
+  watch(() => display.value.defaultPointSize, () => {
+    notifyDisplayChange()
+  })
 
   // Load on init
   loadSettings()
@@ -403,6 +449,8 @@ export const useSettingsStore = defineStore('settings', () => {
     resetDisplay,
     resetGraphics,
     applyQualityPreset,
+    notifyDisplayChange,
+    notifyQualityChange,
     resetAll,
   }
 })

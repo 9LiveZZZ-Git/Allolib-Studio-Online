@@ -111,6 +111,7 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec4 color;
 uniform float eye_sep;
 uniform float foc_len;
+uniform float al_PointSize;
 out vec4 color_;
 void main() {
   if (eye_sep == 0.0) {
@@ -120,6 +121,8 @@ void main() {
     gl_Position = al_ProjectionMatrix * stereo_displace(al_ModelViewMatrix * vec4(position, 1.0), eye_sep, foc_len);
   }
   color_ = color;
+  // WebGL2: Point size must be set in shader (glPointSize doesn't work)
+  gl_PointSize = al_PointSize > 0.0 ? al_PointSize : 5.0;
 }
 )"s;
 }
@@ -149,6 +152,7 @@ layout (location = 0) in vec3 position;
 layout (location = 2) in vec2 texcoord;
 uniform float eye_sep;
 uniform float foc_len;
+uniform float al_PointSize;
 out vec2 texcoord_;
 void main() {
   if (eye_sep == 0.0) {
@@ -158,6 +162,8 @@ void main() {
     gl_Position = al_ProjectionMatrix * stereo_displace(al_ModelViewMatrix * vec4(position, 1.0), eye_sep, foc_len);
   }
   texcoord_ = texcoord;
+  // WebGL2: Point size must be set in shader (glPointSize doesn't work)
+  gl_PointSize = al_PointSize > 0.0 ? al_PointSize : 5.0;
 }
 )";
 }
@@ -187,6 +193,7 @@ uniform mat4 al_ProjectionMatrix;
 layout (location = 0) in vec3 position;
 uniform float eye_sep;
 uniform float foc_len;
+uniform float al_PointSize;
 void main() {
   if (eye_sep == 0.0) {
     gl_Position = al_ProjectionMatrix * al_ModelViewMatrix * vec4(position, 1.0);
@@ -194,6 +201,8 @@ void main() {
   else {
     gl_Position = al_ProjectionMatrix * stereo_displace(al_ModelViewMatrix * vec4(position, 1.0), eye_sep, foc_len);
   }
+  // WebGL2: Point size must be set in shader (glPointSize doesn't work)
+  gl_PointSize = al_PointSize > 0.0 ? al_PointSize : 5.0;
 }
 )";
 }

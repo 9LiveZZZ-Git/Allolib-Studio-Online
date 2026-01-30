@@ -6,6 +6,7 @@
  */
 
 import { parameterSystem } from '@/utils/parameter-system'
+import { useSettingsStore } from '@/stores/settings'
 
 export interface RuntimeConfig {
   canvas: HTMLCanvasElement
@@ -434,6 +435,16 @@ export class AllolibRuntime {
       // This enables the Vue ParameterPanel to show and control parameters
       if (this.module) {
         parameterSystem.connectWasm(this.module)
+      }
+
+      // Apply initial settings from the settings store
+      // This ensures point size and other settings are applied when the app starts
+      try {
+        const settings = useSettingsStore()
+        settings.notifyDisplayChange()
+        settings.notifyQualityChange()
+      } catch (e) {
+        console.warn('[Runtime] Could not apply initial settings:', e)
       }
 
       this.onPrint('[SUCCESS] Application started')

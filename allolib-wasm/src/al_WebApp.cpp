@@ -16,6 +16,47 @@ extern "C" int gladLoadGLLoader(void* (*load)(const char*));
 // Gamma DSP library for oscillators etc.
 #include "Gamma/Domain.h"
 
+// EM_JS function to register AutoLOD JavaScript bridge
+// Using EM_JS instead of EM_ASM because EM_ASM has issues with JS object literals
+#ifdef __EMSCRIPTEN__
+EM_JS(void, registerPointSizeJSBridge, (), {
+    window.allolib = window.allolib || {};
+    window.allolib.graphics = window.allolib.graphics || {};
+    window.allolib.graphics.setPointSize = function(size) {
+        Module.ccall('al_web_set_point_size', null, ['number'], [size]);
+    };
+    window.allolib.graphics.getPointSize = function() {
+        return Module.ccall('al_web_get_point_size', 'number', [], []);
+    };
+    console.log('[AlloLib] Graphics JS bridge registered');
+});
+
+EM_JS(void, registerAutoLODJSBridge, (), {
+    window.allolib = window.allolib || {};
+    window.allolib.autoLOD = {
+        setBias: function(bias) {
+            Module.ccall('al_autolod_set_bias', null, ['number'], [bias]);
+        },
+        setEnabled: function(enabled) {
+            Module.ccall('al_autolod_set_enabled', null, ['number'], [enabled ? 1 : 0]);
+        },
+        setBudget: function(budget) {
+            Module.ccall('al_autolod_set_budget', null, ['number'], [budget]);
+        },
+        setMode: function(mode) {
+            Module.ccall('al_autolod_set_mode', null, ['number'], [mode]);
+        },
+        getTriangles: function() {
+            return Module.ccall('al_autolod_get_triangles', 'number', [], []);
+        },
+        getBias: function() {
+            return Module.ccall('al_autolod_get_bias', 'number', [], []);
+        }
+    };
+    console.log('[AlloLib] Auto-LOD JS bridge registered');
+});
+#endif
+
 namespace al {
 
 // Forward declarations for Emscripten event callbacks
@@ -74,32 +115,9 @@ void WebApp::start() {
     // Register global AutoLOD for JS bridge
     setGlobalAutoLOD(&mAutoLOD);
 
-    // Register auto-LOD JS bridge
-    EM_ASM({
-        window.allolib = window.allolib || {};
-        window.allolib.autoLOD = {
-            setBias: function(bias) {
-                Module.ccall('al_autolod_set_bias', null, ['number'], [bias]);
-            },
-            setEnabled: function(enabled) {
-                Module.ccall('al_autolod_set_enabled', null, ['number'], [enabled ? 1 : 0]);
-            },
-            setBudget: function(budget) {
-                Module.ccall('al_autolod_set_budget', null, ['number'], [budget]);
-            },
-            setMode: function(mode) {
-                // mode: 0=distance, 1=screenSize, 2=screenError, 3=triangleBudget
-                Module.ccall('al_autolod_set_mode', null, ['number'], [mode]);
-            },
-            getTriangles: function() {
-                return Module.ccall('al_autolod_get_triangles', 'number', [], []);
-            },
-            getBias: function() {
-                return Module.ccall('al_autolod_get_bias', 'number', [], []);
-            }
-        };
-        console.log('[AlloLib] Auto-LOD JS bridge registered');
-    });
+    // Register JS bridges
+    registerPointSizeJSBridge();
+    registerAutoLODJSBridge();
 
     // Initialize graphics
 #ifdef __EMSCRIPTEN__
@@ -216,6 +234,14 @@ void WebApp::tick(double dt) {
 
         // Clear the screen
         mGraphics->clear(0.1f, 0.1f, 0.1f);
+
+        // Set point size uniform for WebGL2 (glPointSize doesn't work)
+        // This needs to be set on active shaders - done via gl::pointSize storing the value
+        // The shader reads al_PointSize uniform which defaults to stored value
+        float pointSize = gl::getPointSize();
+        if (pointSize > 0.0f) {
+            mGraphics->shader().uniform("al_PointSize", pointSize);
+        }
 
         // Call user's onDraw
         onDraw(*mGraphics);
@@ -577,3 +603,49 @@ void WebApp::setListenerPose(const Pose& pose) {
 }
 
 } // namespace al
+
+// =========================================================================
+// JavaScript bridge function definitions for AutoLOD
+// These must be in .cpp file (not header) to avoid duplicate symbols
+// =========================================================================
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_bias(float bias) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setBias(bias);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_enabled(int enabled) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->enable(enabled != 0);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_budget(int budget) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setTriangleBudget(budget);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_autolod_set_mode(int mode) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setSelectionMode(static_cast<al::LODSelectionMode>(mode));
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_autolod_get_triangles() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->frameTriangles() : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float al_autolod_get_bias() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->bias() : 1.0f;
+}
+
+} // extern "C"

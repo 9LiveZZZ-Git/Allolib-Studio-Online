@@ -4,10 +4,7 @@
 
 #include "al/graphics/al_WebGL2Extensions.hpp"
 #include <iostream>
-
-#ifdef __EMSCRIPTEN__
-#include <GLES3/gl3.h>
-#endif
+// Note: GL types come from al_OpenGL.hpp included in the header - no need for GLES3/gl3.h
 
 namespace al {
 
@@ -92,3 +89,35 @@ EMSCRIPTEN_KEEPALIVE void al_webgl2_set_debug_info(const char* vendor, const cha
 }
 
 } // extern "C"
+
+// =============================================================================
+// Point Size Support for WebGL2
+// =============================================================================
+// WebGL2/OpenGL ES 3.0 doesn't support glPointSize() - point size must be
+// set via gl_PointSize in the vertex shader. These functions store the
+// point size value so it can be passed to shaders as a uniform.
+
+static float s_pointSize = 1.0f;
+
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE void al_web_set_point_size(float size) {
+    s_pointSize = size;
+}
+
+EMSCRIPTEN_KEEPALIVE float al_web_get_point_size(void) {
+    return s_pointSize;
+}
+
+} // extern "C"
+
+// Implementation of al::gl::getPointSize() for the patched al_OpenGL.hpp
+namespace al {
+namespace gl {
+
+float getPointSize() {
+    return s_pointSize;
+}
+
+}  // namespace gl
+}  // namespace al
