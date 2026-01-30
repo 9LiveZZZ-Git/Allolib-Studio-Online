@@ -102,8 +102,20 @@ export class AllolibRuntime {
     this.onError = config.onError || console.error
     this.onExit = config.onExit || (() => {})
 
-    // Don't create WebGL context here - let Emscripten/GLFW handle it
-    // Just set up the canvas size
+    // Pre-create WebGL2 context with preserveDrawingBuffer for screenshots
+    // This context will be reused by Emscripten
+    const gl = this.canvas.getContext('webgl2', {
+      preserveDrawingBuffer: true,  // Required for toDataURL() screenshots
+      alpha: true,
+      antialias: true,
+      depth: true,
+      stencil: true,
+      premultipliedAlpha: true,
+    })
+    if (!gl) {
+      console.warn('[Runtime] Failed to pre-create WebGL2 context')
+    }
+
     this.resize()
   }
 
@@ -120,9 +132,14 @@ export class AllolibRuntime {
       // Load audio worklet processor first
       await this.loadAudioWorklet(baseUrl)
 
+      // Get the pre-created WebGL context (created in constructor with preserveDrawingBuffer)
+      const gl = this.canvas.getContext('webgl2')
+
       // Module configuration for Emscripten
       const moduleConfig = {
         canvas: this.canvas,
+        // Pass pre-created context so Emscripten reuses it (keeps preserveDrawingBuffer)
+        preinitializedWebGLContext: gl,
         print: (text: string) => this.onPrint(text),
         printErr: (text: string) => this.onError(text),
         onExit: (code: number) => {

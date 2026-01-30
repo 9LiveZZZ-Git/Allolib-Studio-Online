@@ -37,6 +37,16 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Error Highlighting** - Compiler errors shown directly in the editor
 - **Audio Safety** - Built-in limiter protects your speakers
 
+### Advanced Graphics
+- **PBR Materials** - Physically-based rendering with metallic-roughness workflow and IBL
+- **HDR Environment Maps** - Load `.hdr` files for skyboxes and image-based lighting
+- **Environment Reflections** - Real-time reflective surfaces using equirectangular maps
+- **Procedural Skybox** - Dynamic day/night cycle with sun, moon, and atmospheric colors
+- **Automatic LOD System** - Level of detail with quadric error mesh simplification
+- **Adaptive Quality** - Auto-adjusts settings (resolution, shadows, effects) based on FPS
+- **Quality Presets** - Low, Medium, High, Ultra with configurable target FPS
+- **OBJ Mesh Loading** - Import 3D models from `.obj` files with normals and UVs
+
 ### Recording & Export
 - **Video Recording** - Record WebGL canvas with synchronized audio to WebM
 - **Screenshot Capture** - Export frames as PNG, JPEG, or WebP
@@ -211,6 +221,7 @@ Core framework examples demonstrating fundamental concepts:
 | **Scene System** | SynthVoice, PolySynth, DynamicScene |
 | **Simulation** | Particle Systems, Physics, Agent-Based (Flocking, Wave Equation, Spring Mesh) |
 | **Advanced** | Particles, Generative, Multi-File Projects |
+| **Studio** | OBJ Loading, HDR Skybox, Procedural Skybox, Environment Picker, PBR Materials, Reflective Spheres, LOD, Quality System |
 
 ### AlloLib Playground Examples
 
@@ -333,6 +344,40 @@ cd desktop
 chmod +x scripts/build-local.sh
 ./scripts/build-local.sh --target all
 ```
+
+## Native Compatibility
+
+AlloLib Studio Online code can be exported for native AlloLib builds using the included compatibility layer.
+
+### Features with Native Equivalents
+
+| Web Header | Native Header | Notes |
+|------------|---------------|-------|
+| `al_WebOBJ.hpp` | `native_compat/al_NativeOBJ.hpp` | Same API |
+| `al_WebHDR.hpp` | `native_compat/al_NativeHDR.hpp` | Uses stb_image.h |
+| `al_WebEnvironment.hpp` | `native_compat/al_NativeEnvironment.hpp` | Same API |
+| `al_WebLOD.hpp` | `native_compat/al_NativeLOD.hpp` | Same API |
+| `al_WebQuality.hpp` | `native_compat/al_NativeQuality.hpp` | Same API |
+
+### Using Native Compat
+
+1. Copy `allolib-wasm/include/native_compat/` to your project
+2. Add [stb_image.h](https://github.com/nothings/stb) to your include path
+3. In **one** `.cpp` file, add before includes:
+   ```cpp
+   #define STB_IMAGE_IMPLEMENTATION
+   ```
+4. Include the master header or individual headers:
+   ```cpp
+   #include "native_compat/al_StudioCompat.hpp"
+   ```
+
+The transpiler automatically converts web headers to native compat headers when exporting.
+
+### Not Yet Ported
+
+- **WebPBR** - PBR shaders need manual adaptation from WebGL2 to desktop OpenGL
+- **WebFont** - Uses browser canvas; consider FreeType for native
 
 ## Technical Details
 
