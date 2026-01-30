@@ -166,6 +166,13 @@ void WebApp::tick(double dt) {
     // Call user's onAnimate
     onAnimate(dt);
 
+    // Update navigation direction vectors (needed for uf(), ur(), uu())
+    mNav.updateDirectionVectors();
+
+    // Update auto-LOD camera position
+    mAutoLOD.setCameraPos(mNav.pos());
+    mAutoLOD.resetFrameStats();
+
     // Render graphics
     if (mGraphics) {
         // Set up view matrix from navigation pose

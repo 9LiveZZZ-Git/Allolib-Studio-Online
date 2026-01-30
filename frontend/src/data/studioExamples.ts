@@ -1722,24 +1722,25 @@ int main() {
   {
     id: 'studio-mesh-lod-demo',
     title: 'Automatic LOD Demo',
-    description: 'Automatic mesh simplification based on distance',
+    description: 'Automatic mesh simplification - just enable and draw!',
     category: 'studio-meshes',
     subcategory: 'procedural',
     code: `/**
  * Automatic LOD Demo
  *
- * Demonstrates automatic Level of Detail generation
- * and distance-based mesh simplification with HDR lighting.
+ * Demonstrates the automatic Level of Detail system.
+ * Simply enable autoLOD() and use drawLOD() - the system
+ * automatically generates simplified meshes and selects
+ * the right one based on camera distance!
  *
  * Controls:
  *   Arrow keys: Orbit camera
- *   W/S: Zoom in/out (changes LOD)
+ *   W/S: Zoom in/out (watch LOD change!)
  *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebOBJ.hpp"
-#include "al_WebLOD.hpp"
 #include "al_WebEnvironment.hpp"
 
 using namespace al;
@@ -1748,34 +1749,30 @@ class LODDemo : public WebApp {
 public:
     WebOBJ loader;
     WebEnvironment env;
-    Mesh originalMesh;
+    Mesh bunnyMesh;
     Mesh floor;
-    LODMesh lodMesh;
     double angle = 0;
     float camAngleX = 0.5f, camAngleY = 0.3f;
     float camDist = 5.0f;
     bool meshLoaded = false;
 
     void onCreate() override {
+        // Enable automatic LOD - that's all you need!
+        enableAutoLOD(4);  // 4 LOD levels
+        autoLOD().setDistances({5, 15, 30, 60});
+
         // Load HDR environment
         env.load("/assets/environments/forest_slope_1k.hdr");
         env.exposure(1.4f);
 
-        // Load mesh and generate LOD
+        // Load mesh - no manual LOD generation needed!
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
             if (success) {
-                originalMesh = loader.mesh();
-                originalMesh.fitToSphere(1.0);
-
-                // Generate 4 LOD levels
-                lodMesh.generate(originalMesh, 4, 0.5);
-                lodMesh.setDistances({5, 15, 30, 60});
-
+                bunnyMesh = loader.mesh();
+                bunnyMesh.fitToSphere(1.0);
+                bunnyMesh.generateNormals();
                 meshLoaded = true;
-                printf("LOD generated: %d levels\\n", lodMesh.numLevels());
-                for (int i = 0; i < lodMesh.numLevels(); i++) {
-                    printf("  LOD %d: %d triangles\\n", i, lodMesh.triangleCount(i));
-                }
+                printf("Mesh loaded - Auto-LOD will generate levels on first draw\\n");
             }
         });
 
@@ -1806,23 +1803,22 @@ public:
         g.depthTesting(true);
 
         if (meshLoaded) {
-            // Get LOD based on camera distance
-            int lodIndex = lodMesh.getLODIndex(camDist);
-
-            // Draw mesh with environment reflections
+            // Draw with automatic LOD - just use drawLOD()!
             env.beginReflect(g, nav().pos(), 0.6f);
             g.pushMatrix();
             g.translate(0, 0.3, 0);
             g.rotate(angle, 0, 1, 0);
-            g.draw(lodMesh.level(lodIndex));
+            drawLOD(g, bunnyMesh);  // Automatic LOD selection!
             g.popMatrix();
             env.endReflect();
 
-            printf("\\rDist: %.1f  LOD: %d  Tris: %d    ",
-                   camDist, lodIndex, lodMesh.triangleCount(lodIndex));
+            // Show current LOD level
+            int level = autoLOD().getLevelForDistance(camDist);
+            printf("\\rDist: %.1f  LOD: %d  Cache: %zu meshes    ",
+                   camDist, level, autoLOD().cacheSize());
         }
 
-        // Floor
+        // Floor (too simple for LOD, use regular draw)
         g.lighting(true);
         g.pushMatrix();
         g.translate(0, -0.5, 0);
@@ -1857,15 +1853,16 @@ int main() {
   },
   {
     id: 'studio-mesh-lod-group',
-    title: 'LOD Group (Many Objects)',
-    description: 'Efficient rendering of many objects with LOD',
+    title: 'Auto-LOD Many Objects',
+    description: 'Automatic LOD for hundreds of objects',
     category: 'studio-meshes',
     subcategory: 'procedural',
     code: `/**
- * LOD Group Demo
+ * Auto-LOD Many Objects
  *
- * Demonstrates rendering many objects with automatic
- * LOD selection for each based on camera distance.
+ * Shows automatic LOD working seamlessly with
+ * many objects. Each mesh automatically gets its
+ * own LOD based on distance - no manual management!
  *
  * Controls:
  *   Arrow keys: Orbit camera
@@ -1874,41 +1871,40 @@ int main() {
  */
 
 #include "al_WebApp.hpp"
-#include "al_WebLOD.hpp"
 #include "al_WebEnvironment.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include <vector>
 
 using namespace al;
 
-class LODGroupDemo : public WebApp {
+class AutoLODManyDemo : public WebApp {
 public:
-    LODMesh lodSphere;
-    LODGroup group;
     WebEnvironment env;
-    Mesh originalSphere;
+    Mesh sphere;
     Mesh floor;
+    std::vector<Vec3f> positions;
     double time = 0;
-    int totalTriangles = 0;
     float camAngleX = 0.3f, camAngleY = 0.4f;
     float camDist = 20.0f;
 
     void onCreate() override {
+        // Enable automatic LOD - works for all meshes!
+        enableAutoLOD(4);
+        autoLOD().setDistances({8, 20, 40, 100});
+        autoLOD().enableStats(true);  // Track triangle counts
+
         // Load HDR environment
         env.load("/assets/environments/kloppenheim_02_puresky_1k.hdr");
         env.exposure(1.2f);
 
-        // Create sphere and generate LOD
-        addSphere(originalSphere, 0.4, 32, 32);
-        originalSphere.generateNormals();
-        lodSphere.generate(originalSphere, 4);
-        lodSphere.setDistances({8, 20, 40, 100});
+        // Create a high-poly sphere (auto-LOD will simplify as needed)
+        addSphere(sphere, 0.4, 32, 32);
+        sphere.generateNormals();
 
-        // Create a grid of objects
+        // Create grid of object positions
         for (int x = -5; x <= 5; x++) {
             for (int z = -5; z <= 5; z++) {
-                Vec3f pos(x * 2.5f, 0.4f, z * 2.5f);
-                group.add(&lodSphere, pos, 1.0f);
+                positions.push_back(Vec3f(x * 2.5f, 0.4f, z * 2.5f));
             }
         }
 
@@ -1916,7 +1912,7 @@ public:
         addSurface(floor, 40, 40, 20, 20);
         floor.generateNormals();
 
-        printf("Created %d objects with LOD\\n", (int)group.objectCount());
+        printf("Created %zu objects with automatic LOD\\n", positions.size());
         updateCamera();
     }
 
@@ -1930,10 +1926,6 @@ public:
 
     void onAnimate(double dt) override {
         time += dt;
-
-        // Update LOD based on camera
-        group.update(nav().pos());
-        totalTriangles = group.totalTriangles();
     }
 
     void onDraw(Graphics& g) override {
@@ -1943,9 +1935,14 @@ public:
         env.drawSkybox(g);
         g.depthTesting(true);
 
-        // Draw spheres with reflections
+        // Draw all spheres with automatic LOD!
         env.beginReflect(g, nav().pos(), 0.7f);
-        group.draw(g);
+        for (const auto& pos : positions) {
+            g.pushMatrix();
+            g.translate(pos);
+            drawLOD(g, sphere);  // Auto-LOD selects best detail for each!
+            g.popMatrix();
+        }
         env.endReflect();
 
         // Floor
@@ -1956,7 +1953,8 @@ public:
         g.draw(floor);
         g.popMatrix();
 
-        printf("\\rTotal triangles: %d    ", totalTriangles);
+        printf("\\rObjects: %zu  Triangles: %d    ",
+               positions.size(), autoLOD().frameTriangles());
     }
 
     bool onKeyDown(Keyboard const& k) override {
@@ -1976,7 +1974,7 @@ public:
 };
 
 int main() {
-    LODGroupDemo app;
+    AutoLODManyDemo app;
     app.start();
     return 0;
 }
@@ -1984,78 +1982,74 @@ int main() {
   },
   {
     id: 'studio-mesh-lod-controller',
-    title: 'Unified LOD Controller',
-    description: 'Combined mesh, texture, and shader LOD management',
+    title: 'Auto-LOD with PBR',
+    description: 'Automatic LOD combined with PBR materials',
     category: 'studio-meshes',
     subcategory: 'procedural',
     code: `/**
- * Unified LOD Controller Demo
+ * Auto-LOD with PBR Materials
  *
- * Demonstrates the LODController class that manages
- * mesh, texture, and shader LOD together for optimal
- * performance with distance-based quality scaling.
+ * Shows how automatic LOD integrates seamlessly with
+ * PBR materials. The mesh LOD is handled automatically
+ * while you focus on the visual quality!
  *
- * Press +/- to change camera distance and see LOD changes.
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out (watch LOD change!)
+ *   +/-: Adjust exposure
+ *   B: Cycle LOD bias
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebOBJ.hpp"
-#include "al_WebLOD.hpp"
 #include "al_WebPBR.hpp"
 
 using namespace al;
 
-class LODControllerDemo : public WebApp {
+class AutoLODwithPBR : public WebApp {
 public:
     WebOBJ loader;
-    LODController lod;
     WebPBR pbr;
-    Mesh originalMesh;
+    Mesh bunnyMesh;
     double angle = 0;
-    float cameraDistance = 5;
+    float camAngleX = 0.5f, camAngleY = 0.3f;
+    float camDist = 8.0f;
     bool meshLoaded = false;
 
     void onCreate() override {
+        // Enable automatic LOD - integrates with any shader!
+        enableAutoLOD(4);
+        autoLOD().setDistances({8, 20, 40, 80});
+        autoLOD().enableStats(true);
+
         // Load high-poly mesh
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
             if (success) {
-                originalMesh = loader.mesh();
-                originalMesh.fitToSphere(1.0);
-
-                // Setup mesh LOD - 4 levels of detail
-                lod.meshLOD().generate(originalMesh, 4, 0.5);
-                lod.meshLOD().setDistances({8, 20, 40, 80});
-
-                // Setup texture LOD - 4 resolution levels
-                lod.textureLOD().setLevels({2048, 1024, 512, 256});
-                lod.textureLOD().setDistances({10, 25, 50, 100});
-
-                // Setup shader LOD - 4 complexity levels
-                lod.shaderLOD().setLevels(4);
-                lod.shaderLOD().setDistances({15, 35, 60, 100});
-
+                bunnyMesh = loader.mesh();
+                bunnyMesh.fitToSphere(1.0);
+                bunnyMesh.generateNormals();
                 meshLoaded = true;
-
-                printf("LOD Controller initialized:\\n");
-                printf("  Mesh levels: %d\\n", lod.meshLOD().numLevels());
-                printf("  Texture levels: %d\\n", lod.textureLOD().numLevels());
-                printf("  Shader levels: %d\\n", lod.shaderLOD().numLevels());
+                printf("Mesh loaded! Auto-LOD will handle simplification\\n");
             }
         });
 
-        // Load environment for PBR
+        // Load PBR environment
         pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+        pbr.exposure(1.3f);
 
-        nav().pos(0, 0, cameraDistance);
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 0.3f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0.3, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
         angle += dt * 20.0;
-
-        if (meshLoaded) {
-            // Update all LOD selections based on camera distance
-            lod.update(cameraDistance);
-        }
     }
 
     void onDraw(Graphics& g) override {
@@ -2064,7 +2058,6 @@ public:
         if (!meshLoaded) {
             // Loading indicator
             g.lighting(true);
-            g.depthTesting(true);
             g.pushMatrix();
             g.rotate(angle * 2, 1, 1, 0);
             g.color(0.5, 0.5, 0.6);
@@ -2078,65 +2071,57 @@ public:
         pbr.drawSkybox(g);
         g.depthTesting(true);
 
-        int shaderLevel = lod.currentShaderLevel();
+        // Draw with PBR - LOD is automatic!
+        pbr.begin(g, nav().pos());
+        PBRMaterial mat = PBRMaterial::Gold();
+        pbr.material(mat);
+        g.pushMatrix();
+        g.translate(0, 0.3, 0);
+        g.rotate(angle, 0, 1, 0);
+        drawLOD(g, bunnyMesh);  // Automatic LOD + PBR!
+        g.popMatrix();
+        pbr.end();
 
-        if (shaderLevel == 0) {
-            // Full PBR with reflections
-            pbr.begin(g, nav().pos());
-            PBRMaterial mat = PBRMaterial::Gold();
-            pbr.material(mat);
-            g.pushMatrix();
-            g.rotate(angle, 0, 1, 0);
-            g.draw(lod.currentMesh());
-            g.popMatrix();
-            pbr.end();
-        } else if (shaderLevel == 1) {
-            // Standard PBR
-            pbr.begin(g, nav().pos());
-            PBRMaterial mat;
-            mat.albedo = Vec3f(1.0, 0.84, 0.0);
-            mat.metallic = 0.9;
-            mat.roughness = 0.3;
-            pbr.material(mat);
-            g.pushMatrix();
-            g.rotate(angle, 0, 1, 0);
-            g.draw(lod.currentMesh());
-            g.popMatrix();
-            pbr.end();
-        } else {
-            // Simple lighting
-            g.lighting(true);
-            g.pushMatrix();
-            g.rotate(angle, 0, 1, 0);
-            g.color(shaderLevel == 2 ? 0.9 : 0.6, shaderLevel == 2 ? 0.75 : 0.5, 0.3);
-            g.draw(lod.currentMesh());
-            g.popMatrix();
-        }
+        // Floor
+        g.lighting(true);
+        g.pushMatrix();
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.15, 0.15, 0.18);
+        Mesh floor;
+        addSurface(floor, 20, 20, 10, 10);
+        g.draw(floor);
+        g.popMatrix();
 
-        printf("\\rDist: %.1f | Mesh: %d | Tex: %dpx | Shader: %d    ",
-               cameraDistance, lod.currentMeshLevel(),
-               lod.currentTextureResolution(), lod.currentShaderLevel());
+        int level = autoLOD().getLevelForDistance(camDist);
+        printf("\\rDist: %.1f | LOD: %d | Tris: %d    ",
+               camDist, level, autoLOD().frameTriangles());
     }
 
     bool onKeyDown(Keyboard const& k) override {
-        if (k.key() == '=' || k.key() == '+') {
-            cameraDistance = std::max(2.0f, cameraDistance - 3.0f);
-            nav().pos(0, 0, cameraDistance);
-        } else if (k.key() == '-') {
-            cameraDistance = std::min(150.0f, cameraDistance + 3.0f);
-            nav().pos(0, 0, cameraDistance);
-        } else if (k.key() == 'b') {
-            float bias = lod.meshLOD().bias();
-            bias = (bias >= 2.0f) ? 0.5f : bias + 0.5f;
-            lod.bias(bias);
-            printf("\\nLOD Bias: %.1f\\n", bias);
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.2f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-0.1f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 2.0f); break;
+            case 's': case 'S':   camDist = std::min(100.0f, camDist + 3.0f); break;
+            case '+': case '=':   pbr.exposure(pbr.exposure() + 0.2f); break;
+            case '-':             pbr.exposure(std::max(0.3f, pbr.exposure() - 0.2f)); break;
+            case 'b': case 'B': {
+                float bias = autoLOD().bias();
+                bias = (bias >= 2.0f) ? 0.5f : bias + 0.5f;
+                autoLOD().setBias(bias);
+                printf("\\nLOD Bias: %.1f\\n", bias);
+            } break;
         }
+        updateCamera();
         return true;
     }
 };
 
 int main() {
-    LODControllerDemo app;
+    AutoLODwithPBR app;
     app.start();
     return 0;
 }

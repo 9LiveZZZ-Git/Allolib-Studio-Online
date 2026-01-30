@@ -43,6 +43,9 @@ export const categories: GlossaryCategory[] = [
 
   // Platform-specific
   { id: 'web', title: 'Web Platform', description: 'AlloLib Online: web alternatives for native features and WASM utilities' },
+
+  // Studio Extended Features
+  { id: 'studio', title: 'Studio Features', description: 'Extended features: OBJ loading, HDR environments, PBR materials, LOD, quality management' },
 ]
 
 export const glossary: GlossaryEntry[] = [
@@ -3261,6 +3264,389 @@ ControlGUI gui;  // WebControlGUI on web, real ControlGUI on native`,
     syntax: 'using ControlGUI = WebControlGUI;  // automatic in al_playground_compat.hpp',
     platforms: ['web'],
     relatedTerms: ['ControlGUI', 'Parameter', 'al_playground_compat.hpp'],
+  },
+
+  // ============================================================================
+  // STUDIO FEATURES - EXTENDED CAPABILITIES
+  // ============================================================================
+  {
+    term: 'WebOBJ',
+    category: 'studio',
+    definition: 'OBJ mesh file loader. Parses Wavefront OBJ files and creates AlloLib Mesh objects. Supports vertices, normals, texture coordinates, and triangulated faces.',
+    syntax: 'WebOBJ loader;\nloader.load("/path/to/mesh.obj");',
+    example: `WebOBJ bunny;
+
+void onCreate() override {
+    bunny.load("/assets/meshes/bunny.obj");
+}
+
+void onDraw(Graphics& g) override {
+    if (bunny.ready()) {
+        g.draw(bunny.mesh());
+    }
+}`,
+    platforms: ['both'],
+    relatedTerms: ['Mesh', 'LODMesh', 'WebEnvironment'],
+  },
+  {
+    term: 'WebHDR',
+    category: 'studio',
+    definition: 'HDR (High Dynamic Range) image loader. Loads .hdr files for environment maps and image-based lighting. Uses RGBE format parsing.',
+    syntax: 'WebHDR hdr;\nhdr.load("/path/to/environment.hdr");',
+    example: `WebHDR hdr;
+
+void onCreate() override {
+    hdr.load("/assets/environments/studio.hdr");
+}
+
+void onAnimate(double dt) override {
+    if (hdr.ready()) {
+        int w = hdr.width();
+        int h = hdr.height();
+        const float* pixels = hdr.pixels();
+    }
+}`,
+    platforms: ['both'],
+    relatedTerms: ['WebEnvironment', 'WebPBR'],
+  },
+  {
+    term: 'WebEnvironment',
+    category: 'studio',
+    definition: 'Environment map system providing skybox rendering and environment reflections. Works with equirectangular HDR images.',
+    syntax: 'WebEnvironment env;\nenv.load("/path/to/environment.hdr");',
+    example: `WebEnvironment env;
+
+void onCreate() override {
+    env.load("/assets/environments/studio.hdr");
+}
+
+void onDraw(Graphics& g) override {
+    env.drawSkybox(g);  // Draw background
+
+    // Draw reflective objects
+    env.beginReflect(g, nav().pos(), 0.8);
+    g.draw(sphereMesh);
+    env.endReflect();
+}`,
+    platforms: ['both'],
+    relatedTerms: ['WebHDR', 'WebPBR', 'drawSkybox'],
+  },
+  {
+    term: 'drawSkybox()',
+    category: 'studio',
+    definition: 'Draws the environment map as a background skybox. Call at the beginning of onDraw for proper depth ordering.',
+    syntax: 'env.drawSkybox(g);',
+    platforms: ['both'],
+    relatedTerms: ['WebEnvironment', 'beginReflect'],
+  },
+  {
+    term: 'beginReflect()',
+    category: 'studio',
+    definition: 'Starts drawing reflective objects. Sets up environment reflection shader.',
+    syntax: 'env.beginReflect(g, cameraPos, reflectivity);',
+    platforms: ['both'],
+    relatedTerms: ['WebEnvironment', 'endReflect'],
+  },
+  {
+    term: 'WebPBR',
+    category: 'studio',
+    definition: 'Physically-Based Rendering system with metallic-roughness workflow. Supports IBL (Image-Based Lighting) using environment maps.',
+    syntax: 'WebPBR pbr;',
+    example: `WebPBR pbr;
+PBRMaterial gold = PBRMaterial::Gold();
+
+void onCreate() override {
+    pbr.loadEnvironment("/assets/environments/studio.hdr");
+}
+
+void onDraw(Graphics& g) override {
+    pbr.drawSkybox(g);
+    pbr.begin(g, nav().pos());
+    pbr.material(gold);
+    g.draw(sphereMesh);
+    pbr.end();
+}`,
+    platforms: ['web'],
+    relatedTerms: ['PBRMaterial', 'WebEnvironment', 'WebHDR'],
+  },
+  {
+    term: 'PBRMaterial',
+    category: 'studio',
+    definition: 'Material properties for physically-based rendering. Includes albedo, metallic, roughness, ambient occlusion, and emission. Has built-in presets for common materials.',
+    syntax: 'PBRMaterial mat;\nmat.albedo = Vec3f(1, 0, 0);  // Red\nmat.metallic = 1.0f;\nmat.roughness = 0.3f;',
+    example: `// Built-in presets
+PBRMaterial gold = PBRMaterial::Gold();
+PBRMaterial silver = PBRMaterial::Silver();
+PBRMaterial copper = PBRMaterial::Copper();
+PBRMaterial iron = PBRMaterial::Iron();
+PBRMaterial plastic = PBRMaterial::Plastic(Color::Red);
+PBRMaterial rubber = PBRMaterial::Rubber(Color::Black);`,
+    platforms: ['web'],
+    relatedTerms: ['WebPBR', 'metallic', 'roughness'],
+  },
+  {
+    term: 'enableAutoLOD',
+    category: 'studio',
+    definition: 'Enables automatic Level of Detail for all meshes. Once enabled, use drawLOD() to draw meshes with automatic simplification based on camera distance.',
+    syntax: 'enableAutoLOD(4);  // 4 LOD levels\nautoLOD().setDistances({10, 25, 50, 100});',
+    example: `void onCreate() override {
+    // Enable automatic LOD - that's it!
+    enableAutoLOD(4);
+    autoLOD().setDistances({10, 25, 50, 100});
+}
+
+void onDraw(Graphics& g) override {
+    // Just use drawLOD() instead of g.draw()
+    drawLOD(g, myMesh);  // LOD happens automatically!
+}`,
+    platforms: ['web'],
+    relatedTerms: ['autoLOD', 'drawLOD', 'LODMesh'],
+  },
+  {
+    term: 'autoLOD',
+    category: 'studio',
+    definition: 'Accessor for the automatic LOD manager. Use to configure LOD settings like distance thresholds, bias, and statistics.',
+    syntax: 'autoLOD().setDistances({10, 25, 50, 100});\nautoLOD().setBias(1.5);',
+    example: `void onCreate() override {
+    enableAutoLOD(4);
+    autoLOD().setDistances({5, 15, 30, 60});
+    autoLOD().setBias(1.2);       // Higher = use simpler LOD sooner
+    autoLOD().enableStats(true);  // Track triangle counts
+}
+
+void onDraw(Graphics& g) override {
+    drawLOD(g, mesh);
+    printf("Triangles: %d\\n", autoLOD().frameTriangles());
+}`,
+    platforms: ['web'],
+    relatedTerms: ['enableAutoLOD', 'drawLOD', 'LODMesh'],
+  },
+  {
+    term: 'drawLOD',
+    category: 'studio',
+    definition: 'Draws a mesh with automatic LOD selection. The system selects the appropriate detail level based on camera distance. Must call enableAutoLOD() first.',
+    syntax: 'drawLOD(g, mesh);',
+    example: `void onCreate() override {
+    enableAutoLOD(4);
+}
+
+void onDraw(Graphics& g) override {
+    g.pushMatrix();
+    g.translate(0, 1, 0);
+    drawLOD(g, myHighPolyMesh);  // Auto-simplifies based on distance
+    g.popMatrix();
+}`,
+    platforms: ['web'],
+    relatedTerms: ['enableAutoLOD', 'autoLOD', 'LODMesh'],
+  },
+  {
+    term: 'LODMesh',
+    category: 'studio',
+    definition: 'Manual Level of Detail mesh system. For most cases, use enableAutoLOD() and drawLOD() instead for automatic LOD. LODMesh is useful for advanced control.',
+    syntax: 'LODMesh lod;\nlod.generate(mesh, 4);  // 4 LOD levels',
+    example: `// For simple cases, use automatic LOD instead:
+// enableAutoLOD(4);
+// drawLOD(g, mesh);
+
+// LODMesh for manual control:
+LODMesh lod;
+
+void onCreate() override {
+    lod.generate(mesh, 4);
+    lod.setDistances({5, 15, 30, 60});
+}
+
+void onDraw(Graphics& g) override {
+    float dist = (nav().pos() - objectPos).mag();
+    g.draw(lod.selectByDistance(dist));
+}`,
+    platforms: ['both'],
+    relatedTerms: ['enableAutoLOD', 'drawLOD', 'autoLOD', 'LODGroup'],
+  },
+  {
+    term: 'LODGroup',
+    category: 'studio',
+    definition: 'Manages Level of Detail for multiple objects. Updates all LOD selections based on camera position and draws all objects efficiently.',
+    syntax: 'LODGroup group;\ngroup.add(&lodMesh, position, scale);',
+    example: `LODGroup group;
+
+void onCreate() override {
+    for (int i = 0; i < 100; i++) {
+        group.add(&lodMesh, randomPosition(), 1.0f);
+    }
+}
+
+void onAnimate(double dt) override {
+    group.update(nav().pos());  // Update all LOD selections
+}
+
+void onDraw(Graphics& g) override {
+    group.draw(g);  // Draw all objects with appropriate LOD
+}`,
+    platforms: ['both'],
+    relatedTerms: ['LODMesh', 'QualityManager'],
+  },
+  {
+    term: 'MeshSimplifier',
+    category: 'studio',
+    definition: 'Mesh decimation using Quadric Error Metrics. Reduces polygon count while preserving shape. Used internally by LODMesh.',
+    syntax: 'MeshSimplifier::simplify(input, output, 0.5);  // 50% reduction',
+    platforms: ['both'],
+    relatedTerms: ['LODMesh', 'QuadricErrorMetric'],
+  },
+  {
+    term: 'TextureLOD',
+    category: 'studio',
+    definition: 'Distance-based texture resolution switching. Automatically selects appropriate texture resolution based on camera distance to reduce memory bandwidth and improve performance.',
+    syntax: 'TextureLOD texLOD;\ntexLOD.setLevels({2048, 1024, 512, 256});\ntexLOD.setDistances({5, 15, 30, 60});',
+    example: `TextureLOD texLOD;
+Texture textures[4];  // Different resolutions
+
+void onCreate() override {
+    texLOD.setLevels({2048, 1024, 512, 256});
+    texLOD.setDistances({10, 25, 50, 100});
+}
+
+void onDraw(Graphics& g) override {
+    float distance = (nav().pos() - objectPos).mag();
+    int level = texLOD.selectLevel(distance);
+    textures[level].bind();
+    g.draw(mesh);
+}`,
+    platforms: ['both'],
+    relatedTerms: ['LODMesh', 'ShaderLOD', 'LODController'],
+  },
+  {
+    term: 'ShaderLOD',
+    category: 'studio',
+    definition: 'Distance-based shader complexity switching. Selects simpler shaders for distant objects to improve performance while maintaining quality for close objects.',
+    syntax: 'ShaderLOD shaderLOD;\nshaderLOD.setLevels(4);\nshaderLOD.setDistances({10, 30, 60, 100});',
+    example: `ShaderLOD shaderLOD;
+
+void onCreate() override {
+    shaderLOD.setLevels(4);  // 4 complexity levels
+    // Level 0: Full PBR with IBL, normal maps, reflections
+    // Level 1: Standard PBR, no reflections
+    // Level 2: Simple diffuse/specular
+    // Level 3: Unlit/vertex lighting
+}
+
+void onDraw(Graphics& g) override {
+    int level = shaderLOD.selectByDistance(distance);
+    if (shaderLOD.normalMapping(level)) useNormalMap();
+    if (shaderLOD.reflections(level)) enableReflections();
+}`,
+    platforms: ['both'],
+    relatedTerms: ['LODMesh', 'TextureLOD', 'LODController', 'QualityManager'],
+  },
+  {
+    term: 'LODController',
+    category: 'studio',
+    definition: 'Unified controller for mesh, texture, and shader LOD. Manages all LOD aspects for an object in one place, simplifying distance-based quality management.',
+    syntax: 'LODController lod;\nlod.meshLOD().generate(mesh, 4);\nlod.update(distance);',
+    example: `LODController lod;
+
+void onCreate() override {
+    lod.meshLOD().generate(highPolyMesh, 4);
+    lod.textureLOD().setLevels({2048, 1024, 512, 256});
+    lod.shaderLOD().setLevels(4);
+}
+
+void onDraw(Graphics& g) override {
+    float distance = (nav().pos() - objectPos).mag();
+    lod.update(distance);
+
+    // All selections made automatically
+    g.draw(lod.currentMesh());
+    textures[lod.currentTextureLevel()].bind();
+
+    if (lod.currentNormalMapping()) enableNormalMaps();
+    if (lod.currentReflections()) enableReflections();
+}`,
+    platforms: ['both'],
+    relatedTerms: ['LODMesh', 'TextureLOD', 'ShaderLOD', 'QualityManager'],
+  },
+  {
+    term: 'QualityManager',
+    category: 'studio',
+    definition: 'Adaptive quality system that monitors FPS and automatically adjusts rendering settings. Similar to Unreal Engine\'s scalability system.',
+    syntax: 'QualityManager quality;\nquality.setPreset(QualityPreset::High);',
+    example: `QualityManager quality;
+
+void onCreate() override {
+    quality.setTargetFPS(60);
+    quality.setPreset(QualityPreset::Auto);  // Auto-adjust
+}
+
+void onAnimate(double dt) override {
+    quality.update(dt);  // Monitor FPS and adjust
+
+    // Use quality settings
+    lodMesh.bias(quality.lodBias());
+}
+
+void onDraw(Graphics& g) override {
+    if (quality.shadowsEnabled()) {
+        // Draw shadows
+    }
+}`,
+    platforms: ['both'],
+    relatedTerms: ['QualityPreset', 'QualitySettings', 'LODMesh'],
+  },
+  {
+    term: 'QualityPreset',
+    category: 'studio',
+    definition: 'Predefined quality levels: Auto, Low, Medium, High, Ultra. Auto mode dynamically adjusts settings based on FPS.',
+    syntax: 'quality.setPreset(QualityPreset::High);',
+    example: `// Preset values
+QualityPreset::Auto    // Starts at High, adapts based on FPS
+QualityPreset::Low     // 0.5x resolution, no shadows/AO
+QualityPreset::Medium  // 0.75x resolution, basic effects
+QualityPreset::High    // 1.0x resolution, all effects
+QualityPreset::Ultra   // Max quality, 2K+ shadows`,
+    platforms: ['both'],
+    relatedTerms: ['QualityManager', 'QualitySettings'],
+  },
+  {
+    term: 'QualitySettings',
+    category: 'studio',
+    definition: 'Individual quality parameters including resolution scale, LOD bias, shadow map size, and effect toggles.',
+    syntax: 'QualitySettings& s = quality.settings();',
+    example: `const QualitySettings& s = quality.settings();
+// Resolution
+float scale = s.resolutionScale;  // 0.5 - 1.0
+float lodBias = s.lodBias;        // Higher = lower detail
+
+// Effects
+bool shadows = s.shadowsEnabled;
+bool reflections = s.reflectionsEnabled;
+bool bloom = s.bloomEnabled;
+bool ao = s.ambientOcclusion;
+
+// Limits
+int maxLights = s.maxLights;
+int maxParticles = s.maxParticles;`,
+    platforms: ['both'],
+    relatedTerms: ['QualityManager', 'QualityPreset'],
+  },
+  {
+    term: 'native_compat',
+    category: 'studio',
+    definition: 'Native compatibility layer providing desktop equivalents of AlloLib Studio web headers. Allows Studio code to run on native AlloLib with identical APIs.',
+    syntax: '#include "native_compat/al_StudioCompat.hpp"',
+    example: `// Include all native compat headers
+#include "native_compat/al_StudioCompat.hpp"
+
+// Or include individually:
+#include "native_compat/al_NativeOBJ.hpp"
+#include "native_compat/al_NativeHDR.hpp"
+#include "native_compat/al_NativeEnvironment.hpp"
+#include "native_compat/al_NativeLOD.hpp"
+#include "native_compat/al_NativeQuality.hpp"
+
+// Types are aliased: WebOBJ = NativeOBJ, etc.`,
+    platforms: ['native'],
+    relatedTerms: ['WebOBJ', 'WebHDR', 'WebEnvironment'],
   },
 ]
 

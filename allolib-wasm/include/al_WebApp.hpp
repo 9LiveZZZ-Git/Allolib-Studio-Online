@@ -11,10 +11,20 @@
  * - Web Audio API integration
  * - Keyboard/mouse input handling
  * - Main loop management
+ * - Automatic LOD (level of detail) mesh simplification
  *
  * API compatible with native al::App where possible:
  * - nav(), pose(), lens(), view() for camera control
  * - configureAudio() aliased to configureWebAudio()
+ *
+ * Automatic LOD:
+ *   // Enable in onCreate():
+ *   autoLOD().enable();
+ *   autoLOD().setLevels(4);
+ *   autoLOD().setDistances({10, 25, 50, 100});
+ *
+ *   // In onDraw, just use drawLOD() instead of g.draw():
+ *   drawLOD(g, myMesh);  // Automatically uses appropriate LOD level
  *
  * Unlike the desktop App class, this does not include OSC networking
  * or other features that don't work in the browser.
@@ -27,9 +37,11 @@
 #include "al/graphics/al_Viewpoint.hpp"
 #include "al/io/al_AudioIOData.hpp"
 #include "al/io/al_Window.hpp"
+#include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
 #include "al/math/al_Matrix4.hpp"
 #include "al/spatial/al_Pose.hpp"
+#include "al_WebAutoLOD.hpp"
 
 #include <vector>
 #include <memory>
@@ -138,12 +150,12 @@ public:
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
 
     /// Get/set the navigation pose (camera position) - compatible with al::App
-    Pose& nav() { return mNav; }
-    const Pose& nav() const { return mNav; }
+    Nav& nav() { return mNav; }
+    const Nav& nav() const { return mNav; }
 
     /// Get/set the camera pose - alias for nav() for al::App compatibility
-    Pose& pose() { return mNav; }
-    const Pose& pose() const { return mNav; }
+    Nav& pose() { return mNav; }
+    const Nav& pose() const { return mNav; }
 
     /// Get/set the lens (projection settings) - al::App compatibility
     Lens& lens() { return mViewpoint.lens(); }
@@ -163,6 +175,36 @@ public:
     /// Alias for configureWebAudio - al::App compatibility
     void configureAudio(int sampleRate, int bufferSize, int outputChannels, int inputChannels = 0) {
         configureWebAudio(sampleRate, bufferSize, outputChannels, inputChannels);
+    }
+
+    // =========================================================================
+    // Automatic LOD (Level of Detail)
+    // =========================================================================
+
+    /// Get the auto-LOD manager for configuration
+    AutoLODManager& autoLOD() { return mAutoLOD; }
+    const AutoLODManager& autoLOD() const { return mAutoLOD; }
+
+    /// Draw a mesh with automatic LOD selection
+    /// Uses camera distance to select appropriate detail level
+    void drawLOD(Graphics& g, const Mesh& mesh) {
+        if (mAutoLOD.enabled()) {
+            const Mesh& selected = mAutoLOD.selectMesh(mesh, g.modelMatrix());
+            g.draw(selected);
+        } else {
+            g.draw(mesh);
+        }
+    }
+
+    /// Convenience: Enable auto-LOD with default settings
+    void enableAutoLOD(int levels = 4) {
+        mAutoLOD.enable();
+        mAutoLOD.setLevels(levels);
+    }
+
+    /// Convenience: Disable auto-LOD
+    void disableAutoLOD() {
+        mAutoLOD.disable();
     }
 
     // =========================================================================
@@ -207,8 +249,11 @@ private:
     AudioIOData* mAudioIO = nullptr;
 
     // Navigation and view
-    Pose mNav;
+    Nav mNav;
     Viewpoint mViewpoint;
+
+    // Automatic LOD
+    AutoLODManager mAutoLOD;
 
     // Initialize viewpoint with nav pose
     void initViewpoint() {
