@@ -5,6 +5,86 @@ import { parseCompilerOutput, type CompilerDiagnostic } from '@/utils/error-pars
 
 export type AppStatus = 'idle' | 'compiling' | 'loading' | 'running' | 'error'
 
+/**
+ * Auto-LOD patterns to convert g.draw(mesh) to drawLOD(g, mesh)
+ * This enables automatic LOD for all mesh draw calls.
+ * Excludes VAO draws since they're not Mesh types.
+ */
+const autoLODPatterns: Array<{ pattern: RegExp; replacement: string | ((match: string, ...args: string[]) => string) }> = [
+  // g.draw(expr) -> drawLOD(g, expr) - handles identifiers, member access, arrays, pointers
+  {
+    pattern: /\bg\.draw\s*\(\s*(\*?[a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*(?:\[[^\]]+\])?)\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      // Skip VAO draws
+      if (expr.toLowerCase().includes('vao')) return match
+      return `drawLOD(g, ${expr.trim()})`
+    }
+  },
+  // g.draw(func()) -> drawLOD(g, func()) - handles function calls
+  {
+    pattern: /\bg\.draw\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*\([^)]*\))\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      if (expr.toLowerCase().includes('vao')) return match
+      return `drawLOD(g, ${expr.trim()})`
+    }
+  },
+  // graphics.draw variants
+  {
+    pattern: /\bgraphics\.draw\s*\(\s*(\*?[a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*(?:\[[^\]]+\])?)\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      if (expr.toLowerCase().includes('vao')) return match
+      return `drawLOD(graphics, ${expr.trim()})`
+    }
+  },
+]
+
+/**
+ * Preprocess code to ensure WebApp classes use ALLOLIB_WEB_MAIN macro
+ * and apply Auto-LOD transformations for mesh draw calls.
+ * This is required for WASM exports and automatic LOD to work correctly.
+ */
+function preprocessForWasm(content: string): string {
+  // Check if this file uses WebApp
+  if (!content.includes('WebApp') && !content.includes('al_WebApp.hpp')) {
+    return content
+  }
+
+  let result = content
+
+  // Apply Auto-LOD transformations: g.draw(mesh) -> drawLOD(g, mesh)
+  // This enables automatic LOD for all mesh draw calls when Auto-LOD is enabled
+  for (const { pattern, replacement } of autoLODPatterns) {
+    const before = result
+    if (typeof replacement === 'function') {
+      result = result.replace(pattern, replacement as (match: string, ...args: string[]) => string)
+    } else {
+      result = result.replace(pattern, replacement)
+    }
+    if (before !== result) {
+      console.log('[Auto-LOD] Transformed g.draw() calls to drawLOD()')
+    }
+  }
+
+  // Check if ALLOLIB_WEB_MAIN is already used
+  if (result.includes('ALLOLIB_WEB_MAIN')) {
+    return result
+  }
+
+  // Pattern to match simple main() that instantiates an app and calls start()
+  // Handles: int main() { ClassName app; app.start(); return 0; }
+  // Also handles: int main() { ClassName app; app.configureAudio(...); app.start(); return 0; }
+  const mainPattern = /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+(\w+)\s*;([^}]*)\2\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/
+
+  const match = result.match(mainPattern)
+  if (match) {
+    const className = match[1]
+    // Replace the entire main function with ALLOLIB_WEB_MAIN macro
+    return result.replace(mainPattern, `ALLOLIB_WEB_MAIN(${className})`)
+  }
+
+  return result
+}
+
 export const useAppStore = defineStore('app', () => {
   // State
   const status = ref<AppStatus>('idle')
@@ -42,8 +122,16 @@ export const useAppStore = defineStore('app', () => {
     log(`[INFO] Starting compilation... (${files.length} file${files.length > 1 ? 's' : ''})`)
 
     try {
+      // Preprocess files to ensure WebApp classes use WEBAPP_CREATE_APP
+      const preprocessedFiles = files.map(file => ({
+        name: file.name,
+        content: file.name.endsWith('.cpp') || file.name.endsWith('.hpp')
+          ? preprocessForWasm(file.content)
+          : file.content
+      }))
+
       // Submit compilation request
-      const response = await submitCompilation({ files, mainFile })
+      const response = await submitCompilation({ files: preprocessedFiles, mainFile })
 
       if (!response.success) {
         throw new Error(response.error || 'Compilation failed')
