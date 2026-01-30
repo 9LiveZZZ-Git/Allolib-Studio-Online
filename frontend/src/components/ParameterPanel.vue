@@ -4,25 +4,54 @@
  *
  * Displays interactive controls for AlloLib parameters registered via WebControlGUI.
  * Supports all parameter types: float, int, bool, menu, trigger, vec3, vec4, color.
+ * Extended to support multiple sources: synth, object, environment, camera.
  *
  * Styled to match ImGui aesthetic with collapsible groups.
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { parameterSystem, ParameterType, presetManager, type Parameter, type ParameterGroup } from '@/utils/parameter-system'
+import {
+  parameterSystem,
+  ParameterType,
+  presetManager,
+  type Parameter,
+  type ParameterGroup,
+  type ParameterSource
+} from '@/utils/parameter-system'
+import Vec3Input from './inputs/Vec3Input.vue'
+import ColorPicker from './inputs/ColorPicker.vue'
 
 const props = defineProps<{
   collapsed?: boolean
+  showAllSources?: boolean  // If true, show all sources; if false, show only synth
 }>()
 
 const emit = defineEmits<{
   toggle: []
+  addKeyframe: [param: Parameter]
 }>()
 
 // Reactive parameter groups
 const groups = ref<ParameterGroup[]>([])
 
-// Expanded group states
-const expandedGroups = ref<Set<string>>(new Set(['Parameters', 'Audio', 'Graphics', 'General']))
+// Source filter
+const activeSourceFilter = ref<ParameterSource | 'all'>('all')
+const sourceFilters: { source: ParameterSource | 'all'; icon: string; label: string }[] = [
+  { source: 'all', icon: '☰', label: 'All' },
+  { source: 'synth', icon: '♫', label: 'Synth' },
+  { source: 'object', icon: '◆', label: 'Object' },
+  { source: 'environment', icon: '◐', label: 'Env' },
+  { source: 'camera', icon: '📷', label: 'Cam' },
+]
+
+// Expanded group states - use composite key format: source-sourceId-groupName
+const expandedGroups = ref<Set<string>>(new Set([
+  'synth-undefined-Parameters',
+  'synth-undefined-Audio',
+  'synth-undefined-Graphics',
+  'synth-undefined-General',
+  'environment-undefined-Environment',
+  'camera-undefined-Camera'
+]))
 
 // Preset management state
 const showPresetMenu = ref(false)
@@ -60,8 +89,21 @@ function deletePreset(name: string, event: Event) {
 
 // Update groups from parameter system
 function updateGroups() {
-  groups.value = parameterSystem.getGrouped()
+  // Use getAllGroups() for unified view when showAllSources is true
+  if (props.showAllSources) {
+    groups.value = parameterSystem.getAllGroups()
+  } else {
+    groups.value = parameterSystem.getGrouped()
+  }
 }
+
+// Filtered groups based on source filter
+const filteredGroups = computed(() => {
+  if (activeSourceFilter.value === 'all') {
+    return groups.value
+  }
+  return groups.value.filter(g => g.source === activeSourceFilter.value)
+})
 
 // Subscribe to parameter changes
 let unsubscribe: (() => void) | null = null
@@ -143,6 +185,36 @@ function getStep(param: Parameter): number {
 }
 
 const hasParameters = computed(() => groups.value.length > 0)
+
+// Handle Vec3 value change
+function handleVec3Change(param: Parameter, value: [number, number, number]) {
+  parameterSystem.setParameterValue(param.source, param.name, value, param.sourceId)
+}
+
+// Handle Color value change
+function handleColorChange(param: Parameter, value: [number, number, number, number] | [number, number, number]) {
+  parameterSystem.setParameterValue(param.source, param.name, value, param.sourceId)
+}
+
+// Get Vec3 value from parameter
+function getVec3Value(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 3) {
+    return [param.value[0], param.value[1], param.value[2]]
+  }
+  return [0, 0, 0]
+}
+
+// Get Color value from parameter
+function getColorValue(param: Parameter): [number, number, number, number] {
+  if (Array.isArray(param.value)) {
+    if (param.value.length >= 4) {
+      return [param.value[0], param.value[1], param.value[2], param.value[3]]
+    } else if (param.value.length === 3) {
+      return [param.value[0], param.value[1], param.value[2], 1]
+    }
+  }
+  return [1, 1, 1, 1]
+}
 </script>
 
 <template>
@@ -170,32 +242,68 @@ const hasParameters = computed(() => groups.value.length > 0)
       </svg>
     </div>
 
+    <!-- Source Filter Pills -->
+    <div v-if="!collapsed && showAllSources" class="flex items-center gap-1 px-2 py-1 border-b border-imgui-border bg-imgui-header">
+      <button
+        v-for="filter in sourceFilters"
+        :key="filter.source"
+        @click="activeSourceFilter = filter.source"
+        :class="[
+          'px-2 py-0.5 text-xs rounded transition-colors',
+          activeSourceFilter === filter.source
+            ? 'bg-imgui-accent text-white'
+            : 'bg-imgui-input text-imgui-text-dim hover:text-imgui-text hover:bg-imgui-button'
+        ]"
+        :title="filter.label"
+      >
+        <span class="mr-1">{{ filter.icon }}</span>
+        <span>{{ filter.label }}</span>
+      </button>
+    </div>
+
     <!-- Content -->
     <div v-if="!collapsed" class="max-h-80 overflow-y-auto">
-      <div v-for="group in groups" :key="group.name" class="border-b border-imgui-border last:border-b-0">
+      <div v-for="group in filteredGroups" :key="`${group.source}-${group.sourceId}-${group.name}`" class="border-b border-imgui-border last:border-b-0">
         <!-- Group Header -->
         <button
           class="w-full px-2 py-1 flex items-center gap-1 text-xs hover:bg-imgui-header-hover bg-imgui-group-header"
-          @click="toggleGroup(group.name)"
+          @click="toggleGroup(`${group.source}-${group.sourceId}-${group.name}`)"
         >
           <svg
             class="w-2.5 h-2.5 text-imgui-text-dim transition-transform flex-shrink-0"
-            :class="{ 'rotate-90': expandedGroups.has(group.name) }"
+            :class="{ 'rotate-90': expandedGroups.has(`${group.source}-${group.sourceId}-${group.name}`) }"
             fill="currentColor"
             viewBox="0 0 24 24"
           >
             <path d="M8 5v14l11-7z" />
           </svg>
+          <!-- Source badge -->
+          <span
+            v-if="showAllSources"
+            :class="[
+              'px-1 py-0.5 text-[10px] rounded font-medium',
+              group.source === 'synth' ? 'bg-purple-600/30 text-purple-300' :
+              group.source === 'object' ? 'bg-blue-600/30 text-blue-300' :
+              group.source === 'environment' ? 'bg-green-600/30 text-green-300' :
+              group.source === 'camera' ? 'bg-orange-600/30 text-orange-300' :
+              'bg-gray-600/30 text-gray-300'
+            ]"
+          >
+            {{ group.source === 'synth' ? '♫' :
+               group.source === 'object' ? '◆' :
+               group.source === 'environment' ? '◐' :
+               group.source === 'camera' ? '📷' : '?' }}
+          </span>
           <span class="text-imgui-text font-medium">{{ group.name }}</span>
           <span class="text-imgui-text-dim">({{ group.parameters.length }})</span>
         </button>
 
         <!-- Parameters -->
-        <div v-if="expandedGroups.has(group.name)" class="px-2 py-1.5 space-y-2 bg-imgui-content">
+        <div v-if="expandedGroups.has(`${group.source}-${group.sourceId}-${group.name}`)" class="px-2 py-1.5 space-y-2 bg-imgui-content">
           <div v-for="param in group.parameters" :key="param.index" class="parameter-row">
             <!-- Float/Int Slider -->
             <template v-if="param.type === ParameterType.FLOAT || param.type === ParameterType.INT">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1">
                 <label
                   class="text-xs text-imgui-text w-24 truncate flex-shrink-0"
                   :title="param.name"
@@ -212,9 +320,20 @@ const hasParameters = computed(() => groups.value.length > 0)
                   @input="handleSliderChange(param, $event)"
                   class="flex-1 h-4 imgui-slider"
                 />
-                <span class="text-xs text-imgui-value font-mono w-14 text-right">
+                <span class="text-xs text-imgui-value font-mono w-12 text-right">
                   {{ formatValue(param) }}
                 </span>
+                <button
+                  v-if="param.isKeyframeable"
+                  @click="emit('addKeyframe', param)"
+                  :class="[
+                    'w-4 h-4 flex items-center justify-center text-xs transition-colors flex-shrink-0',
+                    param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
+                  ]"
+                  title="Add keyframe"
+                >
+                  ◆
+                </button>
               </div>
             </template>
 
@@ -287,16 +406,52 @@ const hasParameters = computed(() => groups.value.length > 0)
             <!-- Vec3 (3 sliders) -->
             <template v-else-if="param.type === ParameterType.VEC3">
               <div class="space-y-1">
-                <label class="text-xs text-imgui-text block">{{ param.displayName }}</label>
-                <div class="text-xs text-imgui-text-dim italic">Vec3 controls coming soon</div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
+                  <button
+                    v-if="param.isKeyframeable"
+                    @click="emit('addKeyframe', param)"
+                    :class="[
+                      'w-4 h-4 flex items-center justify-center text-xs transition-colors',
+                      param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
+                    ]"
+                    title="Add keyframe"
+                  >
+                    ◆
+                  </button>
+                </div>
+                <Vec3Input
+                  :model-value="getVec3Value(param)"
+                  @update:model-value="handleVec3Change(param, $event)"
+                  :min="param.min"
+                  :max="param.max"
+                  :step="param.step"
+                />
               </div>
             </template>
 
             <!-- Vec4/Color -->
             <template v-else-if="param.type === ParameterType.VEC4 || param.type === ParameterType.COLOR">
               <div class="space-y-1">
-                <label class="text-xs text-imgui-text block">{{ param.displayName }}</label>
-                <div class="text-xs text-imgui-text-dim italic">Color picker coming soon</div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
+                  <button
+                    v-if="param.isKeyframeable"
+                    @click="emit('addKeyframe', param)"
+                    :class="[
+                      'w-4 h-4 flex items-center justify-center text-xs transition-colors',
+                      param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
+                    ]"
+                    title="Add keyframe"
+                  >
+                    ◆
+                  </button>
+                </div>
+                <ColorPicker
+                  :model-value="getColorValue(param)"
+                  @update:model-value="handleColorChange(param, $event)"
+                  :show-alpha="param.type === ParameterType.VEC4 || param.type === ParameterType.COLOR"
+                />
               </div>
             </template>
 

@@ -99,12 +99,17 @@ const handleAddExampleToProject = (example: AnyExample) => {
     }
     // Open the main file
     projectStore.setActiveFile(example.mainFile)
+    // Force editor to show the new content
+    const content = projectStore.getFileContent(example.mainFile)
+    if (content) editorRef.value?.setCode(content)
     appStore.log(`[INFO] Added ${example.files.length} files to project: ${example.title}`)
   } else {
     // Single file - add with a unique name based on example id
     const fileName = `${example.id}.cpp`
     projectStore.addOrUpdateFile(fileName, example.code)
     projectStore.setActiveFile(fileName)
+    // Force editor to show the new content
+    editorRef.value?.setCode(example.code)
     appStore.log(`[INFO] Added "${example.title}" to project as ${fileName}`)
   }
 }
@@ -120,11 +125,15 @@ const handleReplaceProjectWithExample = (example: AnyExample) => {
     }
     // Open the main file
     projectStore.setActiveFile(example.mainFile)
+    // Force editor to show the new content
+    const content = projectStore.getFileContent(example.mainFile)
+    if (content) editorRef.value?.setCode(content)
     appStore.log(`[INFO] Loaded multi-file example: ${example.title} (${example.files.length} files)`)
   } else {
-    // Single file - replace main.cpp
+    // Single file - replace main.cpp content directly
     projectStore.addOrUpdateFile('main.cpp', example.code)
-    projectStore.setActiveFile('main.cpp')
+    // Force editor to show the new content (active file is already main.cpp)
+    editorRef.value?.setCode(example.code)
     appStore.log(`[INFO] Loaded example: ${example.title}`)
   }
 }
@@ -350,12 +359,10 @@ watch(() => appStore.status, (newStatus) => {
       .map(f => ({ name: f.path, content: f.content }))
     sequencerStore.updateDetectedSynths(sourceFiles)
 
-    // Also populate parameter system with detected C++ params
-    // This supplements WASM-reported params with statically-detected ones
-    const allParams = sequencerStore.detectedSynths.flatMap(synth => synth.params)
-    if (allParams.length > 0) {
-      parameterSystem.populateFromDetectedSynths(allParams)
-    }
+    // NOTE: We no longer populate parameter system from source detection.
+    // The WASM now properly reports only ControlGUI parameters (the app's
+    // user-facing params), not the voice trigger parameters (which are for
+    // sequencing). Source detection was adding duplicates.
   }
 })
 

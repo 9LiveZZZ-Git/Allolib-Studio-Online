@@ -24,29 +24,82 @@ export enum ParameterType {
   TRIGGER = 8,
 }
 
+// ─── Source Types for Unified Parameter System ───────────────────────────────
+
+export type ParameterSource = 'synth' | 'object' | 'environment' | 'camera' | 'event'
+
 export interface Parameter {
   name: string
   displayName: string
   group: string
-  value: number
+  value: number | number[]
   min: number
   max: number
-  defaultValue: number
+  defaultValue: number | number[]
   step?: number
   type: ParameterType
   index: number // Index in C++ parameter list
   menuItems?: string[] // For menu parameters
+
+  // Extended properties for unified system
+  source: ParameterSource
+  sourceId?: string  // Object ID, synth name, etc.
+  isKeyframeable: boolean
+  hasKeyframes: boolean
 }
 
 export interface ParameterGroup {
   name: string
+  source: ParameterSource
+  sourceId?: string
   parameters: Parameter[]
+  collapsed: boolean
+}
+
+// ─── Object/Environment Parameter Definitions ────────────────────────────────
+
+export interface ObjectParameterDefinition {
+  objectId: string
+  objectName: string
+  transform: {
+    position: [number, number, number]
+    rotation: [number, number, number, number]
+    scale: [number, number, number]
+  }
+  uniforms?: Record<string, {
+    type: 'float' | 'int' | 'bool' | 'vec3' | 'vec4' | 'color'
+    value: number | number[]
+    min?: number
+    max?: number
+    step?: number
+  }>
+}
+
+export interface EnvironmentParameterDefinition {
+  backgroundColor: [number, number, number, number]
+  ambientColor: [number, number, number]
+  ambientIntensity: number
+  fogEnabled: boolean
+  fogColor: [number, number, number]
+  fogNear: number
+  fogFar: number
+}
+
+export interface CameraParameterDefinition {
+  position: [number, number, number]
+  target: [number, number, number]
+  fov: number
+  near: number
+  far: number
 }
 
 type ParameterCallback = () => void
 
 class ParameterSystem {
-  private parameters: Map<number, Parameter> = new Map() // keyed by index
+  private parameters: Map<number, Parameter> = new Map() // keyed by index (synth params)
+  private objectParameters: Map<string, Parameter[]> = new Map() // keyed by object ID
+  private environmentParameters: Parameter[] = []
+  private cameraParameters: Parameter[] = []
   private callbacks: Set<ParameterCallback> = new Set()
   private wasmModule: any = null
   private pollInterval: number | null = null
@@ -55,6 +108,133 @@ class ParameterSystem {
   constructor() {
     // Set up global callbacks for C++ notifications
     this.setupAlloLibCallbacks()
+    // Initialize default environment and camera params
+    this.initializeEnvironmentParams()
+    this.initializeCameraParams()
+  }
+
+  /**
+   * Initialize default environment parameters
+   */
+  private initializeEnvironmentParams(): void {
+    this.environmentParameters = [
+      {
+        name: 'backgroundColor',
+        displayName: 'Background Color',
+        group: 'Environment',
+        value: [0.1, 0.1, 0.1, 1.0],
+        min: 0, max: 1, defaultValue: [0.1, 0.1, 0.1, 1.0],
+        type: ParameterType.COLOR,
+        index: -1,
+        source: 'environment',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'ambientIntensity',
+        displayName: 'Ambient Intensity',
+        group: 'Environment',
+        value: 0.3,
+        min: 0, max: 2, defaultValue: 0.3,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'environment',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'fogEnabled',
+        displayName: 'Fog Enabled',
+        group: 'Environment',
+        value: 0,
+        min: 0, max: 1, defaultValue: 0,
+        type: ParameterType.BOOL,
+        index: -1,
+        source: 'environment',
+        isKeyframeable: false,
+        hasKeyframes: false,
+      },
+      {
+        name: 'fogNear',
+        displayName: 'Fog Near',
+        group: 'Environment',
+        value: 10,
+        min: 0.1, max: 1000, defaultValue: 10,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'environment',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'fogFar',
+        displayName: 'Fog Far',
+        group: 'Environment',
+        value: 100,
+        min: 1, max: 10000, defaultValue: 100,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'environment',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+    ]
+  }
+
+  /**
+   * Initialize default camera parameters
+   */
+  private initializeCameraParams(): void {
+    this.cameraParameters = [
+      {
+        name: 'positionX',
+        displayName: 'Position X',
+        group: 'Camera',
+        value: 0,
+        min: -1000, max: 1000, defaultValue: 0,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'camera',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'positionY',
+        displayName: 'Position Y',
+        group: 'Camera',
+        value: 0,
+        min: -1000, max: 1000, defaultValue: 0,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'camera',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'positionZ',
+        displayName: 'Position Z',
+        group: 'Camera',
+        value: 5,
+        min: -1000, max: 1000, defaultValue: 5,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'camera',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+      {
+        name: 'fov',
+        displayName: 'Field of View',
+        group: 'Camera',
+        value: 60,
+        min: 10, max: 120, defaultValue: 60,
+        type: ParameterType.FLOAT,
+        index: -1,
+        source: 'camera',
+        isKeyframeable: true,
+        hasKeyframes: false,
+      },
+    ]
   }
 
   /**
@@ -89,6 +269,9 @@ class ParameterSystem {
         type: info.type as ParameterType,
         index: info.index,
         step: info.type === ParameterType.INT ? 1 : 0.01,
+        source: 'synth',
+        isKeyframeable: true,
+        hasKeyframes: false,
       }
       this.parameters.set(info.index, param)
       this.notifyChange()
@@ -205,6 +388,9 @@ class ParameterSystem {
         type: type as ParameterType,
         index: i,
         step: type === ParameterType.INT ? 1 : 0.01,
+        source: 'synth',
+        isKeyframeable: true,
+        hasKeyframes: false,
       }
 
       console.log(`[ParameterSystem] Loaded parameter: ${name} (${group})`, param)
@@ -278,16 +464,26 @@ class ParameterSystem {
 
   /**
    * Get parameters grouped by their group name
+   * Filters out .synthsequence groups (reserved for sequencer, not UI)
    */
   getGrouped(): ParameterGroup[] {
     const groups = new Map<string, Parameter[]>()
 
     for (const param of this.parameters.values()) {
       const groupName = param.group || 'Parameters'
-      if (!groups.has(groupName)) {
-        groups.set(groupName, [])
+
+      // Skip .synthsequence groups - they're for the sequencer, not the UI
+      if (groupName.endsWith('.synthsequence')) continue
+
+      // Clean up .preset suffix for display
+      const displayName = groupName.endsWith('.preset')
+        ? groupName.slice(0, -7)  // Remove ".preset"
+        : groupName
+
+      if (!groups.has(displayName)) {
+        groups.set(displayName, [])
       }
-      groups.get(groupName)!.push(param)
+      groups.get(displayName)!.push(param)
     }
 
     // Sort groups alphabetically, but put "Parameters" first
@@ -299,8 +495,243 @@ class ParameterSystem {
 
     return sortedGroups.map(([name, parameters]) => ({
       name,
+      source: 'synth' as ParameterSource,
       parameters,
+      collapsed: false,
     }))
+  }
+
+  /**
+   * Get all parameter groups from all sources (unified view)
+   * Filters out .synthsequence groups (reserved for sequencer, not UI)
+   */
+  getAllGroups(): ParameterGroup[] {
+    const groups: ParameterGroup[] = []
+
+    // Synth parameters (existing WASM-based)
+    const synthParams = Array.from(this.parameters.values())
+    if (synthParams.length > 0) {
+      // Group by their group name
+      const synthGroups = new Map<string, Parameter[]>()
+      for (const param of synthParams) {
+        const groupName = param.group || 'Synth'
+
+        // Skip .synthsequence groups - they're for the sequencer, not the UI
+        if (groupName.endsWith('.synthsequence')) continue
+
+        // Clean up .preset suffix for display
+        const displayName = groupName.endsWith('.preset')
+          ? groupName.slice(0, -7)  // Remove ".preset"
+          : groupName
+
+        if (!synthGroups.has(displayName)) {
+          synthGroups.set(displayName, [])
+        }
+        synthGroups.get(displayName)!.push(param)
+      }
+
+      for (const [name, params] of synthGroups) {
+        groups.push({
+          name: `Synth: ${name}`,
+          source: 'synth',
+          parameters: params,
+          collapsed: false,
+        })
+      }
+    }
+
+    // Object parameters
+    for (const [objectId, params] of this.objectParameters) {
+      if (params.length > 0) {
+        groups.push({
+          name: `Object: ${objectId}`,
+          source: 'object',
+          sourceId: objectId,
+          parameters: params,
+          collapsed: true,
+        })
+      }
+    }
+
+    // Environment parameters
+    if (this.environmentParameters.length > 0) {
+      groups.push({
+        name: 'Environment',
+        source: 'environment',
+        parameters: this.environmentParameters,
+        collapsed: true,
+      })
+    }
+
+    // Camera parameters
+    if (this.cameraParameters.length > 0) {
+      groups.push({
+        name: 'Camera',
+        source: 'camera',
+        parameters: this.cameraParameters,
+        collapsed: true,
+      })
+    }
+
+    return groups
+  }
+
+  /**
+   * Register an object with its parameters
+   */
+  registerObject(objectId: string, definition: ObjectParameterDefinition): void {
+    const params: Parameter[] = []
+
+    // Transform parameters
+    params.push({
+      name: 'positionX', displayName: 'Position X', group: 'Transform',
+      value: definition.transform.position[0], min: -1000, max: 1000,
+      defaultValue: definition.transform.position[0],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+    params.push({
+      name: 'positionY', displayName: 'Position Y', group: 'Transform',
+      value: definition.transform.position[1], min: -1000, max: 1000,
+      defaultValue: definition.transform.position[1],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+    params.push({
+      name: 'positionZ', displayName: 'Position Z', group: 'Transform',
+      value: definition.transform.position[2], min: -1000, max: 1000,
+      defaultValue: definition.transform.position[2],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+    params.push({
+      name: 'scaleX', displayName: 'Scale X', group: 'Transform',
+      value: definition.transform.scale[0], min: 0.01, max: 100,
+      defaultValue: definition.transform.scale[0],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+    params.push({
+      name: 'scaleY', displayName: 'Scale Y', group: 'Transform',
+      value: definition.transform.scale[1], min: 0.01, max: 100,
+      defaultValue: definition.transform.scale[1],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+    params.push({
+      name: 'scaleZ', displayName: 'Scale Z', group: 'Transform',
+      value: definition.transform.scale[2], min: 0.01, max: 100,
+      defaultValue: definition.transform.scale[2],
+      type: ParameterType.FLOAT, index: -1, source: 'object', sourceId: objectId,
+      isKeyframeable: true, hasKeyframes: false,
+    })
+
+    // Material uniforms
+    if (definition.uniforms) {
+      for (const [name, uniform] of Object.entries(definition.uniforms)) {
+        let paramType = ParameterType.FLOAT
+        if (uniform.type === 'int') paramType = ParameterType.INT
+        else if (uniform.type === 'bool') paramType = ParameterType.BOOL
+        else if (uniform.type === 'vec3') paramType = ParameterType.VEC3
+        else if (uniform.type === 'vec4') paramType = ParameterType.VEC4
+        else if (uniform.type === 'color') paramType = ParameterType.COLOR
+
+        params.push({
+          name,
+          displayName: name.charAt(0).toUpperCase() + name.slice(1),
+          group: 'Material',
+          value: uniform.value,
+          min: uniform.min ?? 0,
+          max: uniform.max ?? 1,
+          defaultValue: uniform.value,
+          step: uniform.step,
+          type: paramType,
+          index: -1,
+          source: 'object',
+          sourceId: objectId,
+          isKeyframeable: true,
+          hasKeyframes: false,
+        })
+      }
+    }
+
+    this.objectParameters.set(objectId, params)
+    console.log(`[ParameterSystem] Registered object: ${objectId} with ${params.length} parameters`)
+    this.notifyChange()
+  }
+
+  /**
+   * Unregister an object
+   */
+  unregisterObject(objectId: string): void {
+    this.objectParameters.delete(objectId)
+    console.log(`[ParameterSystem] Unregistered object: ${objectId}`)
+    this.notifyChange()
+  }
+
+  /**
+   * Get parameters for a specific object
+   */
+  getObjectParameters(objectId: string): Parameter[] {
+    return this.objectParameters.get(objectId) || []
+  }
+
+  /**
+   * Get environment parameters
+   */
+  getEnvironmentParameters(): Parameter[] {
+    return this.environmentParameters
+  }
+
+  /**
+   * Get camera parameters
+   */
+  getCameraParameters(): Parameter[] {
+    return this.cameraParameters
+  }
+
+  /**
+   * Set a parameter value by source
+   */
+  setParameterValue(source: ParameterSource, name: string, value: number | number[], sourceId?: string): void {
+    let params: Parameter[] | undefined
+
+    switch (source) {
+      case 'synth':
+        // Use existing setByIndex or set method
+        this.set(name, typeof value === 'number' ? value : value[0])
+        return
+
+      case 'object':
+        params = sourceId ? this.objectParameters.get(sourceId) : undefined
+        break
+
+      case 'environment':
+        params = this.environmentParameters
+        break
+
+      case 'camera':
+        params = this.cameraParameters
+        break
+    }
+
+    if (params) {
+      const param = params.find(p => p.name === name)
+      if (param) {
+        param.value = value
+        this.notifyChange()
+      }
+    }
+  }
+
+  /**
+   * Check if any source has parameters
+   */
+  get hasAnyParameters(): boolean {
+    return this.parameters.size > 0 ||
+           this.objectParameters.size > 0 ||
+           this.environmentParameters.length > 0 ||
+           this.cameraParameters.length > 0
   }
 
   /**
@@ -433,6 +864,9 @@ class ParameterSystem {
         type: ParameterType.FLOAT,
         index: nextIndex,
         step: 0.01,
+        source: 'synth',
+        isKeyframeable: true,
+        hasKeyframes: false,
       }
 
       this.parameters.set(nextIndex, param)

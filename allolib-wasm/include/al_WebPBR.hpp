@@ -87,6 +87,126 @@ struct PBRMaterial {
 };
 
 /**
+ * Extended PBR Material with texture map support
+ * Works with WebTexture and PBRTextureSet for full texture-mapped PBR
+ */
+struct PBRMaterialEx : public PBRMaterial {
+    // Texture map flags
+    bool useAlbedoMap = false;
+    bool useNormalMap = false;
+    bool useRoughnessMap = false;
+    bool useMetallicMap = false;
+    bool useAOMap = false;
+    bool useEmissiveMap = false;
+    bool useHeightMap = false;
+
+    // Texture settings
+    Vec2f textureScale{1.0f, 1.0f};  // UV scale for tiling
+    Vec2f textureOffset{0.0f, 0.0f}; // UV offset
+    float normalStrength = 1.0f;      // Normal map intensity
+    float heightScale = 0.05f;        // Parallax height scale
+    float emissiveIntensity = 1.0f;   // Emissive map intensity
+
+    // Texture unit bindings (set externally when binding textures)
+    int albedoMapUnit = 3;     // Start after IBL textures (0,1,2)
+    int normalMapUnit = 4;
+    int roughnessMapUnit = 5;
+    int metallicMapUnit = 6;
+    int aoMapUnit = 7;
+    int emissiveMapUnit = 8;
+    int heightMapUnit = 9;
+
+    PBRMaterialEx() = default;
+
+    PBRMaterialEx(const PBRMaterial& base) : PBRMaterial(base) {}
+
+    // Builder pattern for fluent API
+    PBRMaterialEx& withAlbedoMap(int unit = 3) {
+        useAlbedoMap = true;
+        albedoMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withNormalMap(float strength = 1.0f, int unit = 4) {
+        useNormalMap = true;
+        normalStrength = strength;
+        normalMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withRoughnessMap(int unit = 5) {
+        useRoughnessMap = true;
+        roughnessMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withMetallicMap(int unit = 6) {
+        useMetallicMap = true;
+        metallicMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withAOMap(int unit = 7) {
+        useAOMap = true;
+        aoMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withEmissiveMap(float intensity = 1.0f, int unit = 8) {
+        useEmissiveMap = true;
+        emissiveIntensity = intensity;
+        emissiveMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withHeightMap(float scale = 0.05f, int unit = 9) {
+        useHeightMap = true;
+        heightScale = scale;
+        heightMapUnit = unit;
+        return *this;
+    }
+
+    PBRMaterialEx& withTextureTransform(const Vec2f& scale, const Vec2f& offset = Vec2f(0, 0)) {
+        textureScale = scale;
+        textureOffset = offset;
+        return *this;
+    }
+
+    // Preset textured materials
+    static PBRMaterialEx TexturedBrick() {
+        PBRMaterialEx mat;
+        mat.albedo = Vec3f(0.6f, 0.4f, 0.3f);
+        mat.roughness = 0.8f;
+        mat.metallic = 0.0f;
+        return mat.withAlbedoMap().withNormalMap(1.5f).withRoughnessMap().withAOMap();
+    }
+
+    static PBRMaterialEx TexturedWood() {
+        PBRMaterialEx mat;
+        mat.albedo = Vec3f(0.5f, 0.35f, 0.2f);
+        mat.roughness = 0.6f;
+        mat.metallic = 0.0f;
+        return mat.withAlbedoMap().withNormalMap(0.8f).withRoughnessMap();
+    }
+
+    static PBRMaterialEx TexturedMetal() {
+        PBRMaterialEx mat;
+        mat.albedo = Vec3f(0.9f, 0.9f, 0.9f);
+        mat.roughness = 0.3f;
+        mat.metallic = 1.0f;
+        return mat.withAlbedoMap().withNormalMap(0.5f).withRoughnessMap().withMetallicMap();
+    }
+
+    static PBRMaterialEx TexturedMarble() {
+        PBRMaterialEx mat;
+        mat.albedo = Vec3f(0.95f, 0.95f, 0.95f);
+        mat.roughness = 0.1f;
+        mat.metallic = 0.0f;
+        return mat.withAlbedoMap().withNormalMap(0.3f);
+    }
+};
+
+/**
  * PBR vertex shader
  * Uses view space for calculations, passes data needed for IBL
  */
@@ -474,6 +594,686 @@ void main() {
 }
 
 /**
+ * Textured PBR vertex shader with tangent space support
+ */
+inline std::string pbr_textured_vert_shader() {
+    return R"(#version 300 es
+precision highp float;
+precision highp int;
+
+layout (location = 0) in vec3 position;
+layout (location = 3) in vec3 normal;
+layout (location = 2) in vec2 texcoord;
+
+uniform mat4 al_ModelViewMatrix;
+uniform mat4 al_ProjectionMatrix;
+uniform vec2 textureScale;
+uniform vec2 textureOffset;
+
+out vec3 vViewPos;
+out vec3 vViewNormal;
+out vec3 vLocalPos;
+out vec2 vTexCoord;
+out mat3 vTBN;  // Tangent-Bitangent-Normal matrix for normal mapping
+
+void main() {
+    vec4 viewPos = al_ModelViewMatrix * vec4(position, 1.0);
+    vViewPos = viewPos.xyz;
+    vLocalPos = position;
+
+    // Transform normal to view space
+    mat3 normalMatrix = mat3(al_ModelViewMatrix);
+    vViewNormal = normalize(normalMatrix * normal);
+
+    // Apply texture transform
+    vTexCoord = texcoord * textureScale + textureOffset;
+
+    // Compute tangent and bitangent for normal mapping
+    // Using dFdx/dFdy in fragment shader is more accurate, but this is simpler
+    vec3 T = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
+    vec3 N = vViewNormal;
+    T = normalize(T - dot(T, N) * N);  // Gram-Schmidt orthogonalize
+    vec3 B = cross(N, T);
+    vTBN = mat3(T, B, N);
+
+    gl_Position = al_ProjectionMatrix * viewPos;
+}
+)";
+}
+
+/**
+ * Textured PBR fragment shader with texture map support
+ * Supports: albedo, normal, roughness, metallic, AO, emissive maps
+ */
+inline std::string pbr_textured_frag_shader() {
+    return R"(#version 300 es
+precision highp float;
+precision highp int;
+
+in vec3 vViewPos;
+in vec3 vViewNormal;
+in vec3 vLocalPos;
+in vec2 vTexCoord;
+in mat3 vTBN;
+
+// Base material properties (used when texture not present)
+uniform vec3 albedo;
+uniform float metallic;
+uniform float roughness;
+uniform float ao;
+uniform vec3 emission;
+
+// Texture map flags
+uniform bool useAlbedoMap;
+uniform bool useNormalMap;
+uniform bool useRoughnessMap;
+uniform bool useMetallicMap;
+uniform bool useAOMap;
+uniform bool useEmissiveMap;
+
+// Texture maps
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D roughnessMap;
+uniform sampler2D metallicMap;
+uniform sampler2D aoMap;
+uniform sampler2D emissiveMap;
+
+// Texture settings
+uniform float normalStrength;
+uniform float emissiveIntensity;
+
+// IBL textures
+uniform sampler2D envMap;
+uniform sampler2D irradianceMap;
+uniform sampler2D brdfLUT;
+
+// Camera and lighting
+uniform mat3 invViewRot;
+uniform float envIntensity;
+uniform float exposure;
+uniform float gamma;
+
+out vec4 frag_color;
+
+const float PI = 3.14159265359;
+
+vec2 directionToUV(vec3 dir) {
+    float phi = atan(dir.z, dir.x);
+    float theta = acos(clamp(dir.y, -1.0, 1.0));
+    return vec2((phi + PI) / (2.0 * PI), theta / PI);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float rough) {
+    return F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 sampleEnvLOD(vec3 worldDir, float rough) {
+    vec2 uv = directionToUV(worldDir);
+    vec3 color = texture(envMap, uv).rgb;
+    if (rough > 0.1) {
+        float blur = rough * 0.03;
+        color += texture(envMap, uv + vec2(blur, 0.0)).rgb;
+        color += texture(envMap, uv + vec2(-blur, 0.0)).rgb;
+        color += texture(envMap, uv + vec2(0.0, blur)).rgb;
+        color += texture(envMap, uv + vec2(0.0, -blur)).rgb;
+        color /= 5.0;
+    }
+    return color;
+}
+
+void main() {
+    // Sample textures or use uniform values
+    vec3 finalAlbedo = useAlbedoMap ? texture(albedoMap, vTexCoord).rgb : albedo;
+    float finalRoughness = useRoughnessMap ? texture(roughnessMap, vTexCoord).r : roughness;
+    float finalMetallic = useMetallicMap ? texture(metallicMap, vTexCoord).r : metallic;
+    float finalAO = useAOMap ? texture(aoMap, vTexCoord).r : ao;
+    vec3 finalEmission = useEmissiveMap
+        ? texture(emissiveMap, vTexCoord).rgb * emissiveIntensity
+        : emission;
+
+    // Normal mapping
+    vec3 N;
+    if (useNormalMap) {
+        vec3 normalSample = texture(normalMap, vTexCoord).rgb * 2.0 - 1.0;
+        normalSample.xy *= normalStrength;
+        N = normalize(vTBN * normalSample);
+    } else {
+        N = normalize(vViewNormal);
+    }
+
+    vec3 V = normalize(-vViewPos);
+    vec3 R = reflect(-V, N);
+
+    // Transform to world space for environment sampling
+    vec3 worldN = invViewRot * N;
+    vec3 worldR = invViewRot * R;
+
+    // Calculate F0
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, finalAlbedo, finalMetallic);
+
+    // IBL Diffuse
+    vec2 irradianceUV = directionToUV(worldN);
+    vec3 irradiance = texture(irradianceMap, irradianceUV).rgb;
+
+    if (length(irradiance) < 0.001) {
+        vec3 up = abs(worldN.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 tangent = normalize(cross(up, worldN));
+        vec3 bitangent = cross(worldN, tangent);
+        irradiance = texture(envMap, directionToUV(worldN)).rgb * 0.3;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + tangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN - tangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + bitangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN - bitangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + vec3(0.0, 0.5, 0.0)))).rgb * 0.1;
+    }
+
+    float NdotV = max(dot(N, V), 0.0);
+    vec3 kS = fresnelSchlickRoughness(NdotV, F0, finalRoughness);
+    vec3 kD = 1.0 - kS;
+    kD *= 1.0 - finalMetallic;
+
+    vec3 diffuse = irradiance * finalAlbedo;
+
+    // IBL Specular
+    vec3 prefilteredColor = sampleEnvLOD(worldR, finalRoughness);
+    vec2 brdfUV = vec2(NdotV, finalRoughness);
+    vec2 brdf = texture(brdfLUT, brdfUV).rg;
+
+    if (brdf.x < 0.001 && brdf.y < 0.001) {
+        float a = finalRoughness * finalRoughness;
+        brdf.x = 1.0 - a * 0.5;
+        brdf.y = a * 0.5;
+    }
+
+    vec3 specular = prefilteredColor * (kS * brdf.x + brdf.y);
+
+    // Combine
+    vec3 ambient = (kD * diffuse + specular) * finalAO * envIntensity;
+    vec3 color = ambient + finalEmission;
+
+    // Tone mapping
+    color *= exposure;
+    color = color / (vec3(1.0) + color);
+    color = pow(color, vec3(1.0 / gamma));
+
+    frag_color = vec4(color, 1.0);
+}
+)";
+}
+
+/**
+ * Textured PBR fallback (analytical lighting) fragment shader
+ */
+inline std::string pbr_textured_fallback_frag_shader() {
+    return R"(#version 300 es
+precision highp float;
+
+in vec3 vViewPos;
+in vec3 vViewNormal;
+in vec3 vLocalPos;
+in vec2 vTexCoord;
+in mat3 vTBN;
+
+uniform vec3 albedo;
+uniform float metallic;
+uniform float roughness;
+uniform float ao;
+uniform vec3 emission;
+
+uniform bool useAlbedoMap;
+uniform bool useNormalMap;
+uniform bool useRoughnessMap;
+uniform bool useMetallicMap;
+uniform bool useAOMap;
+uniform bool useEmissiveMap;
+
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D roughnessMap;
+uniform sampler2D metallicMap;
+uniform sampler2D aoMap;
+uniform sampler2D emissiveMap;
+
+uniform float normalStrength;
+uniform float emissiveIntensity;
+uniform float envIntensity;
+uniform float exposure;
+uniform float gamma;
+
+out vec4 frag_color;
+
+const float PI = 3.14159265359;
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float distributionGGX(vec3 N, vec3 H, float rough) {
+    float a = rough * rough;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    return a2 / (PI * denom * denom);
+}
+
+float geometrySchlickGGX(float NdotV, float rough) {
+    float r = rough + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float geometrySmith(vec3 N, vec3 V, vec3 L, float rough) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return geometrySchlickGGX(NdotV, rough) * geometrySchlickGGX(NdotL, rough);
+}
+
+void main() {
+    vec3 finalAlbedo = useAlbedoMap ? texture(albedoMap, vTexCoord).rgb : albedo;
+    float finalRoughness = useRoughnessMap ? texture(roughnessMap, vTexCoord).r : roughness;
+    float finalMetallic = useMetallicMap ? texture(metallicMap, vTexCoord).r : metallic;
+    float finalAO = useAOMap ? texture(aoMap, vTexCoord).r : ao;
+    vec3 finalEmission = useEmissiveMap
+        ? texture(emissiveMap, vTexCoord).rgb * emissiveIntensity
+        : emission;
+
+    vec3 N;
+    if (useNormalMap) {
+        vec3 normalSample = texture(normalMap, vTexCoord).rgb * 2.0 - 1.0;
+        normalSample.xy *= normalStrength;
+        N = normalize(vTBN * normalSample);
+    } else {
+        N = normalize(vViewNormal);
+    }
+
+    vec3 V = normalize(-vViewPos);
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, finalAlbedo, finalMetallic);
+
+    // 3-point lighting
+    vec3 lightPositions[3];
+    lightPositions[0] = vec3(3.0, 3.0, 2.0);
+    lightPositions[1] = vec3(-3.0, 2.0, 0.0);
+    lightPositions[2] = vec3(0.0, -2.0, 1.0);
+
+    vec3 lightColors[3];
+    lightColors[0] = vec3(1.0, 0.95, 0.9) * 8.0;
+    lightColors[1] = vec3(0.6, 0.7, 1.0) * 4.0;
+    lightColors[2] = vec3(0.5, 0.5, 0.5) * 2.0;
+
+    vec3 Lo = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+        vec3 L = normalize(lightPositions[i] - vViewPos);
+        vec3 H = normalize(V + L);
+        float distance = length(lightPositions[i] - vViewPos);
+        float attenuation = 1.0 / (1.0 + distance * distance * 0.1);
+        vec3 radiance = lightColors[i] * attenuation;
+
+        float NDF = distributionGGX(N, H, finalRoughness);
+        float G = geometrySmith(N, V, L, finalRoughness);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
+
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (kD * finalAlbedo / PI + specular) * radiance * NdotL;
+    }
+
+    vec3 ambient = vec3(0.2, 0.2, 0.25) * finalAlbedo * finalAO;
+    ambient += vec3(0.15, 0.12, 0.1) * max(N.y, 0.0) * finalAlbedo * finalAO;
+
+    vec3 color = ambient + Lo * envIntensity + finalEmission;
+
+    color *= exposure;
+    color = color / (vec3(1.0) + color);
+    color = pow(color, vec3(1.0 / gamma));
+
+    frag_color = vec4(color, 1.0);
+}
+)";
+}
+
+/**
+ * LOD-aware textured PBR fragment shader using textureLod()
+ * Supports Unreal-style continuous mipmap LOD selection
+ */
+inline std::string pbr_lod_frag_shader() {
+    return R"(#version 300 es
+precision highp float;
+precision highp int;
+
+in vec3 vViewPos;
+in vec3 vViewNormal;
+in vec3 vLocalPos;
+in vec2 vTexCoord;
+in mat3 vTBN;
+
+// Base material properties
+uniform vec3 albedo;
+uniform float metallic;
+uniform float roughness;
+uniform float ao;
+uniform vec3 emission;
+
+// Texture LOD control
+uniform float u_textureLOD;       // Continuous LOD value (0.0 = full res, 1.0 = half, etc.)
+uniform bool u_useExplicitLOD;    // Enable explicit LOD (vs hardware auto)
+
+// Texture map flags
+uniform bool useAlbedoMap;
+uniform bool useNormalMap;
+uniform bool useRoughnessMap;
+uniform bool useMetallicMap;
+uniform bool useAOMap;
+uniform bool useEmissiveMap;
+
+// Texture maps
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D roughnessMap;
+uniform sampler2D metallicMap;
+uniform sampler2D aoMap;
+uniform sampler2D emissiveMap;
+
+// Texture settings
+uniform float normalStrength;
+uniform float emissiveIntensity;
+
+// IBL textures
+uniform sampler2D envMap;
+uniform sampler2D irradianceMap;
+uniform sampler2D brdfLUT;
+
+// Camera and lighting
+uniform mat3 invViewRot;
+uniform float envIntensity;
+uniform float exposure;
+uniform float gamma;
+
+out vec4 frag_color;
+
+const float PI = 3.14159265359;
+
+// Sample texture with explicit LOD or hardware auto
+vec4 sampleWithLOD(sampler2D tex, vec2 uv) {
+    if (u_useExplicitLOD) {
+        return textureLod(tex, uv, u_textureLOD);
+    }
+    return texture(tex, uv);
+}
+
+vec2 directionToUV(vec3 dir) {
+    float phi = atan(dir.z, dir.x);
+    float theta = acos(clamp(dir.y, -1.0, 1.0));
+    return vec2((phi + PI) / (2.0 * PI), theta / PI);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float rough) {
+    return F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 sampleEnvLOD(vec3 worldDir, float rough) {
+    vec2 uv = directionToUV(worldDir);
+    vec3 color = texture(envMap, uv).rgb;
+    if (rough > 0.1) {
+        float blur = rough * 0.03;
+        color += texture(envMap, uv + vec2(blur, 0.0)).rgb;
+        color += texture(envMap, uv + vec2(-blur, 0.0)).rgb;
+        color += texture(envMap, uv + vec2(0.0, blur)).rgb;
+        color += texture(envMap, uv + vec2(0.0, -blur)).rgb;
+        color /= 5.0;
+    }
+    return color;
+}
+
+void main() {
+    // Sample textures with LOD control
+    vec3 finalAlbedo = useAlbedoMap ? sampleWithLOD(albedoMap, vTexCoord).rgb : albedo;
+    float finalRoughness = useRoughnessMap ? sampleWithLOD(roughnessMap, vTexCoord).r : roughness;
+    float finalMetallic = useMetallicMap ? sampleWithLOD(metallicMap, vTexCoord).r : metallic;
+    float finalAO = useAOMap ? sampleWithLOD(aoMap, vTexCoord).r : ao;
+    vec3 finalEmission = useEmissiveMap
+        ? sampleWithLOD(emissiveMap, vTexCoord).rgb * emissiveIntensity
+        : emission;
+
+    // Normal mapping with LOD
+    vec3 N;
+    if (useNormalMap) {
+        vec3 normalSample = sampleWithLOD(normalMap, vTexCoord).rgb * 2.0 - 1.0;
+        // Reduce normal strength at higher LOD (farther = less detail)
+        float lodNormalStrength = normalStrength / (1.0 + u_textureLOD * 0.5);
+        normalSample.xy *= lodNormalStrength;
+        N = normalize(vTBN * normalSample);
+    } else {
+        N = normalize(vViewNormal);
+    }
+
+    vec3 V = normalize(-vViewPos);
+    vec3 R = reflect(-V, N);
+
+    // Transform to world space for environment sampling
+    vec3 worldN = invViewRot * N;
+    vec3 worldR = invViewRot * R;
+
+    // Calculate F0
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, finalAlbedo, finalMetallic);
+
+    // IBL Diffuse
+    vec2 irradianceUV = directionToUV(worldN);
+    vec3 irradiance = texture(irradianceMap, irradianceUV).rgb;
+
+    if (length(irradiance) < 0.001) {
+        vec3 up = abs(worldN.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 tangent = normalize(cross(up, worldN));
+        vec3 bitangent = cross(worldN, tangent);
+        irradiance = texture(envMap, directionToUV(worldN)).rgb * 0.3;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + tangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN - tangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + bitangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN - bitangent * 0.5))).rgb * 0.15;
+        irradiance += texture(envMap, directionToUV(normalize(worldN + vec3(0.0, 0.5, 0.0)))).rgb * 0.1;
+    }
+
+    float NdotV = max(dot(N, V), 0.0);
+    vec3 kS = fresnelSchlickRoughness(NdotV, F0, finalRoughness);
+    vec3 kD = 1.0 - kS;
+    kD *= 1.0 - finalMetallic;
+
+    vec3 diffuse = irradiance * finalAlbedo;
+
+    // IBL Specular
+    vec3 prefilteredColor = sampleEnvLOD(worldR, finalRoughness);
+    vec2 brdfUV = vec2(NdotV, finalRoughness);
+    vec2 brdf = texture(brdfLUT, brdfUV).rg;
+
+    if (brdf.x < 0.001 && brdf.y < 0.001) {
+        float a = finalRoughness * finalRoughness;
+        brdf.x = 1.0 - a * 0.5;
+        brdf.y = a * 0.5;
+    }
+
+    vec3 specular = prefilteredColor * (kS * brdf.x + brdf.y);
+
+    // Combine
+    vec3 ambient = (kD * diffuse + specular) * finalAO * envIntensity;
+    vec3 color = ambient + finalEmission;
+
+    // Tone mapping
+    color *= exposure;
+    color = color / (vec3(1.0) + color);
+    color = pow(color, vec3(1.0 / gamma));
+
+    frag_color = vec4(color, 1.0);
+}
+)";
+}
+
+/**
+ * LOD-aware textured PBR fallback shader (analytical lighting)
+ */
+inline std::string pbr_lod_fallback_frag_shader() {
+    return R"(#version 300 es
+precision highp float;
+
+in vec3 vViewPos;
+in vec3 vViewNormal;
+in vec3 vLocalPos;
+in vec2 vTexCoord;
+in mat3 vTBN;
+
+uniform vec3 albedo;
+uniform float metallic;
+uniform float roughness;
+uniform float ao;
+uniform vec3 emission;
+
+// Texture LOD control
+uniform float u_textureLOD;
+uniform bool u_useExplicitLOD;
+
+uniform bool useAlbedoMap;
+uniform bool useNormalMap;
+uniform bool useRoughnessMap;
+uniform bool useMetallicMap;
+uniform bool useAOMap;
+uniform bool useEmissiveMap;
+
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D roughnessMap;
+uniform sampler2D metallicMap;
+uniform sampler2D aoMap;
+uniform sampler2D emissiveMap;
+
+uniform float normalStrength;
+uniform float emissiveIntensity;
+uniform float envIntensity;
+uniform float exposure;
+uniform float gamma;
+
+out vec4 frag_color;
+
+const float PI = 3.14159265359;
+
+vec4 sampleWithLOD(sampler2D tex, vec2 uv) {
+    if (u_useExplicitLOD) {
+        return textureLod(tex, uv, u_textureLOD);
+    }
+    return texture(tex, uv);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float distributionGGX(vec3 N, vec3 H, float rough) {
+    float a = rough * rough;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    return a2 / (PI * denom * denom);
+}
+
+float geometrySchlickGGX(float NdotV, float rough) {
+    float r = rough + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float geometrySmith(vec3 N, vec3 V, vec3 L, float rough) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return geometrySchlickGGX(NdotV, rough) * geometrySchlickGGX(NdotL, rough);
+}
+
+void main() {
+    vec3 finalAlbedo = useAlbedoMap ? sampleWithLOD(albedoMap, vTexCoord).rgb : albedo;
+    float finalRoughness = useRoughnessMap ? sampleWithLOD(roughnessMap, vTexCoord).r : roughness;
+    float finalMetallic = useMetallicMap ? sampleWithLOD(metallicMap, vTexCoord).r : metallic;
+    float finalAO = useAOMap ? sampleWithLOD(aoMap, vTexCoord).r : ao;
+    vec3 finalEmission = useEmissiveMap
+        ? sampleWithLOD(emissiveMap, vTexCoord).rgb * emissiveIntensity
+        : emission;
+
+    vec3 N;
+    if (useNormalMap) {
+        vec3 normalSample = sampleWithLOD(normalMap, vTexCoord).rgb * 2.0 - 1.0;
+        float lodNormalStrength = normalStrength / (1.0 + u_textureLOD * 0.5);
+        normalSample.xy *= lodNormalStrength;
+        N = normalize(vTBN * normalSample);
+    } else {
+        N = normalize(vViewNormal);
+    }
+
+    vec3 V = normalize(-vViewPos);
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, finalAlbedo, finalMetallic);
+
+    // 3-point lighting
+    vec3 lightPositions[3];
+    lightPositions[0] = vec3(3.0, 3.0, 2.0);
+    lightPositions[1] = vec3(-3.0, 2.0, 0.0);
+    lightPositions[2] = vec3(0.0, -2.0, 1.0);
+
+    vec3 lightColors[3];
+    lightColors[0] = vec3(1.0, 0.95, 0.9) * 8.0;
+    lightColors[1] = vec3(0.6, 0.7, 1.0) * 4.0;
+    lightColors[2] = vec3(0.5, 0.5, 0.5) * 2.0;
+
+    vec3 Lo = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+        vec3 L = normalize(lightPositions[i] - vViewPos);
+        vec3 H = normalize(V + L);
+        float distance = length(lightPositions[i] - vViewPos);
+        float attenuation = 1.0 / (1.0 + distance * distance * 0.1);
+        vec3 radiance = lightColors[i] * attenuation;
+
+        float NDF = distributionGGX(N, H, finalRoughness);
+        float G = geometrySmith(N, V, L, finalRoughness);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 kD = (vec3(1.0) - F) * (1.0 - finalMetallic);
+
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (kD * finalAlbedo / PI + specular) * radiance * NdotL;
+    }
+
+    vec3 ambient = vec3(0.2, 0.2, 0.25) * finalAlbedo * finalAO;
+    ambient += vec3(0.15, 0.12, 0.1) * max(N.y, 0.0) * finalAlbedo * finalAO;
+
+    vec3 color = ambient + Lo * envIntensity + finalEmission;
+
+    color *= exposure;
+    color = color / (vec3(1.0) + color);
+    color = pow(color, vec3(1.0 / gamma));
+
+    frag_color = vec4(color, 1.0);
+}
+)";
+}
+
+/**
  * PBR rendering system with IBL
  */
 class WebPBR {
@@ -552,6 +1352,22 @@ public:
         printf("[WebPBR] Compiling fallback skybox shader...\n");
         if (!mFallbackSkyboxShader.compile(pbr_skybox_vert(), pbr_fallback_skybox_frag())) {
             printf("[WebPBR] ERROR: Fallback skybox shader compilation failed!\n");
+        }
+        printf("[WebPBR] Compiling textured PBR shader...\n");
+        if (!mTexturedPbrShader.compile(pbr_textured_vert_shader(), pbr_textured_frag_shader())) {
+            printf("[WebPBR] ERROR: Textured PBR shader compilation failed!\n");
+        }
+        printf("[WebPBR] Compiling textured fallback PBR shader...\n");
+        if (!mTexturedFallbackPbrShader.compile(pbr_textured_vert_shader(), pbr_textured_fallback_frag_shader())) {
+            printf("[WebPBR] ERROR: Textured fallback PBR shader compilation failed!\n");
+        }
+        printf("[WebPBR] Compiling LOD-aware PBR shader...\n");
+        if (!mLodPbrShader.compile(pbr_textured_vert_shader(), pbr_lod_frag_shader())) {
+            printf("[WebPBR] ERROR: LOD PBR shader compilation failed!\n");
+        }
+        printf("[WebPBR] Compiling LOD-aware fallback PBR shader...\n");
+        if (!mLodFallbackPbrShader.compile(pbr_textured_vert_shader(), pbr_lod_fallback_frag_shader())) {
+            printf("[WebPBR] ERROR: LOD fallback PBR shader compilation failed!\n");
         }
         printf("[WebPBR] All shaders compiled\n");
 
@@ -690,7 +1506,173 @@ public:
         shader.uniform("roughness", mat.roughness);
         shader.uniform("ao", mat.ao);
         shader.uniform("emission", mat.emission);
+    }
 
+    /**
+     * Set extended material with texture map support
+     * Call this after begin() and after binding your textures
+     */
+    void materialEx(const PBRMaterialEx& mat) {
+        // Use textured shader instead of regular PBR shader
+        ShaderProgram& shader = mEnvLoaded ? mTexturedPbrShader : mTexturedFallbackPbrShader;
+
+        // Set base material properties
+        shader.uniform("albedo", mat.albedo);
+        shader.uniform("metallic", mat.metallic);
+        shader.uniform("roughness", mat.roughness);
+        shader.uniform("ao", mat.ao);
+        shader.uniform("emission", mat.emission);
+
+        // Set texture transform
+        shader.uniform("textureScale", mat.textureScale);
+        shader.uniform("textureOffset", mat.textureOffset);
+        shader.uniform("normalStrength", mat.normalStrength);
+        shader.uniform("emissiveIntensity", mat.emissiveIntensity);
+
+        // Set texture map flags
+        shader.uniform("useAlbedoMap", mat.useAlbedoMap);
+        shader.uniform("useNormalMap", mat.useNormalMap);
+        shader.uniform("useRoughnessMap", mat.useRoughnessMap);
+        shader.uniform("useMetallicMap", mat.useMetallicMap);
+        shader.uniform("useAOMap", mat.useAOMap);
+        shader.uniform("useEmissiveMap", mat.useEmissiveMap);
+
+        // Set texture samplers
+        if (mat.useAlbedoMap) shader.uniform("albedoMap", mat.albedoMapUnit);
+        if (mat.useNormalMap) shader.uniform("normalMap", mat.normalMapUnit);
+        if (mat.useRoughnessMap) shader.uniform("roughnessMap", mat.roughnessMapUnit);
+        if (mat.useMetallicMap) shader.uniform("metallicMap", mat.metallicMapUnit);
+        if (mat.useAOMap) shader.uniform("aoMap", mat.aoMapUnit);
+        if (mat.useEmissiveMap) shader.uniform("emissiveMap", mat.emissiveMapUnit);
+    }
+
+    /**
+     * Begin textured PBR rendering
+     * Use this instead of begin() when using PBRMaterialEx with texture maps
+     */
+    void beginTextured(Graphics& g, const Vec3f& cameraPos) {
+        if (!mCreated) {
+            create(g);
+        }
+
+        uploadIfNeeded();
+
+        if (mEnvLoaded) {
+            mActiveShader = &mTexturedPbrShader;
+            g.shader(mTexturedPbrShader);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mEnvTexture);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, mIrradianceTexture);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, mBrdfLUT);
+
+            mTexturedPbrShader.uniform("envMap", 0);
+            mTexturedPbrShader.uniform("irradianceMap", 1);
+            mTexturedPbrShader.uniform("brdfLUT", 2);
+            mTexturedPbrShader.uniform("envIntensity", mEnvIntensity);
+            mTexturedPbrShader.uniform("exposure", mExposure);
+            mTexturedPbrShader.uniform("gamma", mGamma);
+
+            float invViewRot[9] = {1,0,0, 0,1,0, 0,0,1};
+            mTexturedPbrShader.uniformMatrix3("invViewRot", invViewRot);
+        } else {
+            mActiveShader = &mTexturedFallbackPbrShader;
+            g.shader(mTexturedFallbackPbrShader);
+            mTexturedFallbackPbrShader.uniform("envIntensity", mEnvIntensity);
+            mTexturedFallbackPbrShader.uniform("exposure", mExposure);
+            mTexturedFallbackPbrShader.uniform("gamma", mGamma);
+        }
+
+        // Set default material with no texture maps
+        PBRMaterialEx defaultMat;
+        materialEx(defaultMat);
+    }
+
+    /**
+     * Begin LOD-aware PBR rendering with explicit texture LOD control
+     * Use this for Unreal-style continuous mipmap texture LOD
+     *
+     * @param g Graphics context
+     * @param cameraPos Camera position for IBL
+     * @param textureLOD Continuous LOD value (0.0 = full res, 1.0 = half res, etc.)
+     */
+    void beginWithLOD(Graphics& g, const Vec3f& cameraPos, float textureLOD) {
+        if (!mCreated) {
+            create(g);
+        }
+
+        uploadIfNeeded();
+
+        mCurrentTextureLOD = textureLOD;
+
+        if (mEnvLoaded) {
+            mActiveShader = &mLodPbrShader;
+            g.shader(mLodPbrShader);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mEnvTexture);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, mIrradianceTexture);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, mBrdfLUT);
+
+            mLodPbrShader.uniform("envMap", 0);
+            mLodPbrShader.uniform("irradianceMap", 1);
+            mLodPbrShader.uniform("brdfLUT", 2);
+            mLodPbrShader.uniform("envIntensity", mEnvIntensity);
+            mLodPbrShader.uniform("exposure", mExposure);
+            mLodPbrShader.uniform("gamma", mGamma);
+
+            float invViewRot[9] = {1,0,0, 0,1,0, 0,0,1};
+            mLodPbrShader.uniformMatrix3("invViewRot", invViewRot);
+
+            // Set LOD uniforms
+            mLodPbrShader.uniform("u_textureLOD", textureLOD);
+            mLodPbrShader.uniform("u_useExplicitLOD", true);
+        } else {
+            mActiveShader = &mLodFallbackPbrShader;
+            g.shader(mLodFallbackPbrShader);
+            mLodFallbackPbrShader.uniform("envIntensity", mEnvIntensity);
+            mLodFallbackPbrShader.uniform("exposure", mExposure);
+            mLodFallbackPbrShader.uniform("gamma", mGamma);
+
+            // Set LOD uniforms
+            mLodFallbackPbrShader.uniform("u_textureLOD", textureLOD);
+            mLodFallbackPbrShader.uniform("u_useExplicitLOD", true);
+        }
+
+        // Set default material with no texture maps
+        PBRMaterialEx defaultMat;
+        materialEx(defaultMat);
+    }
+
+    /**
+     * Update texture LOD during rendering
+     * Call this between material changes to update LOD for different objects
+     *
+     * @param lod Continuous LOD value
+     */
+    void setTextureLOD(float lod) {
+        mCurrentTextureLOD = lod;
+        if (mActiveShader) {
+            mActiveShader->uniform("u_textureLOD", lod);
+        }
+    }
+
+    /**
+     * Get current texture LOD value
+     */
+    float textureLOD() const { return mCurrentTextureLOD; }
+
+    /**
+     * Enable or disable explicit LOD control mid-render
+     */
+    void setExplicitLOD(bool enable) {
+        if (mActiveShader) {
+            mActiveShader->uniform("u_useExplicitLOD", enable);
+        }
     }
 
     /**
@@ -959,9 +1941,14 @@ private:
     Mesh mSkyboxMesh;
     ShaderProgram mPbrShader;
     ShaderProgram mSkyboxShader;
-    ShaderProgram mFallbackPbrShader;     // Analytical lighting fallback
-    ShaderProgram mFallbackSkyboxShader;  // Gradient sky fallback
-    ShaderProgram* mActiveShader = nullptr;  // Currently active PBR shader
+    ShaderProgram mFallbackPbrShader;           // Analytical lighting fallback
+    ShaderProgram mFallbackSkyboxShader;        // Gradient sky fallback
+    ShaderProgram mTexturedPbrShader;           // IBL with texture maps
+    ShaderProgram mTexturedFallbackPbrShader;   // Analytical with texture maps
+    ShaderProgram mLodPbrShader;                // LOD-aware IBL with textureLod()
+    ShaderProgram mLodFallbackPbrShader;        // LOD-aware analytical lighting
+    ShaderProgram* mActiveShader = nullptr;     // Currently active PBR shader
+    float mCurrentTextureLOD = 0.0f;            // Current texture LOD value
 
     std::vector<float> mIrradianceData;
     int mIrradianceWidth = 0;

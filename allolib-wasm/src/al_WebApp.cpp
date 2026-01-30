@@ -78,7 +78,46 @@ EM_JS(void, registerAutoLODJSBridge, (), {
             Module.ccall('al_autolod_set_unload_enabled', null, ['number'], [enabled ? 1 : 0]);
         }
     };
-    console.log('[AlloLib] Auto-LOD JS bridge registered');
+
+    // Texture LOD bridge
+    window.allolib.textureLOD = {
+        setEnabled: function(enabled) {
+            Module.ccall('al_texture_lod_set_enabled', null, ['number'], [enabled ? 1 : 0]);
+        },
+        getEnabled: function() {
+            return Module.ccall('al_texture_lod_get_enabled', 'number', [], []) !== 0;
+        },
+        setBias: function(bias) {
+            Module.ccall('al_texture_lod_set_bias', null, ['number'], [bias]);
+        },
+        getBias: function() {
+            return Module.ccall('al_texture_lod_get_bias', 'number', [], []);
+        },
+        setMaxResolution: function(resolution) {
+            Module.ccall('al_texture_lod_set_max_resolution', null, ['number'], [resolution]);
+        },
+        getMaxResolution: function() {
+            return Module.ccall('al_texture_lod_get_max_resolution', 'number', [], []);
+        },
+        getResolutionForDistance: function(distance) {
+            return Module.ccall('al_texture_lod_get_resolution', 'number', ['number'], [distance]);
+        },
+        getLevelForDistance: function(distance, numLevels) {
+            return Module.ccall('al_texture_lod_get_level', 'number', ['number', 'number'], [distance, numLevels || -1]);
+        },
+        // Continuous LOD methods (Unreal-style mipmap support)
+        setReferenceDistance: function(distance) {
+            Module.ccall('al_texture_lod_set_reference_distance', null, ['number'], [distance]);
+        },
+        getReferenceDistance: function() {
+            return Module.ccall('al_texture_lod_get_reference_distance', 'number', [], []);
+        },
+        getContinuousLOD: function(distance, maxMipLevel) {
+            return Module.ccall('al_texture_lod_get_continuous', 'number', ['number', 'number'], [distance, maxMipLevel || 12]);
+        }
+    };
+
+    console.log('[AlloLib] Auto-LOD and Texture LOD JS bridges registered');
 });
 #endif
 
@@ -723,6 +762,75 @@ void al_autolod_set_unload_enabled(int enabled) {
     if (al::gAutoLODInstance) {
         al::gAutoLODInstance->setUnloadEnabled(enabled != 0);
     }
+}
+
+// =========================================================================
+// Texture LOD bridge functions
+// =========================================================================
+
+EMSCRIPTEN_KEEPALIVE
+void al_texture_lod_set_enabled(int enabled) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setTextureLODEnabled(enabled != 0);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_texture_lod_get_enabled() {
+    return (al::gAutoLODInstance && al::gAutoLODInstance->textureLODEnabled()) ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_texture_lod_set_bias(float bias) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setTextureLODBias(bias);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+float al_texture_lod_get_bias() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->textureLODBias() : 1.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_texture_lod_set_max_resolution(int resolution) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setMaxTextureResolution(resolution);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_texture_lod_get_max_resolution() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->maxTextureResolution() : 4096;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_texture_lod_get_resolution(float distance) {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->getTextureResolution(distance) : 4096;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int al_texture_lod_get_level(float distance, int numLevels) {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->getTextureLODLevel(distance, numLevels) : 0;
+}
+
+// Continuous texture LOD functions (mipmap support)
+
+EMSCRIPTEN_KEEPALIVE
+void al_texture_lod_set_reference_distance(float distance) {
+    if (al::gAutoLODInstance) {
+        al::gAutoLODInstance->setTextureReferenceDistance(distance);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+float al_texture_lod_get_reference_distance() {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->textureReferenceDistance() : 5.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float al_texture_lod_get_continuous(float distance, int maxMipLevel) {
+    return al::gAutoLODInstance ? al::gAutoLODInstance->getContinuousTextureLOD(distance, maxMipLevel) : 0.0f;
 }
 
 } // extern "C"

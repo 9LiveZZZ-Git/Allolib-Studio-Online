@@ -428,23 +428,28 @@ function findVariableType(
   return undefined
 }
 
-// Default code template for AlloLib Web - AudioVisual Spheres
+// Default code template for AlloLib Studio Online - Showcase Demo
 export const defaultCode = `/**
- * AlloLib Studio Online - AudioVisual Spheres
+ * AlloLib Studio Online - Welcome Showcase
  *
- * Each note creates a sphere that moves through 3D space.
- * The sphere's size and color react to the audio envelope.
+ * This demo showcases Allolib Studio's key features:
+ *   • PBR materials with HDR environment lighting
+ *   • Real-time audio synthesis with visual feedback
+ *   • Automatic Level-of-Detail (LOD) system
+ *   • Interactive 3D graphics
  *
  * Play notes using your keyboard like a piano:
  *   - Bottom row (ZXCVBNM) = C3-B3
  *   - Middle row (ASDFGHJ) = C4-B4 (middle C)
  *   - Top row (QWERTYU) = C5-B5
  *
- * Use the Parameter Panel to adjust Amplitude, Attack, and Release.
- * Save presets with Quick Save!
+ * Use the Parameter Panel to adjust sound and visuals.
+ * Explore more examples in the Examples panel!
  */
 
 #include "al_playground_compat.hpp"
+#include "al_WebPBR.hpp"
+#include "al_WebAutoLOD.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include "al/math/al_Random.hpp"
 
@@ -455,46 +460,94 @@ export const defaultCode = `/**
 
 using namespace al;
 
-class SineEnv : public SynthVoice {
+// ==========================================================================
+// Visual orb data (global for voice access)
+// ==========================================================================
+const int MAX_ORBS = 32;
+
+struct OrbVisual {
+    Vec3f position;
+    Vec3f velocity;
+    float phase = 0;
+    float timeAlive = 0;
+    float baseSize = 0.4f;
+    float envelope = 0;
+    float roughness = 0.05f;
+    bool active = false;
+    int id = -1;
+};
+
+// Global orb array (shared between app and voices)
+OrbVisual gOrbs[MAX_ORBS];
+
+int allocateOrb() {
+    for (int i = 0; i < MAX_ORBS; i++) {
+        if (!gOrbs[i].active) {
+            gOrbs[i].active = true;
+            gOrbs[i].id = i;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void freeOrb(int id) {
+    if (id >= 0 && id < MAX_ORBS) {
+        gOrbs[id].active = false;
+    }
+}
+
+// ==========================================================================
+// Synth Voice - Audio only, updates visual state
+// Uses simple member variables instead of internal trigger parameters
+// to avoid polluting the parameter panel with sequencer params
+// ==========================================================================
+class OrbVoice : public SynthVoice {
 public:
     gam::Pan<> mPan;
     gam::Sine<> mOsc;
+    gam::Sine<> mVibrato;
     gam::Env<3> mAmpEnv;
     gam::EnvFollow<> mEnvFollow;
-    Mesh mMesh;
 
-    double rotation = 0;
-    double rotSpeed;
-    float timepose = 0;
-    Vec3f note_position;
-    Vec3f note_direction;
+    // Voice parameters (set directly before triggering)
+    float mFreq = 440.0f;
+    float mAmp = 0.3f;
+    float mAttack = 0.08f;
+    float mRelease = 3.0f;
+    float mPanPos = 0.0f;
+
+    int visualId = -1;
 
     void init() override {
         mAmpEnv.curve(0);
-        mAmpEnv.levels(0, 1, 1, 0);
+        mAmpEnv.levels(0, 1, 0.7, 0);
         mAmpEnv.sustainPoint(2);
+        mVibrato.freq(5.0);
+        // Set initial envelope times
+        mAmpEnv.lengths()[0] = mAttack;
+        mAmpEnv.lengths()[2] = mRelease;
+    }
 
-        addSphere(mMesh, 0.3, 30, 30);
-        mMesh.decompress();
-        mMesh.generateNormals();
-
-        rotSpeed = al::rnd::uniformS() * 2;
-
-        createInternalTriggerParameter("amplitude", 0.3, 0.0, 1.0);
-        createInternalTriggerParameter("frequency", 60, 20, 5000);
-        createInternalTriggerParameter("attackTime", 0.1, 0.01, 3.0);
-        createInternalTriggerParameter("releaseTime", 2.0, 0.1, 10.0);
-        createInternalTriggerParameter("pan", 0.0, -1.0, 1.0);
+    // Setters for voice parameters
+    void set(float freq, float amp, float attack, float release, float pan) {
+        mFreq = freq;
+        mAmp = amp;
+        mAttack = attack;
+        mRelease = release;
+        mPanPos = pan;
+        // Update envelope times immediately
+        mAmpEnv.lengths()[0] = attack;
+        mAmpEnv.lengths()[2] = release;
     }
 
     void onProcess(AudioIOData& io) override {
-        mOsc.freq(getInternalParameterValue("frequency"));
-        mAmpEnv.lengths()[0] = getInternalParameterValue("attackTime");
-        mAmpEnv.lengths()[2] = getInternalParameterValue("releaseTime");
-        mPan.pos(getInternalParameterValue("pan"));
+        float vibDepth = 0.003f * mFreq;
+        mOsc.freq(mFreq + mVibrato() * vibDepth * mAmpEnv());
+        mPan.pos(mPanPos);
 
         while (io()) {
-            float s1 = mOsc() * mAmpEnv() * getInternalParameterValue("amplitude");
+            float s1 = mOsc() * mAmpEnv() * mAmp;
             float s2;
             mEnvFollow(s1);
             mPan(s1, s1, s2);
@@ -504,57 +557,110 @@ public:
         if (mAmpEnv.done() && (mEnvFollow.value() < 0.001f)) free();
     }
 
+    // Update visual state instead of drawing
     void onProcess(Graphics& g) override {
-        float frequency = getInternalParameterValue("frequency");
-        float amplitude = getInternalParameterValue("amplitude");
-        rotation += rotSpeed;
-        timepose += 0.02;
-
-        g.pushMatrix();
-        g.depthTesting(true);
-        g.lighting(true);
-        g.translate(note_position + note_direction * timepose);
-        g.rotate(rotation, Vec3f(0, 1, 0));
-        g.rotate(rotation * 0.7, Vec3f(1, 0, 0));
-        g.scale(0.3 + mAmpEnv() * 0.3, 0.3 + mAmpEnv() * 0.5, amplitude);
-        g.color(HSV(frequency / 1000, 0.5 + mAmpEnv() * 0.3, 0.3 + 0.6 * mAmpEnv()));
-        g.draw(mMesh);
-        g.popMatrix();
+        // Update visual orb envelope from audio
+        if (visualId >= 0 && visualId < MAX_ORBS) {
+            gOrbs[visualId].envelope = mEnvFollow.value() * 3.0f;
+        }
     }
 
     void onTriggerOn() override {
-        float angle = getInternalParameterValue("frequency") / 200;
         mAmpEnv.reset();
-        rotation = al::rnd::uniform() * 360;
-        timepose = 0;
-        note_position = Vec3f(0, 0, -8);
-        note_direction = Vec3f(sin(angle), cos(angle) * 0.3, 0.1);
+
+        // Allocate a visual orb
+        visualId = allocateOrb();
+        if (visualId >= 0) {
+            // Position based on frequency and pan
+            float x = mPanPos * 4.0f + rnd::uniformS() * 0.5f;
+            float y = 0.5f + (log2(mFreq / 220.0f)) * 0.5f;
+            float z = -3.0f + rnd::uniformS() * 4.0f;
+
+            gOrbs[visualId].position = Vec3f(x, y, z);
+            gOrbs[visualId].velocity = Vec3f(
+                rnd::uniformS() * 0.3f,
+                0.1f + rnd::uniform() * 0.2f,
+                rnd::uniformS() * 0.2f
+            );
+            gOrbs[visualId].baseSize = 0.25f + (1.0f - mFreq / 2000.0f) * 0.25f;
+            gOrbs[visualId].phase = rnd::uniform() * M_2PI;
+            gOrbs[visualId].timeAlive = 0;
+            gOrbs[visualId].envelope = 0;
+            gOrbs[visualId].roughness = 0.05f;
+        }
+    }
+
+    void onFree() override {
+        // Release visual orb when voice is freed
+        if (visualId >= 0) {
+            freeOrb(visualId);
+            visualId = -1;
+        }
     }
 
     void onTriggerOff() override { mAmpEnv.release(); }
 };
 
-class MyApp : public App {
+// ==========================================================================
+// Main Application
+// ==========================================================================
+class StudioShowcase : public App {
 public:
-    SynthGUIManager<SineEnv> synthManager{"SineEnv"};
+    WebPBR pbr;
+    SynthGUIManager<OrbVoice> synthManager{"OrbSynth"};
 
-    // GUI Parameters
-    Parameter amplitude{"Amplitude", "", 0.3f, 0.0f, 1.0f};
-    Parameter attackTime{"Attack", "", 0.1f, 0.01f, 3.0f};
-    Parameter releaseTime{"Release", "", 2.0f, 0.1f, 10.0f};
+    Mesh floorMesh;
+    Mesh orbMesh;
+
+    // Parameters
+    Parameter amplitude{"Amplitude", "", 0.35f, 0.0f, 1.0f};
+    Parameter attackTime{"Attack", "", 0.08f, 0.01f, 2.0f};
+    Parameter releaseTime{"Release", "", 3.0f, 0.1f, 10.0f};
+    Parameter envIntensity{"Brightness", "", 1.0f, 0.3f, 2.0f};
     ControlGUI gui;
+
+    double time = 0;
+    float camOrbit = 0;
 
     void onCreate() override {
         gam::sampleRate(44100);
-        nav().pos(0, 0, 0);
 
-        // Register parameters with GUI
-        gui << amplitude << attackTime << releaseTime;
+        // Load woods HDR environment
+        pbr.loadEnvironment("/assets/environments/kloofendal_48d_partly_cloudy_puresky_1k.hdr");
+
+        // Create ground plane
+        addSurface(floorMesh, 50, 50, 80, 80);
+        floorMesh.generateNormals();
+
+        // Create shared orb mesh (high quality for reflections)
+        addSphere(orbMesh, 1.0, 64, 64);
+        orbMesh.decompress();
+        orbMesh.generateNormals();
+
+        // Initialize orbs
+        for (int i = 0; i < MAX_ORBS; i++) {
+            gOrbs[i].active = false;
+        }
+
+        // Enable auto-LOD
+        enableAutoLOD(4);
+
+        // Camera setup
+        nav().pos(0, 2.5, 8);
+        nav().faceToward(Vec3f(0, 0, -5));
+
+        // Register parameters
+        gui << amplitude << attackTime << releaseTime << envIntensity;
         gui.init();
 
-        std::cout << "[AudioVisual Spheres]" << std::endl;
-        std::cout << "Spheres fly outward based on pitch!" << std::endl;
-        std::cout << "Play with keyboard: ZXCVBNM (C3-B3), ASDFGHJ (C4-B4)" << std::endl;
+        std::cout << "\\n========================================" << std::endl;
+        std::cout << "  Welcome to AlloLib Studio Online!" << std::endl;
+        std::cout << "========================================\\n" << std::endl;
+        std::cout << "Play notes with your keyboard:" << std::endl;
+        std::cout << "  ZXCVBNM = C3-B3 (bass)" << std::endl;
+        std::cout << "  ASDFGHJ = C4-B4 (middle)" << std::endl;
+        std::cout << "  QWERTYU = C5-B5 (treble)\\n" << std::endl;
+        std::cout << "Explore more examples in the sidebar!" << std::endl;
     }
 
     void onSound(AudioIOData& io) override {
@@ -562,23 +668,93 @@ public:
     }
 
     void onAnimate(double dt) override {
+        time += dt;
+        camOrbit += dt * 0.08;
         gui.draw();
+
+        // Update orb physics
+        for (int i = 0; i < MAX_ORBS; i++) {
+            if (gOrbs[i].active) {
+                gOrbs[i].timeAlive += dt;
+                gOrbs[i].phase += dt * 1.5;
+                gOrbs[i].position += gOrbs[i].velocity * dt;
+                gOrbs[i].position.y += sin(gOrbs[i].timeAlive * 2.0) * 0.003f;
+
+                // Fade out roughness over time for shinier look
+                gOrbs[i].roughness = 0.02f + gOrbs[i].envelope * 0.08f;
+            }
+        }
+
+        // Gentle camera sway
+        float camX = sin(camOrbit) * 0.8f;
+        float camY = 2.0f + sin(time * 0.2) * 0.15f;
+        nav().pos(camX, camY, 8);
+        nav().faceToward(Vec3f(0, 0.8, -5));
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.05, 0.05, 0.1);
+        g.clear(0.02, 0.02, 0.03);
+
+        // Draw HDR skybox
+        pbr.drawSkybox(g);
+
+        g.depthTesting(true);
+        pbr.envIntensity(envIntensity.get());
+        pbr.begin(g, nav().pos());
+
+        // Draw ground
+        PBRMaterial floorMat;
+        floorMat.albedo = Vec3f(0.03, 0.04, 0.02);
+        floorMat.metallic = 0.0f;
+        floorMat.roughness = 0.95f;
+        pbr.material(floorMat);
+
+        g.pushMatrix();
+        g.translate(0, -0.5, -10);
+        g.rotate(-90, 1, 0, 0);
+        g.draw(floorMesh);
+        g.popMatrix();
+
+        // Draw chrome orbs with PBR
+        for (int i = 0; i < MAX_ORBS; i++) {
+            if (gOrbs[i].active) {
+                float env = gOrbs[i].envelope;
+                float size = gOrbs[i].baseSize * (0.8f + env * 0.5f);
+
+                // Chrome material - very reflective
+                PBRMaterial chromeMat;
+                chromeMat.albedo = Vec3f(0.95f, 0.95f, 0.97f);
+                chromeMat.metallic = 1.0f;
+                chromeMat.roughness = gOrbs[i].roughness;
+                pbr.material(chromeMat);
+
+                g.pushMatrix();
+                g.translate(gOrbs[i].position);
+                g.rotate(gOrbs[i].phase * 30, Vec3f(0, 1, 0));
+                g.scale(size);
+                g.draw(orbMesh);
+                g.popMatrix();
+            }
+        }
+
+        pbr.end(g);
+
+        // Update synth visuals (updates envelope values)
         synthManager.render(g);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         int midiNote = asciiToMIDI(k.key());
         if (midiNote > 0) {
-            synthManager.voice()->setInternalParameterValue(
-                "frequency", ::pow(2.f, (midiNote - 69.f) / 12.f) * 440.f);
-            synthManager.voice()->setInternalParameterValue("amplitude", amplitude.get());
-            synthManager.voice()->setInternalParameterValue("attackTime", attackTime.get());
-            synthManager.voice()->setInternalParameterValue("releaseTime", releaseTime.get());
-            synthManager.triggerOn(midiNote);
+            float freq = ::pow(2.f, (midiNote - 69.f) / 12.f) * 440.f;
+            // Pan based on pitch (lower = left, higher = right)
+            float pan = (midiNote - 60) / 24.0f;  // C4 = center
+            pan = std::max(-1.0f, std::min(1.0f, pan));
+
+            // Get voice from underlying synth and trigger it directly
+            auto* voice = synthManager.synth().getVoice<OrbVoice>();
+            voice->set(freq, amplitude.get(), attackTime.get(), releaseTime.get(), pan);
+            synthManager.synth().triggerOn(voice, 0, midiNote);
         }
         return true;
     }
@@ -586,11 +762,11 @@ public:
     bool onKeyUp(Keyboard const& k) override {
         int midiNote = asciiToMIDI(k.key());
         if (midiNote > 0) {
-            synthManager.triggerOff(midiNote);
+            synthManager.synth().triggerOff(midiNote);
         }
         return true;
     }
 };
 
-ALLOLIB_MAIN(MyApp)
+ALLOLIB_MAIN(StudioShowcase)
 `

@@ -9,6 +9,7 @@
  * - Adaptive quality based on frame time
  * - Smooth LOD transitions
  * - Integration with QualityManager settings
+ * - Texture LOD integration for automatic resolution switching
  *
  * Usage:
  *   // Enable in onCreate - that's it!
@@ -16,6 +17,10 @@
  *
  *   // In onDraw, just use drawLOD()
  *   drawLOD(g, myMesh);  // LOD selected automatically!
+ *
+ *   // For textures, use global helpers
+ *   int level = getTextureLOD(distance);  // Get LOD level for distance
+ *   int res = getTextureResolution(distance);  // Get recommended resolution
  *
  * Settings are controlled from the toolbar's Graphics Settings panel.
  */
@@ -109,6 +114,9 @@ public:
         , mMinFullQualityDistance(5.0f)  // Always use LOD 0 within this distance
         , mUnloadDistance(500.0f)  // Distance at which to unload (return empty mesh)
         , mUnloadEnabled(false)   // Whether unloading is enabled
+        , mTextureLODEnabled(true)  // Texture LOD enabled by default
+        , mTextureLODBias(1.0f)     // Texture LOD bias (higher = lower quality sooner)
+        , mMaxTextureResolution(4096)  // Maximum texture resolution
         , mStatsEnabled(0)  // Using int instead of bool to avoid potential optimization issues
         , mTotalTriangles(0)
         , mMeshCount(0)
@@ -122,6 +130,13 @@ public:
         // Screen size thresholds (fraction of screen height) - up to 16 levels
         mScreenSizeThresholds = {0.5f, 0.35f, 0.25f, 0.18f, 0.12f, 0.08f, 0.05f, 0.03f,
                                   0.02f, 0.012f, 0.008f, 0.005f, 0.003f, 0.002f, 0.001f, 0.0005f};
+
+        // Texture LOD distance thresholds (distance -> resolution level)
+        // Closer = higher resolution, further = lower resolution
+        mTextureDistances = {5.0f, 15.0f, 30.0f, 60.0f, 120.0f};
+
+        // Standard texture resolution levels (from highest to lowest)
+        mTextureResolutions = {4096, 2048, 1024, 512, 256, 128};
     }
 
     // =========================================================================
@@ -213,6 +228,182 @@ public:
     // Enable/disable unloading at max distance
     void setUnloadEnabled(bool enabled) { mUnloadEnabled = enabled; }
     bool unloadEnabled() const { return mUnloadEnabled; }
+
+    // =========================================================================
+    // Texture LOD Settings
+    // =========================================================================
+
+    // Enable/disable texture LOD
+    void setTextureLODEnabled(bool enabled) { mTextureLODEnabled = enabled; }
+    bool textureLODEnabled() const { return mTextureLODEnabled; }
+
+    // Texture LOD bias - affects when to switch to lower resolutions
+    // Higher values = use lower resolution textures sooner (better performance)
+    // Lower values = keep high resolution textures longer (better quality)
+    void setTextureLODBias(float bias) { mTextureLODBias = std::max(0.1f, std::min(bias, 5.0f)); }
+    float textureLODBias() const { return mTextureLODBias; }
+
+    // Maximum texture resolution allowed
+    void setMaxTextureResolution(int resolution) {
+        // Clamp to valid power-of-2 values
+        if (resolution >= 4096) mMaxTextureResolution = 4096;
+        else if (resolution >= 2048) mMaxTextureResolution = 2048;
+        else if (resolution >= 1024) mMaxTextureResolution = 1024;
+        else if (resolution >= 512) mMaxTextureResolution = 512;
+        else mMaxTextureResolution = 256;
+    }
+    int maxTextureResolution() const { return mMaxTextureResolution; }
+
+    // Texture distance thresholds
+    void setTextureDistances(const std::vector<float>& distances) {
+        mTextureDistances = distances;
+    }
+    const std::vector<float>& textureDistances() const { return mTextureDistances; }
+
+    // Texture resolution levels (from highest to lowest)
+    void setTextureResolutions(const std::vector<int>& resolutions) {
+        mTextureResolutions = resolutions;
+    }
+    const std::vector<int>& textureResolutions() const { return mTextureResolutions; }
+
+    /**
+     * Get texture LOD level for a given distance.
+     * Returns 0 for closest (highest quality), increasing for lower quality.
+     * @param distance Distance from camera to object
+     * @param numLevels Number of LOD levels available (default: use configured levels)
+     * @return LOD level index (0 = highest quality)
+     */
+    int getTextureLODLevel(float distance, int numLevels = -1) const {
+        if (!mTextureLODEnabled) return 0;  // Always highest quality if disabled
+
+        int maxLevel = (numLevels > 0) ? numLevels - 1 : (int)mTextureDistances.size();
+
+        // Apply bias (higher bias = lower quality sooner)
+        float effectiveDistance = distance * mTextureLODBias;
+
+        for (size_t i = 0; i < mTextureDistances.size(); i++) {
+            if (effectiveDistance < mTextureDistances[i]) {
+                return std::min((int)i, maxLevel);
+            }
+        }
+        return maxLevel;
+    }
+
+    /**
+     * Get recommended texture resolution for a given distance.
+     * Takes into account bias and max resolution settings.
+     * @param distance Distance from camera to object
+     * @return Recommended texture resolution (e.g., 4096, 2048, 1024, 512, 256)
+     */
+    int getTextureResolution(float distance) const {
+        if (!mTextureLODEnabled) return mMaxTextureResolution;
+
+        int level = getTextureLODLevel(distance);
+        if (level < (int)mTextureResolutions.size()) {
+            return std::min(mTextureResolutions[level], mMaxTextureResolution);
+        }
+        return std::min(mTextureResolutions.back(), mMaxTextureResolution);
+    }
+
+    /**
+     * Get texture LOD level from screen coverage.
+     * Uses projected screen size to determine appropriate texture resolution.
+     * @param screenCoverage Fraction of screen covered by the texture (0-1)
+     * @return LOD level index
+     */
+    int getTextureLODFromScreenCoverage(float screenCoverage) const {
+        if (!mTextureLODEnabled) return 0;
+
+        // Screen coverage thresholds for texture LOD
+        // Higher coverage = need higher resolution
+        static const float coverageThresholds[] = {0.5f, 0.25f, 0.1f, 0.04f, 0.01f};
+
+        for (size_t i = 0; i < 5; i++) {
+            if (screenCoverage > coverageThresholds[i]) {
+                return i;
+            }
+        }
+        return 5;
+    }
+
+    // =========================================================================
+    // Continuous Texture LOD (Unreal-style mipmap-based)
+    // =========================================================================
+
+    /**
+     * Set texture reference distance.
+     * This is the distance at which LOD = 0 (full resolution).
+     * At 2x this distance, LOD = 1 (half resolution), etc.
+     */
+    void setTextureReferenceDistance(float d) {
+        mTextureReferenceDistance = std::max(0.001f, d);
+    }
+    float textureReferenceDistance() const { return mTextureReferenceDistance; }
+
+    /**
+     * Get continuous (float) texture LOD from distance.
+     * Uses logarithmic formula: LOD = log2(distance / referenceDistance) + bias
+     *
+     * This provides smooth, continuous LOD values for mipmap sampling.
+     *
+     * @param distance Distance from camera to object
+     * @param maxMipLevel Maximum mip level available in the texture
+     * @return Continuous LOD value (0.0 = full resolution, 1.0 = half, etc.)
+     */
+    float getContinuousTextureLOD(float distance, int maxMipLevel) const {
+        if (!mTextureLODEnabled) return 0.0f;
+
+        // Apply bias to distance (higher bias = lower quality sooner)
+        float effectiveDistance = distance * mTextureLODBias;
+
+        // Logarithmic LOD calculation
+        float lod = log2f(effectiveDistance / mTextureReferenceDistance);
+
+        return std::clamp(lod, 0.0f, (float)maxMipLevel);
+    }
+
+    /**
+     * Get continuous texture LOD from screen coverage (Unreal-style).
+     * Based on how much of the screen the textured object covers.
+     *
+     * @param screenCoverage Object's projected size in pixels
+     * @param textureSize Original texture size (width or height)
+     * @param maxMipLevel Maximum mip level available
+     * @return Continuous LOD value
+     */
+    float getScreenBasedTextureLOD(float screenCoverage, int textureSize, int maxMipLevel) const {
+        if (!mTextureLODEnabled) return 0.0f;
+        if (screenCoverage <= 0.0f || textureSize <= 0) return (float)maxMipLevel;
+
+        // How many texture pixels would ideally cover the screen area
+        float neededTexels = screenCoverage;
+
+        // LOD = how many times we can halve the texture and still have enough detail
+        float lod = log2f((float)textureSize / std::max(1.0f, neededTexels)) * mTextureLODBias;
+
+        return std::clamp(lod, 0.0f, (float)maxMipLevel);
+    }
+
+    /**
+     * Get continuous texture LOD using projected screen size.
+     * Combines distance and FOV for accurate LOD selection.
+     *
+     * @param distance Distance from camera to object
+     * @param objectSize World-space size of the object
+     * @param textureSize Original texture size
+     * @param maxMipLevel Maximum mip level available
+     * @return Continuous LOD value
+     */
+    float getProjectedTextureLOD(float distance, float objectSize, int textureSize, int maxMipLevel) const {
+        if (!mTextureLODEnabled) return 0.0f;
+
+        // Calculate projected screen size
+        float tanHalfFOV = tanf(mFOV * 0.5f * 3.14159f / 180.0f);
+        float projectedPixels = (objectSize / std::max(0.001f, distance)) *
+                                (mScreenHeight / (2.0f * tanHalfFOV));
+
+        return getScreenBasedTextureLOD(projectedPixels, textureSize, maxMipLevel);
+    }
 
     // =========================================================================
     // View Settings (updated each frame)
@@ -567,6 +758,14 @@ private:
     float mUnloadDistance;
     bool mUnloadEnabled;
 
+    // Texture LOD
+    bool mTextureLODEnabled;
+    float mTextureLODBias;
+    int mMaxTextureResolution;
+    float mTextureReferenceDistance = 5.0f;  // Distance where LOD = 0 (full resolution)
+    std::vector<float> mTextureDistances;
+    std::vector<int> mTextureResolutions;
+
     // Adaptive
     bool mAdaptiveEnabled;
     float mFrameTime;
@@ -638,6 +837,148 @@ inline void disableAutoLOD() {
     }
 }
 
+// =========================================================================
+// Global Texture LOD Helpers
+// =========================================================================
+
+/**
+ * Get texture LOD level for a given distance.
+ * Uses the global AutoLODManager settings.
+ * @param distance Distance from camera to object
+ * @param numLevels Number of LOD levels available (optional)
+ * @return LOD level index (0 = highest quality)
+ */
+inline int getTextureLOD(float distance, int numLevels = -1) {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->getTextureLODLevel(distance, numLevels);
+    }
+    return 0;  // Default to highest quality
+}
+
+/**
+ * Get recommended texture resolution for a given distance.
+ * Uses the global AutoLODManager settings.
+ * @param distance Distance from camera to object
+ * @return Recommended texture resolution (4096, 2048, 1024, 512, 256, or 128)
+ */
+inline int getTextureResolution(float distance) {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->getTextureResolution(distance);
+    }
+    return 4096;  // Default to maximum
+}
+
+/**
+ * Check if texture LOD is enabled globally.
+ */
+inline bool isTextureLODEnabled() {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->textureLODEnabled();
+    }
+    return false;
+}
+
+/**
+ * Enable texture LOD globally.
+ */
+inline void enableTextureLOD() {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->setTextureLODEnabled(true);
+    }
+}
+
+/**
+ * Disable texture LOD globally.
+ */
+inline void disableTextureLOD() {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->setTextureLODEnabled(false);
+    }
+}
+
+/**
+ * Set texture LOD bias globally.
+ * @param bias LOD bias (higher = lower quality sooner, default 1.0)
+ */
+inline void setTextureLODBias(float bias) {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->setTextureLODBias(bias);
+    }
+}
+
+/**
+ * Set maximum texture resolution globally.
+ * @param resolution Maximum resolution (4096, 2048, 1024, 512, or 256)
+ */
+inline void setMaxTextureResolution(int resolution) {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->setMaxTextureResolution(resolution);
+    }
+}
+
+// =========================================================================
+// Continuous Texture LOD Helpers (Unreal-style mipmap support)
+// =========================================================================
+
+/**
+ * Get continuous texture LOD from distance.
+ * Returns a float value for smooth mipmap sampling using textureLod().
+ *
+ * @param distance Distance from camera to object
+ * @param maxMipLevel Maximum mip level in the texture
+ * @return Continuous LOD value (0.0 = full resolution, 1.0 = half, 2.0 = quarter, etc.)
+ */
+inline float getTextureLODContinuous(float distance, int maxMipLevel = 12) {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->getContinuousTextureLOD(distance, maxMipLevel);
+    }
+    // Fallback calculation if no global instance
+    const float referenceDistance = 5.0f;
+    float lod = log2f(distance / referenceDistance);
+    return std::clamp(lod, 0.0f, (float)maxMipLevel);
+}
+
+/**
+ * Get continuous texture LOD from screen coverage.
+ * For Unreal-style screen-based LOD selection.
+ *
+ * @param screenCoverage Object's projected size in pixels
+ * @param textureSize Original texture size
+ * @param maxMipLevel Maximum mip level in the texture
+ * @return Continuous LOD value
+ */
+inline float getTextureLODFromScreen(float screenCoverage, int textureSize, int maxMipLevel = 12) {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->getScreenBasedTextureLOD(screenCoverage, textureSize, maxMipLevel);
+    }
+    // Fallback calculation
+    if (screenCoverage <= 0.0f || textureSize <= 0) return (float)maxMipLevel;
+    float lod = log2f((float)textureSize / std::max(1.0f, screenCoverage));
+    return std::clamp(lod, 0.0f, (float)maxMipLevel);
+}
+
+/**
+ * Set texture reference distance globally.
+ * This is the distance at which LOD = 0 (full resolution).
+ *
+ * @param distance Reference distance (default 5.0)
+ */
+inline void setTextureReferenceDistance(float distance) {
+    if (gAutoLODInstance) {
+        gAutoLODInstance->setTextureReferenceDistance(distance);
+    }
+}
+
+/**
+ * Get current texture reference distance.
+ */
+inline float getTextureReferenceDistance() {
+    if (gAutoLODInstance) {
+        return gAutoLODInstance->textureReferenceDistance();
+    }
+    return 5.0f;  // Default
+}
+
 } // namespace al
 
 // =========================================================================
@@ -660,6 +1001,21 @@ extern "C" {
     EMSCRIPTEN_KEEPALIVE int al_autolod_get_levels();
     EMSCRIPTEN_KEEPALIVE void al_autolod_set_unload_distance(float distance);
     EMSCRIPTEN_KEEPALIVE void al_autolod_set_unload_enabled(int enabled);
+
+    // Texture LOD functions
+    EMSCRIPTEN_KEEPALIVE void al_texture_lod_set_enabled(int enabled);
+    EMSCRIPTEN_KEEPALIVE int al_texture_lod_get_enabled();
+    EMSCRIPTEN_KEEPALIVE void al_texture_lod_set_bias(float bias);
+    EMSCRIPTEN_KEEPALIVE float al_texture_lod_get_bias();
+    EMSCRIPTEN_KEEPALIVE void al_texture_lod_set_max_resolution(int resolution);
+    EMSCRIPTEN_KEEPALIVE int al_texture_lod_get_max_resolution();
+    EMSCRIPTEN_KEEPALIVE int al_texture_lod_get_resolution(float distance);
+    EMSCRIPTEN_KEEPALIVE int al_texture_lod_get_level(float distance, int numLevels);
+
+    // Continuous texture LOD functions (mipmap support)
+    EMSCRIPTEN_KEEPALIVE void al_texture_lod_set_reference_distance(float distance);
+    EMSCRIPTEN_KEEPALIVE float al_texture_lod_get_reference_distance();
+    EMSCRIPTEN_KEEPALIVE float al_texture_lod_get_continuous(float distance, int maxMipLevel);
 }
 
 #endif // AL_WEB_AUTO_LOD_HPP

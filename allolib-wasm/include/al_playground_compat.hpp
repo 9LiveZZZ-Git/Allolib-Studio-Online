@@ -280,23 +280,14 @@ public:
         EM_ASM({ console.log('[SynthGUIManager] Control voice initialized with %d trigger parameters'); },
                (int)mControlVoice.triggerParameters().size());
 
-        // Ensure a WebControlGUI instance exists for parameter registration
-        if (!WebControlGUI::getActiveInstance()) {
-            mOwnedGui.reset(new WebControlGUI());
-        }
-
-        // Register all control voice trigger parameters with the web GUI
-        // This fires notifyParameterAdded() for each, sending them to JavaScript
-        auto* gui = WebControlGUI::getActiveInstance();
-        if (gui) {
-            for (auto* param : mControlVoice.triggerParameters()) {
-                gui->registerParameterMeta(*param);
-            }
-            EM_ASM({ console.log('[SynthGUIManager] Registered %d parameters with WebControlGUI'); },
-                   (int)mControlVoice.triggerParameters().size());
-        } else {
-            EM_ASM({ console.log('[SynthGUIManager] WARNING: No WebControlGUI available'); });
-        }
+        // NOTE: We do NOT register trigger parameters with WebControlGUI here.
+        // Trigger parameters are for per-voice control during sequencing, not for
+        // the main UI panel. The app should register its own ControlGUI parameters
+        // (e.g., gui << amplitude << attackTime) which control the values used
+        // when triggering new voices.
+        //
+        // This avoids duplicate parameters in the UI panel - one set from the
+        // voice's createInternalTriggerParameter() and one from the app's ControlGUI.
 #endif
 
         // Pre-allocate voices
@@ -425,9 +416,6 @@ private:
     SynthRecorder mRecorder;
     TSynthVoice mControlVoice;       // Template voice for UI parameter display
     SynthVoice* mLastVoice = nullptr;
-#ifdef __EMSCRIPTEN__
-    std::unique_ptr<WebControlGUI> mOwnedGui;  // Owned GUI if none existed
-#endif
 };
 
 } // namespace al

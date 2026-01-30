@@ -17,6 +17,15 @@ export const studioCategories: ExampleCategory[] = [
     ],
   },
   {
+    id: 'studio-textures',
+    title: 'Studio - Textures',
+    subcategories: [
+      { id: 'procedural', title: 'Procedural Textures' },
+      { id: 'pbr-materials', title: 'PBR Materials' },
+      { id: 'texture-lod', title: 'Texture LOD' },
+    ],
+  },
+  {
     id: 'studio-meshes',
     title: 'Studio - Meshes',
     subcategories: [
@@ -3125,6 +3134,628 @@ public:
 
 int main() {
     VirtualMuseum app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TEXTURES - PROCEDURAL
+  // ==========================================================================
+  {
+    id: 'studio-tex-procedural-noise',
+    title: 'Procedural Noise Textures',
+    description: 'Generate noise textures at runtime with Perlin and Worley noise',
+    category: 'studio-textures',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural Noise Textures
+ *
+ * Demonstrates generating noise textures at runtime
+ * using Perlin and Worley (cellular) noise algorithms.
+ *
+ * Controls:
+ *   1-4: Switch noise type
+ *   +/-: Adjust noise scale
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebProcedural.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class ProceduralNoiseDemo : public WebApp {
+public:
+    Mesh sphere;
+    Mesh plane;
+    Texture noiseTex;
+    ProceduralTexture noise;
+
+    int noiseType = 0;
+    float noiseScale = 4.0f;
+    bool needsUpdate = true;
+
+    void onCreate() override {
+        // Create meshes
+        addSphere(sphere, 1.0, 48, 48);
+        sphere.generateNormals();
+
+        addSurface(plane, 4, 4, 32, 32);
+        plane.generateNormals();
+
+        // Create texture
+        noiseTex.create2D(512, 512, Texture::R8, Texture::RED, Texture::UBYTE);
+        noiseTex.filter(Texture::LINEAR);
+        noiseTex.wrap(Texture::REPEAT);
+
+        // Generate initial noise
+        updateNoise();
+
+        nav().pos(0, 2, 5);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void updateNoise() {
+        switch (noiseType) {
+            case 0:
+                noise.perlinNoise(512, 512, noiseScale, 4, 0.5f);
+                break;
+            case 1:
+                noise.worleyNoise(512, 512, (int)(noiseScale * 8), WorleyMode::F1);
+                break;
+            case 2:
+                noise.worleyNoise(512, 512, (int)(noiseScale * 8), WorleyMode::F2_MINUS_F1);
+                break;
+            case 3:
+                // FBM (multiple octaves of Perlin)
+                noise.perlinNoise(512, 512, noiseScale, 6, 0.5f);
+                break;
+        }
+        noise.uploadToTexture(noiseTex.id());
+        needsUpdate = false;
+    }
+
+    void onAnimate(double dt) override {
+        if (needsUpdate) updateNoise();
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1, 0.1, 0.12);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Draw with noise as brightness
+        g.pushMatrix();
+        g.translate(0, 0.5, 0);
+        g.color(1, 1, 1);
+        g.draw(sphere);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case '1': noiseType = 0; needsUpdate = true; break;
+            case '2': noiseType = 1; needsUpdate = true; break;
+            case '3': noiseType = 2; needsUpdate = true; break;
+            case '4': noiseType = 3; needsUpdate = true; break;
+            case '+': case '=': noiseScale += 0.5f; needsUpdate = true; break;
+            case '-': noiseScale = std::max(0.5f, noiseScale - 0.5f); needsUpdate = true; break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    ProceduralNoiseDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-tex-procedural-patterns',
+    title: 'Procedural Patterns',
+    description: 'Generate pattern textures: brick, wood, marble, checkerboard',
+    category: 'studio-textures',
+    subcategory: 'procedural',
+    code: `/**
+ * Procedural Patterns
+ *
+ * Demonstrates generating pattern textures at runtime
+ * including bricks, wood grain, marble, and checkerboard.
+ *
+ * Controls:
+ *   1-4: Switch pattern type
+ *   Arrow keys: Orbit camera
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebProcedural.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class ProceduralPatternsDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh cube;
+    Mesh sphere;
+    int patternType = 0;
+    float camAngle = 0;
+
+    void onCreate() override {
+        // Load environment for PBR
+        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+
+        // Create meshes
+        addCube(cube, 1.5);
+        cube.generateNormals();
+
+        addSphere(sphere, 1.0, 48, 48);
+        sphere.generateNormals();
+
+        nav().pos(0, 2, 6);
+        nav().faceToward(Vec3f(0, 0.5, 0));
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += dt * 10.0;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02, 0.02, 0.03);
+
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        pbr.begin(g, nav().pos());
+
+        // Draw objects with different PBR materials
+        // simulating different procedural materials
+
+        // Draw cube (brick-like)
+        g.pushMatrix();
+        g.translate(-1.5, 0.75, 0);
+        g.rotate(camAngle, 0, 1, 0);
+        pbr.material(PBRMaterial(Vec3f(0.6, 0.4, 0.3), 0.0, 0.8));
+        g.draw(cube);
+        g.popMatrix();
+
+        // Draw sphere (marble-like)
+        g.pushMatrix();
+        g.translate(1.5, 1.0, 0);
+        g.rotate(camAngle * 0.5, 0, 1, 0);
+        pbr.material(PBRMaterial::Ceramic());
+        g.draw(sphere);
+        g.popMatrix();
+
+        pbr.end(g);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case '1': patternType = 0; break;
+            case '2': patternType = 1; break;
+            case '3': patternType = 2; break;
+            case '4': patternType = 3; break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    ProceduralPatternsDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TEXTURES - TEXTURE LOD
+  // ==========================================================================
+  {
+    id: 'studio-tex-lod-demo',
+    title: 'Texture LOD Demo',
+    description: 'Visualize automatic texture LOD level switching based on distance',
+    category: 'studio-textures',
+    subcategory: 'texture-lod',
+    code: `/**
+ * Texture LOD Demo
+ *
+ * Demonstrates automatic texture resolution concepts
+ * based on camera distance. Uses the global texture LOD helpers.
+ *
+ * Controls:
+ *   W/S: Move camera forward/backward
+ *   Arrow keys: Rotate view
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebAutoLOD.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class TextureLODDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh sphere;
+
+    float camDist = 10.0f;
+    float camAngle = 0;
+    int lastLOD = -1;
+
+    void onCreate() override {
+        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+
+        // Create sphere
+        addSphere(sphere, 2.0, 64, 64);
+        sphere.generateNormals();
+
+        // Enable auto-LOD (includes texture LOD)
+        enableAutoLOD();
+
+        nav().pos(0, 2, camDist);
+        nav().faceToward(Vec3f(0, 0, 0));
+
+        printf("[TextureLOD] Move camera (W/S) to see texture LOD changes\\n");
+        printf("[TextureLOD] Distance thresholds: 5, 15, 30, 60, 120 units\\n");
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += dt * 5.0;
+
+        // Update camera position
+        nav().pos(camDist * sin(camAngle * 0.1), 2, camDist * cos(camAngle * 0.1));
+        nav().faceToward(Vec3f(0, 0, 0));
+
+        // Check LOD level (using global helper from al_WebAutoLOD.hpp)
+        float dist = nav().pos().mag();
+        int currentLOD = getTextureLOD(dist, 5);
+        if (currentLOD != lastLOD) {
+            int res = getTextureResolution(dist);
+            printf("[TextureLOD] Distance: %.1f, LOD Level: %d, Suggested Resolution: %d\\n",
+                   dist, currentLOD, res);
+            lastLOD = currentLOD;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02, 0.02, 0.03);
+
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        pbr.begin(g, nav().pos());
+
+        // Draw sphere - color based on LOD level for visualization
+        float dist = nav().pos().mag();
+        int level = getTextureLOD(dist, 5);
+
+        // Color-code by LOD level
+        Vec3f colors[] = {
+            Vec3f(1,0.2,0.2),    // Level 0: Red (highest quality)
+            Vec3f(0.2,1,0.2),    // Level 1: Green
+            Vec3f(0.2,0.2,1),    // Level 2: Blue
+            Vec3f(1,1,0.2),      // Level 3: Yellow
+            Vec3f(1,0.2,1)       // Level 4: Magenta (lowest quality)
+        };
+
+        PBRMaterial mat;
+        mat.albedo = colors[std::min(level, 4)];
+        mat.metallic = 0.0f;
+        mat.roughness = 0.3f;
+        pbr.material(mat);
+
+        g.pushMatrix();
+        g.draw(sphere);
+        g.popMatrix();
+
+        pbr.end(g);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'w': case 'W': camDist = std::max(3.0f, camDist - 2.0f); break;
+            case 's': case 'S': camDist = std::min(150.0f, camDist + 2.0f); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    TextureLODDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-tex-mipmap-lod',
+    title: 'Mipmap Texture LOD (Unreal-Style)',
+    description: 'Continuous texture LOD with GPU-generated mipmaps like Unreal Engine',
+    category: 'studio-textures',
+    subcategory: 'texture-lod',
+    code: `/**
+ * Unreal-Style Mipmap Texture LOD
+ *
+ * Demonstrates continuous texture LOD using GPU-generated mipmaps.
+ * This approach mirrors Unreal Engine's texture streaming:
+ * - Upload ONE high-resolution texture
+ * - GPU auto-generates full mipmap chain
+ * - Continuous LOD selection (float, not integer levels)
+ * - Shader samples mip level using textureLod()
+ *
+ * LOD Formula: LOD = log2(distance / referenceDistance) + bias
+ *
+ * Controls:
+ *   W/S: Move camera forward/backward
+ *   Arrow keys: Rotate view
+ *   +/-: Adjust LOD bias
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebMipmapTexture.hpp"
+#include "al_WebAutoLOD.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class MipmapLODDemo : public WebApp {
+public:
+    WebPBR pbr;
+    MipmapTexture texture;
+    Mesh cube;
+
+    float camDist = 10.0f;
+    float camAngle = 0;
+    float lodBias = 0.0f;
+    float lastLOD = -1.0f;
+
+    void onCreate() override {
+        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+
+        // Create cube mesh with UV coordinates
+        addCube(cube, true, 2.0f);
+        cube.generateNormals();
+
+        // Load texture - GPU will auto-generate mipmaps
+        // The texture will be uploaded when first bound
+        texture.setReferenceDistance(5.0f);  // LOD 0 at 5 units
+        texture.setLODBias(0.0f);
+
+        // Enable auto-LOD system
+        enableAutoLOD();
+
+        nav().pos(0, 2, camDist);
+        nav().faceToward(Vec3f(0, 0, 0));
+
+        printf("\\n=== Unreal-Style Mipmap LOD Demo ===\\n");
+        printf("Reference distance: 5.0 (full res at this distance)\\n");
+        printf("At distance 10: LOD = 1.0 (half res)\\n");
+        printf("At distance 20: LOD = 2.0 (quarter res)\\n");
+        printf("Controls: W/S = zoom, +/- = LOD bias\\n\\n");
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += dt * 5.0;
+
+        // Update camera
+        nav().pos(camDist * sin(camAngle * 0.05), 2, camDist * cos(camAngle * 0.05));
+        nav().faceToward(Vec3f(0, 0, 0));
+
+        // Calculate continuous LOD using the global helper
+        float dist = nav().pos().mag();
+        float currentLOD = getTextureLODContinuous(dist, 8);
+
+        // Log LOD changes (with some tolerance to reduce spam)
+        if (fabs(currentLOD - lastLOD) > 0.1f) {
+            printf("[MipmapLOD] Distance: %.1f, Continuous LOD: %.2f\\n",
+                   dist, currentLOD);
+            lastLOD = currentLOD;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02, 0.02, 0.03);
+
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Calculate continuous LOD
+        float dist = nav().pos().mag();
+        float lod = getTextureLODContinuous(dist, 8);
+
+        // Use LOD-aware PBR rendering
+        pbr.beginWithLOD(g, nav().pos(), lod);
+
+        // Create material with visualization based on LOD
+        // Smooth color gradient from red (LOD 0) to blue (LOD 4+)
+        PBRMaterial mat;
+        float t = std::min(lod / 4.0f, 1.0f);
+        mat.albedo = Vec3f(1.0f - t, 0.3f, t);  // Red to blue gradient
+        mat.metallic = 0.1f;
+        mat.roughness = 0.4f;
+        pbr.material(mat);
+
+        // Draw cube
+        g.draw(cube);
+
+        pbr.end(g);
+
+        // Draw info text
+        g.lighting(false);
+        g.depthTesting(false);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'w': case 'W':
+                camDist = std::max(2.0f, camDist - 2.0f);
+                break;
+            case 's': case 'S':
+                camDist = std::min(100.0f, camDist + 2.0f);
+                break;
+            case '+': case '=':
+                lodBias = std::min(2.0f, lodBias + 0.1f);
+                setTextureLODBias(1.0f + lodBias);
+                printf("[MipmapLOD] LOD Bias: %.1f\\n", lodBias);
+                break;
+            case '-': case '_':
+                lodBias = std::max(-2.0f, lodBias - 0.1f);
+                setTextureLODBias(1.0f + lodBias);
+                printf("[MipmapLOD] LOD Bias: %.1f\\n", lodBias);
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    MipmapLODDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-tex-pbr-mipmap',
+    title: 'PBR Textures with Mipmap LOD',
+    description: 'Full PBR materials with continuous mipmap LOD for all texture maps',
+    category: 'studio-textures',
+    subcategory: 'texture-lod',
+    code: `/**
+ * PBR Textures with Mipmap LOD
+ *
+ * Demonstrates using PBRMipmapSet for full PBR materials
+ * with continuous mipmap LOD on all texture maps:
+ * - Albedo
+ * - Normal
+ * - Roughness
+ * - Metallic
+ * - AO
+ * - Emissive
+ *
+ * All maps share the same LOD level based on distance.
+ *
+ * Controls:
+ *   W/S: Move camera forward/backward
+ *   R: Adjust reference distance
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebMipmapTexture.hpp"
+#include "al_WebAutoLOD.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class PBRMipmapDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh sphere;
+
+    float camDist = 15.0f;
+    float camAngle = 0;
+    float refDistance = 5.0f;
+
+    void onCreate() override {
+        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+
+        // Create high-detail sphere
+        addSphere(sphere, 2.0, 128, 128);
+        sphere.generateNormals();
+
+        // Configure texture LOD
+        setTextureReferenceDistance(refDistance);
+        enableAutoLOD();
+
+        nav().pos(0, 2, camDist);
+        nav().faceToward(Vec3f(0, 0, 0));
+
+        printf("\\n=== PBR Mipmap LOD Demo ===\\n");
+        printf("This demo shows how all PBR texture maps\\n");
+        printf("share the same continuous LOD level.\\n");
+        printf("Reference distance: %.1f units\\n\\n", refDistance);
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += dt * 10.0;
+
+        // Orbit camera
+        nav().pos(camDist * sin(camAngle * 0.02), 2, camDist * cos(camAngle * 0.02));
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02, 0.02, 0.03);
+
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Calculate LOD for all PBR textures
+        float dist = nav().pos().mag();
+        float lod = getTextureLODContinuous(dist, 10);
+
+        // Begin LOD-aware rendering
+        pbr.beginWithLOD(g, nav().pos(), lod);
+
+        // Create extended material with texture map settings
+        PBRMaterialEx mat = PBRMaterialEx::TexturedBrick();
+
+        // Visualize LOD with color tint
+        float t = std::min(lod / 3.0f, 1.0f);
+        mat.albedo = Vec3f(0.6f + t * 0.2f, 0.4f - t * 0.2f, 0.3f);
+        mat.roughness = 0.5f + t * 0.3f;  // More rough at higher LOD
+
+        pbr.materialEx(mat);
+
+        // Draw multiple spheres at different distances
+        for (int i = 0; i < 5; i++) {
+            float z = -8.0f + i * 4.0f;
+            g.pushMatrix();
+            g.translate(0, 0, z);
+
+            // Calculate per-object LOD
+            float objDist = (nav().pos() - Vec3f(0, 0, z)).mag();
+            float objLOD = getTextureLODContinuous(objDist, 10);
+            pbr.setTextureLOD(objLOD);
+
+            g.draw(sphere);
+            g.popMatrix();
+        }
+
+        pbr.end(g);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'w': case 'W':
+                camDist = std::max(5.0f, camDist - 2.0f);
+                break;
+            case 's': case 'S':
+                camDist = std::min(50.0f, camDist + 2.0f);
+                break;
+            case 'r': case 'R':
+                refDistance = refDistance == 5.0f ? 10.0f :
+                              refDistance == 10.0f ? 2.5f : 5.0f;
+                setTextureReferenceDistance(refDistance);
+                printf("[PBRMipmap] Reference distance: %.1f\\n", refDistance);
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    PBRMipmapDemo app;
     app.start();
     return 0;
 }
