@@ -71,6 +71,36 @@ void WebApp::start() {
 #endif
     std::cout << "[AlloLib] Starting web application..." << std::endl;
 
+    // Register global AutoLOD for JS bridge
+    setGlobalAutoLOD(&mAutoLOD);
+
+    // Register auto-LOD JS bridge
+    EM_ASM({
+        window.allolib = window.allolib || {};
+        window.allolib.autoLOD = {
+            setBias: function(bias) {
+                Module.ccall('al_autolod_set_bias', null, ['number'], [bias]);
+            },
+            setEnabled: function(enabled) {
+                Module.ccall('al_autolod_set_enabled', null, ['number'], [enabled ? 1 : 0]);
+            },
+            setBudget: function(budget) {
+                Module.ccall('al_autolod_set_budget', null, ['number'], [budget]);
+            },
+            setMode: function(mode) {
+                // mode: 0=distance, 1=screenSize, 2=screenError, 3=triangleBudget
+                Module.ccall('al_autolod_set_mode', null, ['number'], [mode]);
+            },
+            getTriangles: function() {
+                return Module.ccall('al_autolod_get_triangles', 'number', [], []);
+            },
+            getBias: function() {
+                return Module.ccall('al_autolod_get_bias', 'number', [], []);
+            }
+        };
+        console.log('[AlloLib] Auto-LOD JS bridge registered');
+    });
+
     // Initialize graphics
 #ifdef __EMSCRIPTEN__
     EM_ASM({ console.log('[AlloLib] About to call initGraphics()'); });
@@ -169,9 +199,15 @@ void WebApp::tick(double dt) {
     // Update navigation direction vectors (needed for uf(), ur(), uu())
     mNav.updateDirectionVectors();
 
-    // Update auto-LOD camera position
+    // Update auto-LOD with view parameters
     mAutoLOD.setCameraPos(mNav.pos());
+    mAutoLOD.setScreenSize(mWidth, mHeight);
+    mAutoLOD.setFOV(mViewpoint.lens().fovy());
+    mAutoLOD.setFrameTime(dt);
     mAutoLOD.resetFrameStats();
+
+    // Adaptive quality adjustment based on frame time
+    mAutoLOD.adaptQuality();
 
     // Render graphics
     if (mGraphics) {

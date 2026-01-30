@@ -37,6 +37,31 @@ export interface DisplaySettings {
   defaultPointSize: number
 }
 
+export type QualityPreset = 'auto' | 'low' | 'medium' | 'high' | 'ultra'
+
+export interface GraphicsSettings {
+  qualityPreset: QualityPreset
+  targetFPS: number
+  resolutionScale: number
+  lodBias: number
+  shadowsEnabled: boolean
+  shadowMapSize: 256 | 512 | 1024 | 2048
+  reflectionsEnabled: boolean
+  bloomEnabled: boolean
+  ambientOcclusion: boolean
+  antiAliasing: 'none' | 'fxaa' | 'msaa4x'
+  maxLights: number
+  maxParticles: number
+  // Texture LOD settings
+  textureQuality: 'low' | 'medium' | 'high' | 'ultra'
+  maxTextureSize: 512 | 1024 | 2048 | 4096
+  textureLODEnabled: boolean
+  textureLODBias: number
+  // Shader LOD settings
+  shaderLODEnabled: boolean
+  shaderComplexity: 'minimal' | 'simple' | 'standard' | 'full'
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   // Editor settings
   const editor = ref<EditorSettings>({
@@ -78,6 +103,30 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultPointSize: 1.0,
   })
 
+  // Graphics/rendering quality settings
+  const graphics = ref<GraphicsSettings>({
+    qualityPreset: 'auto',
+    targetFPS: 60,
+    resolutionScale: 1.0,
+    lodBias: 1.0,
+    shadowsEnabled: true,
+    shadowMapSize: 1024,
+    reflectionsEnabled: true,
+    bloomEnabled: true,
+    ambientOcclusion: true,
+    antiAliasing: 'fxaa',
+    maxLights: 8,
+    maxParticles: 10000,
+    // Texture LOD
+    textureQuality: 'high',
+    maxTextureSize: 2048,
+    textureLODEnabled: true,
+    textureLODBias: 1.0,
+    // Shader LOD
+    shaderLODEnabled: true,
+    shaderComplexity: 'standard',
+  })
+
   // Load settings from localStorage
   function loadSettings() {
     try {
@@ -88,6 +137,7 @@ export const useSettingsStore = defineStore('settings', () => {
         if (parsed.audio) Object.assign(audio.value, parsed.audio)
         if (parsed.compiler) Object.assign(compiler.value, parsed.compiler)
         if (parsed.display) Object.assign(display.value, parsed.display)
+        if (parsed.graphics) Object.assign(graphics.value, parsed.graphics)
       }
     } catch (e) {
       console.warn('Failed to load settings:', e)
@@ -102,6 +152,7 @@ export const useSettingsStore = defineStore('settings', () => {
         audio: audio.value,
         compiler: compiler.value,
         display: display.value,
+        graphics: graphics.value,
       }))
     } catch (e) {
       console.warn('Failed to save settings:', e)
@@ -157,15 +208,183 @@ export const useSettingsStore = defineStore('settings', () => {
     saveSettings()
   }
 
+  function resetGraphics() {
+    graphics.value = {
+      qualityPreset: 'auto',
+      targetFPS: 60,
+      resolutionScale: 1.0,
+      lodBias: 1.0,
+      shadowsEnabled: true,
+      shadowMapSize: 1024,
+      reflectionsEnabled: true,
+      bloomEnabled: true,
+      ambientOcclusion: true,
+      antiAliasing: 'fxaa',
+      maxLights: 8,
+      maxParticles: 10000,
+      // Texture LOD
+      textureQuality: 'high',
+      maxTextureSize: 2048,
+      textureLODEnabled: true,
+      textureLODBias: 1.0,
+      // Shader LOD
+      shaderLODEnabled: true,
+      shaderComplexity: 'standard',
+    }
+    saveSettings()
+  }
+
+  // Apply quality preset
+  function applyQualityPreset(preset: QualityPreset) {
+    graphics.value.qualityPreset = preset
+
+    switch (preset) {
+      case 'low':
+        graphics.value.resolutionScale = 0.5
+        graphics.value.lodBias = 2.0
+        graphics.value.shadowsEnabled = false
+        graphics.value.shadowMapSize = 256
+        graphics.value.reflectionsEnabled = false
+        graphics.value.bloomEnabled = false
+        graphics.value.ambientOcclusion = false
+        graphics.value.antiAliasing = 'none'
+        graphics.value.maxLights = 2
+        graphics.value.maxParticles = 1000
+        // Texture LOD - aggressive reduction
+        graphics.value.textureQuality = 'low'
+        graphics.value.maxTextureSize = 512
+        graphics.value.textureLODEnabled = true
+        graphics.value.textureLODBias = 2.0
+        // Shader LOD - minimal shaders
+        graphics.value.shaderLODEnabled = true
+        graphics.value.shaderComplexity = 'minimal'
+        break
+      case 'medium':
+        graphics.value.resolutionScale = 0.75
+        graphics.value.lodBias = 1.5
+        graphics.value.shadowsEnabled = true
+        graphics.value.shadowMapSize = 512
+        graphics.value.reflectionsEnabled = true
+        graphics.value.bloomEnabled = true
+        graphics.value.ambientOcclusion = false
+        graphics.value.antiAliasing = 'fxaa'
+        graphics.value.maxLights = 4
+        graphics.value.maxParticles = 5000
+        // Texture LOD - moderate
+        graphics.value.textureQuality = 'medium'
+        graphics.value.maxTextureSize = 1024
+        graphics.value.textureLODEnabled = true
+        graphics.value.textureLODBias = 1.5
+        // Shader LOD - simple shaders
+        graphics.value.shaderLODEnabled = true
+        graphics.value.shaderComplexity = 'simple'
+        break
+      case 'high':
+        graphics.value.resolutionScale = 1.0
+        graphics.value.lodBias = 1.0
+        graphics.value.shadowsEnabled = true
+        graphics.value.shadowMapSize = 1024
+        graphics.value.reflectionsEnabled = true
+        graphics.value.bloomEnabled = true
+        graphics.value.ambientOcclusion = true
+        graphics.value.antiAliasing = 'fxaa'
+        graphics.value.maxLights = 8
+        graphics.value.maxParticles = 10000
+        // Texture LOD - high quality
+        graphics.value.textureQuality = 'high'
+        graphics.value.maxTextureSize = 2048
+        graphics.value.textureLODEnabled = true
+        graphics.value.textureLODBias = 1.0
+        // Shader LOD - standard PBR
+        graphics.value.shaderLODEnabled = true
+        graphics.value.shaderComplexity = 'standard'
+        break
+      case 'ultra':
+        graphics.value.resolutionScale = 1.0
+        graphics.value.lodBias = 0.75
+        graphics.value.shadowsEnabled = true
+        graphics.value.shadowMapSize = 2048
+        graphics.value.reflectionsEnabled = true
+        graphics.value.bloomEnabled = true
+        graphics.value.ambientOcclusion = true
+        graphics.value.antiAliasing = 'msaa4x'
+        graphics.value.maxLights = 16
+        graphics.value.maxParticles = 50000
+        // Texture LOD - max quality
+        graphics.value.textureQuality = 'ultra'
+        graphics.value.maxTextureSize = 4096
+        graphics.value.textureLODEnabled = false  // Always max quality
+        graphics.value.textureLODBias = 0.75
+        // Shader LOD - full quality
+        graphics.value.shaderLODEnabled = false  // Always max complexity
+        graphics.value.shaderComplexity = 'full'
+        break
+      case 'auto':
+        // Start with high, will auto-adjust
+        applyQualityPreset('high')
+        graphics.value.qualityPreset = 'auto'
+        break
+    }
+
+    // Notify WASM module of quality change
+    notifyQualityChange()
+    saveSettings()
+  }
+
+  // Send quality settings to WASM module
+  function notifyQualityChange() {
+    const w = window as any
+
+    // Send to quality manager if available
+    if (w.allolib?.quality?.setSettings) {
+      w.allolib.quality.setSettings(graphics.value)
+    }
+
+    // Send LOD settings to auto-LOD system
+    if (w.allolib?.autoLOD) {
+      // LOD bias from settings
+      w.allolib.autoLOD.setBias(graphics.value.lodBias)
+
+      // Triangle budget based on quality preset
+      const budgets: Record<string, number> = {
+        low: 100000,
+        medium: 300000,
+        high: 500000,
+        ultra: 1000000,
+        auto: 500000,
+      }
+      w.allolib.autoLOD.setBudget(budgets[graphics.value.qualityPreset] || 500000)
+
+      // Selection mode based on quality
+      // 0=distance, 1=screenSize, 2=screenError, 3=triangleBudget
+      const modes: Record<string, number> = {
+        low: 0, // distance (fastest)
+        medium: 1, // screen size
+        high: 1, // screen size
+        ultra: 2, // screen error (best quality)
+        auto: 1, // screen size
+      }
+      w.allolib.autoLOD.setMode(modes[graphics.value.qualityPreset] || 1)
+
+      console.log(
+        '[Settings] LOD settings applied: bias=' +
+          graphics.value.lodBias +
+          ', preset=' +
+          graphics.value.qualityPreset
+      )
+    }
+  }
+
   function resetAll() {
     resetEditor()
     resetAudio()
     resetCompiler()
     resetDisplay()
+    resetGraphics()
   }
 
   // Watch for changes and auto-save
-  watch([editor, audio, compiler, display], saveSettings, { deep: true })
+  watch([editor, audio, compiler, display, graphics], saveSettings, { deep: true })
 
   // Load on init
   loadSettings()
@@ -175,12 +394,15 @@ export const useSettingsStore = defineStore('settings', () => {
     audio,
     compiler,
     display,
+    graphics,
     loadSettings,
     saveSettings,
     resetEditor,
     resetAudio,
     resetCompiler,
     resetDisplay,
+    resetGraphics,
+    applyQualityPreset,
     resetAll,
   }
 })
