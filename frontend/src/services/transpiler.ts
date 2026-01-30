@@ -8,6 +8,13 @@
  * - Main function/macro
  * - Audio configuration
  * - Platform-specific APIs
+ * - Graphics API differences (OpenGL vs WebGL2/OpenGL ES 3.0)
+ *
+ * Key WebGL2/OpenGL ES 3.0 differences:
+ * - glPointSize() is NOT supported; point size must be set via gl_PointSize in vertex shader
+ * - AlloLib Online shaders default to 4.0 pixel points if not set
+ * - Some polygon modes (GL_POINT, GL_LINE) behave differently
+ * - Shader precision qualifiers are required (highp, mediump, lowp)
  */
 
 export interface TranspileResult {
@@ -107,6 +114,13 @@ const nativeToWebPatterns: Array<{
     description: 'File include'
   },
 
+  // Include transformations - Asset loading (native uses Assimp, web uses custom loaders)
+  {
+    pattern: /#include\s*["<]al_ext\/assets3d\/al_Asset\.hpp[">]/g,
+    replacement: '#include "al_WebOBJ.hpp"  // Web uses WebOBJ instead of Assimp',
+    description: 'Asset3D include'
+  },
+
   // Base class transformations
   {
     pattern: /:\s*public\s+al::App\b/g,
@@ -203,6 +217,54 @@ const nativeToWebPatterns: Array<{
     replacement: '// OSC onMessage not supported in web\n// $&',
     description: 'onMessage callback'
   },
+
+  // Auto-LOD: Convert g.draw(mesh) to drawLOD(g, mesh) for automatic LOD
+  // This makes LOD transparent - users don't need to change their code
+  // Handles simple identifiers, member access, array access, and pointer dereference
+  {
+    pattern: /\bg\.draw\s*\(\s*(\*?[a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*(?:\[[^\]]+\])?)\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      // Don't convert VAOMesh or EasyVAO draws (they're not Mesh type)
+      if (expr.includes('VAO') || expr.includes('vao')) {
+        return match
+      }
+      return `drawLOD(g, ${expr.trim()})`
+    },
+    description: 'Auto-LOD: g.draw(expr) -> drawLOD(g, expr)'
+  },
+  // Handle g.draw with function calls like g.draw(getMesh()) or g.draw(obj.getMesh())
+  {
+    pattern: /\bg\.draw\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*\([^)]*\))\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      if (expr.includes('VAO') || expr.includes('vao')) {
+        return match
+      }
+      return `drawLOD(g, ${expr.trim()})`
+    },
+    description: 'Auto-LOD: g.draw(func()) -> drawLOD(g, func())'
+  },
+  // Handle graphics.draw() variant - simple expressions
+  {
+    pattern: /\bgraphics\.draw\s*\(\s*(\*?[a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*(?:\[[^\]]+\])?)\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      if (expr.includes('VAO') || expr.includes('vao')) {
+        return match
+      }
+      return `drawLOD(graphics, ${expr.trim()})`
+    },
+    description: 'Auto-LOD: graphics.draw(expr) -> drawLOD(graphics, expr)'
+  },
+  // Handle graphics.draw with function calls
+  {
+    pattern: /\bgraphics\.draw\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:(?:\.|->)[a-zA-Z_][a-zA-Z0-9_]*)*\([^)]*\))\s*\)/g,
+    replacement: (match: string, expr: string) => {
+      if (expr.includes('VAO') || expr.includes('vao')) {
+        return match
+      }
+      return `drawLOD(graphics, ${expr.trim()})`
+    },
+    description: 'Auto-LOD: graphics.draw(func()) -> drawLOD(graphics, func())'
+  },
 ]
 
 /**
@@ -285,6 +347,39 @@ const webToNativePatterns: Array<{
     description: 'WebFont include'
   },
 
+  // Include transformations - Web asset/rendering headers -> Native compat layer
+  // These use the native_compat headers which provide identical API
+  {
+    pattern: /#include\s*["<]al_WebOBJ\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeOBJ.hpp"  // WebOBJ -> NativeOBJ (same API)',
+    description: 'WebOBJ include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebHDR\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeHDR.hpp"  // WebHDR -> NativeHDR (same API, uses stb_image)',
+    description: 'WebHDR include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebEnvironment\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeEnvironment.hpp"  // WebEnvironment -> NativeEnvironment (same API)',
+    description: 'WebEnvironment include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebPBR\.hpp[">]/g,
+    replacement: '// WebPBR: PBR shaders need manual porting (no native compat yet)\n// Copy shaders from al_WebPBR.hpp and update for desktop OpenGL\n// #include "al_WebPBR.hpp"',
+    description: 'WebPBR include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebLOD\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeLOD.hpp"  // WebLOD -> NativeLOD (same API)',
+    description: 'WebLOD include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebQuality\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeQuality.hpp"  // WebQuality -> NativeQuality (same API)',
+    description: 'WebQuality include'
+  },
+
   // Base class transformations
   {
     pattern: /:\s*public\s+al::WebApp\b/g,
@@ -297,7 +392,21 @@ const webToNativePatterns: Array<{
     description: 'Base class WebApp'
   },
 
-  // Main macro to function
+  // Convert simple main() to ALLOLIB_WEB_MAIN for WebApp classes
+  // This is crucial for WASM exports to work correctly
+  {
+    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;\s*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g,
+    replacement: 'ALLOLIB_WEB_MAIN($1)',
+    description: 'Convert simple main() to ALLOLIB_WEB_MAIN'
+  },
+  // Also handle main with configureAudio before start
+  {
+    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;[^}]*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g,
+    replacement: 'ALLOLIB_WEB_MAIN($1)',
+    description: 'Convert main() with configureAudio to ALLOLIB_WEB_MAIN'
+  },
+
+  // Main macro to function (for native export)
   {
     pattern: /ALLOLIB_WEB_MAIN\s*\(\s*(\w+)\s*\)/g,
     replacement: `int main() {
@@ -367,6 +476,19 @@ const webToNativePatterns: Array<{
     replacement: 'if (false) // WASM check disabled',
     description: 'isWASM conditional'
   },
+
+  // Convert LOD-aware draw back to standard g.draw() for native
+  // Native AlloLib has its own LOD systems if needed
+  {
+    pattern: /\bdrawLOD\s*\(\s*g\s*,\s*([^)]+)\s*\)/g,
+    replacement: 'g.draw($1)',
+    description: 'drawLOD(g, mesh) -> g.draw(mesh)'
+  },
+  {
+    pattern: /\bdrawLOD\s*\(\s*graphics\s*,\s*([^)]+)\s*\)/g,
+    replacement: 'graphics.draw($1)',
+    description: 'drawLOD(graphics, mesh) -> graphics.draw(mesh)'
+  },
 ]
 
 /**
@@ -379,11 +501,26 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
       code.includes('al_playground_compat.hpp') ||
       code.includes('al_WebControlGUI.hpp') ||
       code.includes('al_WebSequencerBridge.hpp') ||
+      code.includes('al_WebOBJ.hpp') ||
+      code.includes('al_WebHDR.hpp') ||
+      code.includes('al_WebEnvironment.hpp') ||
+      code.includes('al_WebPBR.hpp') ||
+      code.includes('al_WebAutoLOD.hpp') ||
       code.includes('ALLOLIB_WEB_MAIN') ||
       code.includes('configureWebAudio') ||
       code.includes('WebSamplePlayer') ||
       code.includes('WebMIDI') ||
       code.includes('WebOSC') ||
+      code.includes('WebOBJ') ||
+      code.includes('WebHDR') ||
+      code.includes('WebEnvironment') ||
+      code.includes('WebPBR') ||
+      code.includes('PBRMaterial') ||
+      code.includes('LODMesh') ||
+      code.includes('LODGroup') ||
+      code.includes('QualityManager') ||
+      code.includes('AutoLODManager') ||
+      code.includes('drawLOD(') ||
       code.includes('WebControlGUI')) {
     return 'web'
   }
@@ -414,8 +551,20 @@ export function transpileToWeb(code: string): TranspileResult {
 
   // Check if already web code
   const codeType = detectCodeType(code)
-  if (codeType === 'web') {
+
+  // Always ensure main() is converted to ALLOLIB_WEB_MAIN for WebApp classes
+  // This is required for WASM exports to work correctly
+  const mainToMacroPattern = /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;[^}]*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g
+  const mainMatch = result.match(mainToMacroPattern)
+  if (mainMatch) {
+    result = result.replace(mainToMacroPattern, 'ALLOLIB_WEB_MAIN($1)')
+  }
+
+  if (codeType === 'web' && !mainMatch) {
     warnings.push('Code appears to already be in AlloLib Online format')
+    return { code: result, warnings, errors }
+  } else if (codeType === 'web') {
+    // Code was web format but we converted main() - still return early for other transforms
     return { code: result, warnings, errors }
   }
 
@@ -453,6 +602,17 @@ export function transpileToWeb(code: string): TranspileResult {
     warnings.push('PresetHandler is stubbed. Use the web UI preset system instead.')
   }
 
+  // Graphics API differences (WebGL2/OpenGL ES 3.0)
+  if (code.includes('pointSize') || code.includes('Mesh::POINTS')) {
+    warnings.push('WebGL2 note: glPointSize() is not supported. Point size is set via shader uniform (defaults to 1.0 pixels).')
+  }
+  if (code.includes('polygonMode') || code.includes('polygonLine') || code.includes('polygonPoint')) {
+    warnings.push('WebGL2 note: polygonMode() may behave differently. LINE and POINT modes have limited support.')
+  }
+  if (code.includes('glBegin') || code.includes('glEnd') || code.includes('glVertex')) {
+    errors.push('Immediate mode OpenGL (glBegin/glEnd) is not supported in WebGL2. Use Mesh class instead.')
+  }
+
   // Validate result
   if (!result.includes('ALLOLIB_WEB_MAIN') && !result.includes('int main')) {
     warnings.push('No main function or ALLOLIB_WEB_MAIN macro found. You may need to add one.')
@@ -488,17 +648,40 @@ export function transpileToNative(code: string): TranspileResult {
     }
   }
 
-  // Check for web-specific features that need manual conversion
+  // Check for web-specific features that need manual conversion or native compat
   if (result.includes('WebFile::')) {
     warnings.push('WebFile API calls need to be replaced with standard file I/O.')
   }
   if (result.includes('WebFont')) {
     warnings.push('WebFont has no direct equivalent. Consider using a font library like FreeType.')
   }
+  if (code.includes('WebOBJ') || code.includes('al_WebOBJ')) {
+    warnings.push('Using NativeOBJ from native_compat layer. API is identical to WebOBJ.')
+  }
+  if (code.includes('WebHDR') || code.includes('al_WebHDR')) {
+    warnings.push('Using NativeHDR from native_compat layer. Requires stb_image.h in include path.')
+  }
+  if (code.includes('WebEnvironment') || code.includes('al_WebEnvironment')) {
+    warnings.push('Using NativeEnvironment from native_compat layer. API is identical to WebEnvironment.')
+  }
+  if (code.includes('WebPBR') || code.includes('al_WebPBR') || code.includes('PBRMaterial')) {
+    warnings.push('WebPBR has no native compat yet. PBR shaders need manual porting to desktop OpenGL.')
+  }
+  if (code.includes('WebLOD') || code.includes('LODMesh') || code.includes('LODGroup')) {
+    warnings.push('Using NativeLOD from native_compat layer. API is identical to WebLOD.')
+  }
+  if (code.includes('WebQuality') || code.includes('QualityManager') || code.includes('QualityPreset')) {
+    warnings.push('Using NativeQuality from native_compat layer. API is identical to WebQuality.')
+  }
 
   // Check for playground features that need ImGui in native
   if (result.includes('SynthGUIManager') || result.includes('ControlGUI')) {
     warnings.push('SynthGUIManager/ControlGUI requires ImGui setup in native builds. See allolib_playground for examples.')
+  }
+
+  // Graphics API notes (native OpenGL vs WebGL2)
+  if (code.includes('pointSize') || code.includes('Mesh::POINTS')) {
+    warnings.push('Native note: pointSize() uses glPointSize() directly (supported in desktop OpenGL, not in WebGL2).')
   }
 
   // Add standard headers if missing
@@ -529,8 +712,21 @@ export function formatForExport(code: string, format: 'native' | 'web'): string 
  * AlloLib Application
  * Exported from AlloLib Studio Online
  *
+ * Setup:
+ * 1. Copy the native_compat/ folder to your project's include path
+ * 2. Add stb_image.h to your include path (https://github.com/nothings/stb)
+ * 3. In ONE .cpp file, add: #define STB_IMAGE_IMPLEMENTATION
+ *    before including any native_compat headers
+ *
  * Compile with:
  *   g++ -o app app.cpp -lallolib -lgamma $(pkg-config --cflags --libs glfw3)
+ *
+ * Native Compatibility Layer:
+ * - WebOBJ, WebHDR, WebEnvironment, LODMesh, QualityManager all have
+ *   native equivalents with identical APIs in native_compat/
+ * - WebPBR requires manual shader porting (see al_WebPBR.hpp for reference)
+ *
+ * Note: Native AlloLib uses desktop OpenGL which supports glPointSize().
  */
 
 `
@@ -539,6 +735,12 @@ export function formatForExport(code: string, format: 'native' | 'web'): string 
  *
  * This code runs in AlloLib Studio Online (browser-based)
  * https://allolib-studio.online
+ *
+ * Graphics Notes (WebGL2 / OpenGL ES 3.0):
+ * - Point rendering: glPointSize() is not supported in WebGL2.
+ *   Point sizes are set via gl_PointSize in vertex shader (defaults to 1.0 pixels).
+ * - Use g.pointSize(n) to request point size; shader handles it automatically.
+ * - Polygon modes (GL_LINE, GL_POINT) have limited WebGL2 support.
  */
 
 `
