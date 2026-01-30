@@ -695,6 +695,29 @@ public:
 
     /**
      * End PBR rendering
+     * Unbinds textures and resets Graphics state so subsequent
+     * g.lighting() and g.color() calls work correctly.
+     *
+     * The key issue: g.shader() sets ColoringMode to CUSTOM, which
+     * prevents automatic shader selection. We need to reset this.
+     */
+    void end(Graphics& g) {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        // Reset Graphics to use uniform color mode (triggers shader reselection)
+        // This exits CUSTOM mode so g.lighting() and g.color() work again
+        g.color(1, 1, 1);  // This sets ColoringMode::UNIFORM and mRenderModeChanged
+        mActiveShader = nullptr;
+    }
+
+    /**
+     * End PBR rendering (legacy overload without Graphics)
+     * Note: For proper shader restoration, use end(Graphics& g) instead
      */
     void end() {
         glActiveTexture(GL_TEXTURE2);
@@ -703,6 +726,8 @@ public:
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0);
+        glUseProgram(0);
+        mActiveShader = nullptr;
     }
 
     // Accessors

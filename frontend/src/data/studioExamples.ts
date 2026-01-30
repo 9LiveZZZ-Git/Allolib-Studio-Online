@@ -216,7 +216,7 @@ public:
             g.popMatrix();
         }
 
-        pbr.end();
+        pbr.end(g);
     }
 
     bool onKeyDown(Keyboard const& k) override {
@@ -327,7 +327,7 @@ public:
             }
         }
 
-        pbr.end();
+        pbr.end(g);
     }
 };
 
@@ -1191,7 +1191,7 @@ public:
             g.draw(bunny);
             g.popMatrix();
 
-            pbr.end();
+            pbr.end(g);
         }
     }
 
@@ -2216,7 +2216,7 @@ public:
         g.rotate(angle, 0, 1, 0);
         g.draw(bunnyMesh);  // Auto-LOD + PBR - just works!
         g.popMatrix();
-        pbr.end();
+        pbr.end(g);
 
         // Floor
         g.lighting(true);
@@ -2897,7 +2897,7 @@ public:
             g.popMatrix();
         }
 
-        pbr.end();
+        pbr.end(g);
     }
 
     bool onKeyDown(Keyboard const& k) override {
