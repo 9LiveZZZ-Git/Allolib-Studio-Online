@@ -30,6 +30,16 @@
 namespace al {
 
 /**
+ * Worley (cellular) noise modes
+ */
+enum class WorleyMode {
+    F1 = 0,              // Distance to nearest point
+    F2 = 1,              // Distance to second nearest
+    F2_MINUS_F1 = 2,     // Difference (creates cell edges)
+    F1_TIMES_F2 = 3      // Product (organic patterns)
+};
+
+/**
  * Procedural texture generator
  */
 class ProceduralTexture {
@@ -79,7 +89,8 @@ public:
      * @param cellCount Number of cells
      * @param mode 0=F1 (distance to nearest), 1=F2-F1 (edge), 2=cell ID
      */
-    void worleyNoise(int width, int height, int cellCount = 16, int mode = 0) {
+    void worleyNoise(int width, int height, int cellCount = 16, WorleyMode mode = WorleyMode::F1) {
+        int modeInt = static_cast<int>(mode);
         resize(width, height);
 
         // Generate random cell centers
@@ -120,10 +131,11 @@ public:
                 }
 
                 float value;
-                switch (mode) {
+                switch (modeInt) {
                     case 0: value = d1 * 2.0f; break;  // F1
                     case 1: value = (d2 - d1) * 4.0f; break;  // F2-F1 (edges)
                     case 2: value = (float)nearestCell / cellCount; break;  // Cell ID
+                    case 3: value = d1 * d2 * 8.0f; break;  // F1*F2
                     default: value = d1 * 2.0f;
                 }
 
@@ -543,9 +555,9 @@ private:
     }
 
     uint32_t scaleColor(uint32_t c, float s) {
-        uint8_t r = std::min(255, (int)((c >> 16) & 0xFF) * s);
-        uint8_t g = std::min(255, (int)((c >> 8) & 0xFF) * s);
-        uint8_t b = std::min(255, (int)(c & 0xFF) * s);
+        uint8_t r = (uint8_t)std::min(255.0f, ((c >> 16) & 0xFF) * s);
+        uint8_t g = (uint8_t)std::min(255.0f, ((c >> 8) & 0xFF) * s);
+        uint8_t b = (uint8_t)std::min(255.0f, (c & 0xFF) * s);
         return (c & 0xFF000000) | (r << 16) | (g << 8) | b;
     }
 
@@ -733,7 +745,7 @@ public:
 
         roughness.roughnessMap(resolution, resolution, 0.8f, 0.1f);
 
-        normal.worleyNoise(resolution, resolution, 64, 1);
+        normal.worleyNoise(resolution, resolution, 64, WorleyMode::F2);
         normal.normalMapFromHeight(resolution, resolution, 0.4f);
     }
 };
