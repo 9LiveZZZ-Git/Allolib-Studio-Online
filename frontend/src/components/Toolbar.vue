@@ -1184,7 +1184,22 @@ function getPlatformBadgeClass(platform: string) {
           <div class="border-t border-editor-border pt-3 mt-3">
             <div class="text-xs text-gray-400 mb-2 font-medium">Performance</div>
 
+            <!-- Auto-LOD Enable Toggle -->
             <div class="flex items-center justify-between mb-3">
+              <label class="text-sm text-gray-300" title="Automatically simplify distant meshes for better performance">Auto-LOD</label>
+              <button
+                @click="settings.graphics.lodEnabled = !settings.graphics.lodEnabled; handleSettingChange()"
+                :class="settings.graphics.lodEnabled ? 'bg-allolib-blue' : 'bg-gray-600'"
+                class="w-10 h-5 rounded-full relative transition-colors"
+              >
+                <span
+                  :class="settings.graphics.lodEnabled ? 'translate-x-5' : 'translate-x-0.5'"
+                  class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full transition-transform"
+                ></span>
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-3" v-if="settings.graphics.lodEnabled">
               <label class="text-sm text-gray-300">LOD Bias</label>
               <div class="flex items-center gap-2">
                 <input
@@ -1200,8 +1215,8 @@ function getPlatformBadgeClass(platform: string) {
               </div>
             </div>
 
-            <!-- LOD Distance Settings -->
-            <div class="flex items-center justify-between mb-3">
+            <!-- LOD Distance Settings (only show when LOD enabled) -->
+            <div class="flex items-center justify-between mb-3" v-if="settings.graphics.lodEnabled">
               <label class="text-sm text-gray-300">Full Quality Distance</label>
               <div class="flex items-center gap-2">
                 <input
@@ -1217,7 +1232,7 @@ function getPlatformBadgeClass(platform: string) {
               </div>
             </div>
 
-            <div class="mb-3">
+            <div class="mb-3" v-if="settings.graphics.lodEnabled">
               <button
                 @click="showLODDistances = !showLODDistances"
                 class="flex items-center gap-1 text-sm text-gray-300 hover:text-white"
@@ -1290,7 +1305,7 @@ function getPlatformBadgeClass(platform: string) {
             </div>
 
             <!-- NEW: Distance Scale (unified control) -->
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-3" v-if="settings.graphics.lodEnabled">
               <label class="text-sm text-gray-300" title="Scales all LOD distances proportionally. Higher = more detail at distance.">Distance Scale</label>
               <div class="flex items-center gap-2">
                 <input
@@ -1307,7 +1322,7 @@ function getPlatformBadgeClass(platform: string) {
             </div>
 
             <!-- NEW: LOD Levels -->
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-3" v-if="settings.graphics.lodEnabled">
               <label class="text-sm text-gray-300" title="Number of LOD levels (more = smoother transitions)">LOD Levels</label>
               <select
                 v-model.number="settings.graphics.lodLevels"
@@ -1323,7 +1338,7 @@ function getPlatformBadgeClass(platform: string) {
             </div>
 
             <!-- NEW: Unload Settings -->
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-3" v-if="settings.graphics.lodEnabled">
               <label class="text-sm text-gray-300" title="Hide meshes beyond unload distance">Enable Unload</label>
               <button
                 @click="settings.graphics.lodUnloadEnabled = !settings.graphics.lodUnloadEnabled; handleSettingChange()"
@@ -1337,7 +1352,7 @@ function getPlatformBadgeClass(platform: string) {
               </button>
             </div>
 
-            <div v-if="settings.graphics.lodUnloadEnabled" class="flex items-center justify-between mb-3">
+            <div v-if="settings.graphics.lodEnabled && settings.graphics.lodUnloadEnabled" class="flex items-center justify-between mb-3">
               <label class="text-sm text-gray-300">Unload Distance</label>
               <div class="flex items-center gap-2">
                 <input

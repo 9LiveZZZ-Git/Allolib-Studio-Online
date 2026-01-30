@@ -43,6 +43,8 @@ export interface GraphicsSettings {
   qualityPreset: QualityPreset
   targetFPS: number
   resolutionScale: number
+  // Auto-LOD (mesh simplification) settings
+  lodEnabled: boolean  // Enable automatic mesh LOD
   lodBias: number
   // LOD distance settings
   lodMinFullQualityDistance: number  // Distance below which always use full quality (LOD 0)
@@ -115,6 +117,8 @@ export const useSettingsStore = defineStore('settings', () => {
     qualityPreset: 'auto',
     targetFPS: 60,
     resolutionScale: 1.0,
+    // Auto-LOD settings
+    lodEnabled: true,  // Enable automatic mesh LOD by default
     lodBias: 1.0,
     // LOD distance settings
     lodMinFullQualityDistance: 5.0,  // Full quality within 5 units
@@ -227,6 +231,8 @@ export const useSettingsStore = defineStore('settings', () => {
       qualityPreset: 'auto',
       targetFPS: 60,
       resolutionScale: 1.0,
+      // Auto-LOD settings
+      lodEnabled: true,
       lodBias: 1.0,
       // LOD distance settings
       lodMinFullQualityDistance: 5.0,
@@ -262,6 +268,7 @@ export const useSettingsStore = defineStore('settings', () => {
     switch (preset) {
       case 'low':
         graphics.value.resolutionScale = 0.5
+        graphics.value.lodEnabled = true  // LOD essential for low-end
         graphics.value.lodBias = 2.0
         // LOD distances - aggressive reduction
         graphics.value.lodMinFullQualityDistance = 2
@@ -289,6 +296,7 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'medium':
         graphics.value.resolutionScale = 0.75
+        graphics.value.lodEnabled = true  // LOD enabled for medium
         graphics.value.lodBias = 1.5
         // LOD distances - moderate
         graphics.value.lodMinFullQualityDistance = 5
@@ -316,6 +324,7 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'high':
         graphics.value.resolutionScale = 1.0
+        graphics.value.lodEnabled = true  // LOD enabled for high
         graphics.value.lodBias = 1.0
         // LOD distances - balanced
         graphics.value.lodMinFullQualityDistance = 8
@@ -343,8 +352,9 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case 'ultra':
         graphics.value.resolutionScale = 1.0
+        graphics.value.lodEnabled = false  // Max quality - no LOD
         graphics.value.lodBias = 0.75
-        // LOD distances - maximum quality
+        // LOD distances - maximum quality (if enabled manually)
         graphics.value.lodMinFullQualityDistance = 15
         graphics.value.lodDistances = [25, 60, 120, 250]
         graphics.value.lodDistanceScale = 2.0  // Keep quality longer
@@ -391,9 +401,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Send LOD settings to auto-LOD system
     if (w.allolib?.autoLOD) {
-      // Enable auto-LOD when texture LOD is enabled (they're related features)
-      // Ultra preset disables both for maximum quality
-      w.allolib.autoLOD.setEnabled(graphics.value.textureLODEnabled)
+      // Enable/disable auto-LOD based on dedicated setting
+      w.allolib.autoLOD.setEnabled(graphics.value.lodEnabled)
 
       // LOD bias from settings
       w.allolib.autoLOD.setBias(graphics.value.lodBias)
@@ -432,7 +441,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
       console.log(
         '[Settings] LOD settings applied: enabled=' +
-          graphics.value.textureLODEnabled +
+          graphics.value.lodEnabled +
           ', bias=' +
           graphics.value.lodBias +
           ', distanceScale=' +
