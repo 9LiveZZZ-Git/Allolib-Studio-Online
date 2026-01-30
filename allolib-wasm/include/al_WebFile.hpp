@@ -21,6 +21,7 @@
 #include <emscripten.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <functional>
 #include <cstdint>
 
@@ -145,6 +146,16 @@ public:
         EM_ASM({
             var accept = UTF8ToString($0);
 
+            // Helper to allocate UTF8 string
+            function allocateString(str) {
+                var encoder = new TextEncoder();
+                var bytes = encoder.encode(str);
+                var ptr = Module._malloc(bytes.length + 1);
+                Module.HEAPU8.set(bytes, ptr);
+                Module.HEAPU8[ptr + bytes.length] = 0;
+                return ptr;
+            }
+
             var input = document.createElement('input');
             input.type = 'file';
             if (accept) input.accept = accept;
@@ -159,16 +170,16 @@ public:
                     var ptr = Module._malloc(data.length);
                     Module.HEAPU8.set(data, ptr);
 
-                    var namePtr = allocateUTF8(file.name);
-                    var mimePtr = allocateUTF8(file.type);
+                    var namePtr = allocateString(file.name);
+                    var mimePtr = allocateString(file.type);
 
                     Module.ccall('_al_web_file_uploaded', null,
                         ['number', 'number', 'number', 'number', 'number'],
                         [namePtr, mimePtr, ptr, data.length, 0]);
 
-                    _free(namePtr);
-                    _free(mimePtr);
-                    _free(ptr);
+                    Module._free(namePtr);
+                    Module._free(mimePtr);
+                    Module._free(ptr);
                 };
                 reader.readAsArrayBuffer(file);
             };
@@ -187,6 +198,16 @@ public:
 
         EM_ASM({
             var accept = UTF8ToString($0);
+
+            // Helper to allocate UTF8 string
+            function allocateString(str) {
+                var encoder = new TextEncoder();
+                var bytes = encoder.encode(str);
+                var ptr = Module._malloc(bytes.length + 1);
+                Module.HEAPU8.set(bytes, ptr);
+                Module.HEAPU8[ptr + bytes.length] = 0;
+                return ptr;
+            }
 
             var input = document.createElement('input');
             input.type = 'file';
@@ -211,16 +232,16 @@ public:
                             var ptr = Module._malloc(data.length);
                             Module.HEAPU8.set(data, ptr);
 
-                            var namePtr = allocateUTF8(file.name);
-                            var mimePtr = allocateUTF8(file.type);
+                            var namePtr = allocateString(file.name);
+                            var mimePtr = allocateString(file.type);
 
                             Module.ccall('_al_web_file_uploaded', null,
                                 ['number', 'number', 'number', 'number', 'number'],
                                 [namePtr, mimePtr, ptr, data.length, 1]);
 
-                            _free(namePtr);
-                            _free(mimePtr);
-                            _free(ptr);
+                            Module._free(namePtr);
+                            Module._free(mimePtr);
+                            Module._free(ptr);
 
                             filesProcessed++;
                             if (filesProcessed === totalFiles) {
@@ -239,13 +260,26 @@ public:
     /**
      * Load file from URL (for assets bundled with the app)
      * @param url URL to fetch
-     * @param callback Function called when loaded
+     * @param callback Function called when loaded (also called on error with empty data)
      */
     static void loadFromURL(const std::string& url, UploadCallback callback) {
-        sURLCallback = callback;
+        // Generate unique request ID for this fetch
+        int requestId = sNextRequestId++;
+        sURLCallbacks[requestId] = callback;
 
         EM_ASM({
             var url = UTF8ToString($0);
+            var requestId = $1;
+
+            // Helper to allocate UTF8 string
+            function allocateString(str) {
+                var encoder = new TextEncoder();
+                var bytes = encoder.encode(str);
+                var ptr = Module._malloc(bytes.length + 1);
+                Module.HEAPU8.set(bytes, ptr);
+                Module.HEAPU8[ptr + bytes.length] = 0;
+                return ptr;
+            }
 
             fetch(url)
                 .then(function(response) {
@@ -257,23 +291,28 @@ public:
                     var ptr = Module._malloc(data.length);
                     Module.HEAPU8.set(data, ptr);
 
-                    // Extract filename from URL
-                    var filename = url.split('/').pop() || 'file';
-                    var namePtr = allocateUTF8(filename);
-                    var mimePtr = allocateUTF8('');
+                    var urlPtr = allocateString(url);
+                    var mimePtr = allocateString('');
 
-                    Module.ccall('_al_web_file_url_loaded', null,
-                        ['number', 'number', 'number', 'number'],
-                        [namePtr, mimePtr, ptr, data.length]);
+                    Module.ccall('_al_web_file_url_loaded_v2', null,
+                        ['number', 'number', 'number', 'number', 'number'],
+                        [requestId, urlPtr, mimePtr, ptr, data.length]);
 
-                    _free(namePtr);
-                    _free(mimePtr);
-                    _free(ptr);
+                    Module._free(urlPtr);
+                    Module._free(mimePtr);
+                    Module._free(ptr);
                 })
                 .catch(function(err) {
-                    console.error('[WebFile] Load error:', err);
+                    console.error('[WebFile] Load error for', url, ':', err.message);
+                    var urlPtr = allocateString(url);
+                    var mimePtr = allocateString('');
+                    Module.ccall('_al_web_file_url_loaded_v2', null,
+                        ['number', 'number', 'number', 'number', 'number'],
+                        [requestId, urlPtr, mimePtr, 0, 0]);
+                    Module._free(urlPtr);
+                    Module._free(mimePtr);
                 });
-        }, url.c_str());
+        }, url.c_str(), requestId);
     }
 
     /**
@@ -316,8 +355,24 @@ public:
             UploadedFile file;
             file.name = name;
             file.mimeType = mime;
-            file.data.assign(data, data + size);
+            if (data && size > 0) {
+                file.data.assign(data, data + size);
+            }
             sURLCallback(file);
+        }
+    }
+
+    static void _onURLLoadedV2(int requestId, const char* url, const char* mime, const uint8_t* data, size_t size) {
+        auto it = sURLCallbacks.find(requestId);
+        if (it != sURLCallbacks.end()) {
+            UploadedFile file;
+            file.name = url;
+            file.mimeType = mime;
+            if (data && size > 0) {
+                file.data.assign(data, data + size);
+            }
+            it->second(file);
+            sURLCallbacks.erase(it);
         }
     }
 
@@ -326,6 +381,8 @@ private:
     static MultiUploadCallback sMultiUploadCallback;
     static UploadCallback sURLCallback;
     static std::vector<UploadedFile> sBatchFiles;
+    static std::map<int, UploadCallback> sURLCallbacks;
+    static int sNextRequestId;
 };
 
 // Static member definitions
@@ -333,25 +390,36 @@ WebFile::UploadCallback WebFile::sUploadCallback;
 WebFile::MultiUploadCallback WebFile::sMultiUploadCallback;
 WebFile::UploadCallback WebFile::sURLCallback;
 std::vector<UploadedFile> WebFile::sBatchFiles;
+std::map<int, WebFile::UploadCallback> WebFile::sURLCallbacks;
+int WebFile::sNextRequestId = 1;
 
 } // namespace al
 
-// C callbacks for JavaScript
+// C callbacks for JavaScript - must be exported with EMSCRIPTEN_KEEPALIVE
 extern "C" {
+    EMSCRIPTEN_KEEPALIVE
     void _al_web_file_uploaded(const char* name, const char* mime, uint8_t* data, int size, int isBatch) {
         al::WebFile::_onFileUploaded(name, mime, data, size, isBatch != 0);
     }
 
+    EMSCRIPTEN_KEEPALIVE
     void _al_web_file_batch_start(int count) {
         al::WebFile::_onBatchStart(count);
     }
 
+    EMSCRIPTEN_KEEPALIVE
     void _al_web_file_batch_end() {
         al::WebFile::_onBatchEnd();
     }
 
+    EMSCRIPTEN_KEEPALIVE
     void _al_web_file_url_loaded(const char* name, const char* mime, uint8_t* data, int size) {
         al::WebFile::_onURLLoaded(name, mime, data, size);
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void _al_web_file_url_loaded_v2(int requestId, const char* url, const char* mime, uint8_t* data, int size) {
+        al::WebFile::_onURLLoadedV2(requestId, url, mime, data, size);
     }
 }
 
