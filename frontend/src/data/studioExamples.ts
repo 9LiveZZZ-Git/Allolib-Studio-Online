@@ -2839,37 +2839,47 @@ public:
         pbr.drawSkybox(g);
         g.depthTesting(true);
 
-        // Draw floor
-        g.lighting(true);
+        // All rendering uses PBR for consistent lighting
+        pbr.begin(g, nav().pos());
+
+        // Draw floor with dark material
+        PBRMaterial floorMat;
+        floorMat.albedo = Vec3f(0.15, 0.15, 0.18);
+        floorMat.metallic = 0.0;
+        floorMat.roughness = 0.8;
+        pbr.material(floorMat);
         g.pushMatrix();
         g.translate(0, 0, 0);
         g.rotate(-90, 1, 0, 0);
-        g.color(0.15, 0.15, 0.18);
         g.draw(floor);
         g.popMatrix();
 
+        // Pedestal material (dark stone look)
+        PBRMaterial pedestalMat;
+        pedestalMat.albedo = Vec3f(0.2, 0.2, 0.22);
+        pedestalMat.metallic = 0.0;
+        pedestalMat.roughness = 0.6;
+
         // Draw material spheres in a semicircle
-        pbr.begin(g, nav().pos());
         for (int i = 0; i < 7; i++) {
             float angle = (i - 3) * 0.4f;
             float x = sin(angle) * 5.0f;
             float z = cos(angle) * 5.0f - 3.0f;
 
-            // Set material
+            // Draw pedestal with stone material
+            pbr.material(pedestalMat);
+            g.pushMatrix();
+            g.translate(x, 0.3f, z);
+            g.draw(pedestal);
+            g.popMatrix();
+
+            // Draw sphere with showcase material
             PBRMaterial mat;
             mat.albedo = materials[i].albedo;
             mat.metallic = materials[i].metallic;
             mat.roughness = materials[i].roughness;
             pbr.material(mat);
 
-            // Draw pedestal
-            g.pushMatrix();
-            g.translate(x, 0.3f, z);
-            g.color(0.2, 0.2, 0.22);
-            g.draw(pedestal);
-            g.popMatrix();
-
-            // Draw sphere on pedestal
             g.pushMatrix();
             g.translate(x, 1.1f, z);
             g.rotate(time * 15, 0, 1, 0);
@@ -2889,10 +2899,10 @@ public:
             g.popMatrix();
 
             // Center pedestal
+            pbr.material(pedestalMat);
             g.pushMatrix();
             g.translate(0, 0.3f, 0);
             g.scale(1.5, 1, 1.5);
-            g.color(0.25, 0.25, 0.28);
             g.draw(pedestal);
             g.popMatrix();
         }
