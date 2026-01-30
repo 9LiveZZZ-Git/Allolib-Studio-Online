@@ -883,66 +883,109 @@ int main() {
     category: 'studio-meshes',
     subcategory: 'classic-models',
     code: `/**
- * Stanford Bunny - OBJ Mesh Loading
+ * Stanford Bunny - OBJ with HDR Lighting
  *
- * The classic Stanford bunny (1994) loaded from an OBJ file.
- * Demonstrates the WebOBJ loader for importing 3D models.
+ * The classic Stanford bunny (1994) with HDR environment
+ * lighting and camera controls.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebOBJ.hpp"
+#include "al_WebEnvironment.hpp"
 
 using namespace al;
 
 class BunnyDemo : public WebApp {
 public:
     WebOBJ loader;
+    WebEnvironment env;
     Mesh bunny;
+    Mesh floor;
     double angle = 0;
+    float camAngleX = 0.3f, camAngleY = 0.3f;
+    float camDist = 4.0f;
     bool meshLoaded = false;
 
     void onCreate() override {
-        // Load the Stanford bunny OBJ file
+        // Load HDR environment
+        env.load("/assets/environments/studio_small_09_1k.hdr");
+        env.exposure(1.5f);
+
+        // Load the Stanford bunny
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
             if (success) {
                 bunny = loader.mesh();
-                // Center and scale the mesh
                 bunny.fitToSphere(1.0);
                 meshLoaded = true;
                 printf("Bunny loaded: %zu vertices\\n", bunny.vertices().size());
-            } else {
-                printf("Failed to load bunny.obj\\n");
             }
         });
 
-        nav().pos(0, 0, 3);
+        // Floor
+        addSurface(floor, 10, 10, 10, 10);
+        floor.generateNormals();
+
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 0.5f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0.3, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
-        angle += dt * 30.0;
+        angle += dt * 25.0;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.15, 0.15, 0.2);
+        g.clear(0, 0, 0);
+
+        // Draw HDR skybox
+        env.drawSkybox(g);
         g.depthTesting(true);
-        g.lighting(true);
 
         if (meshLoaded) {
+            // Draw reflective bunny
+            env.beginReflect(g, nav().pos(), 0.7f);
             g.pushMatrix();
+            g.translate(0, 0.3, 0);
             g.rotate(angle, 0, 1, 0);
-            g.color(0.9, 0.85, 0.8);
             g.draw(bunny);
             g.popMatrix();
-        } else {
-            // Show loading indicator (simple spinning cube)
-            g.pushMatrix();
-            g.rotate(angle * 2, 1, 1, 0);
-            g.color(0.5, 0.5, 0.6);
-            Mesh cube;
-            addCube(cube, 0.3);
-            g.draw(cube);
-            g.popMatrix();
+            env.endReflect();
         }
+
+        // Floor with lighting
+        g.lighting(true);
+        g.pushMatrix();
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.3, 0.3, 0.35);
+        g.draw(floor);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.3f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-0.2f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 0.5f); break;
+            case 's': case 'S':   camDist = std::min(10.0f, camDist + 0.5f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
     }
 };
 
@@ -960,65 +1003,109 @@ int main() {
     category: 'studio-meshes',
     subcategory: 'classic-models',
     code: `/**
- * Utah Teapot - OBJ Mesh Loading
+ * Utah Teapot - OBJ with HDR Reflections
  *
- * The Utah teapot, created by Martin Newell in 1975,
- * is one of the most iconic models in computer graphics.
+ * The Utah teapot (1975) with polished copper appearance
+ * and HDR environment reflections.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebOBJ.hpp"
+#include "al_WebEnvironment.hpp"
 
 using namespace al;
 
 class TeapotDemo : public WebApp {
 public:
     WebOBJ loader;
+    WebEnvironment env;
     Mesh teapot;
+    Mesh floor;
     double angle = 0;
+    float camAngleX = 0.4f, camAngleY = 0.25f;
+    float camDist = 4.0f;
     bool meshLoaded = false;
 
     void onCreate() override {
-        // Load the Utah teapot OBJ file
+        // Load HDR environment
+        env.load("/assets/environments/kloofendal_48d_partly_cloudy_puresky_1k.hdr");
+        env.exposure(1.3f);
+
+        // Load the Utah teapot
         loader.load("/assets/meshes/teapot.obj", [this](bool success) {
             if (success) {
                 teapot = loader.mesh();
                 teapot.fitToSphere(1.0);
                 meshLoaded = true;
                 printf("Teapot loaded: %zu vertices\\n", teapot.vertices().size());
-            } else {
-                printf("Failed to load teapot.obj\\n");
             }
         });
 
-        nav().pos(0, 0, 3);
+        // Floor
+        addSurface(floor, 12, 12, 10, 10);
+        floor.generateNormals();
+
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 0.3f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0.2, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
-        angle += dt * 25.0;
+        angle += dt * 20.0;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.1, 0.12, 0.15);
+        g.clear(0, 0, 0);
+
+        // Draw HDR skybox
+        env.drawSkybox(g);
         g.depthTesting(true);
-        g.lighting(true);
 
         if (meshLoaded) {
+            // Draw polished copper teapot with reflections
+            env.beginReflect(g, nav().pos(), 0.75f);
             g.pushMatrix();
+            g.translate(0, 0.2, 0);
             g.rotate(angle, 0, 1, 0);
-            g.color(0.8, 0.5, 0.3); // Copper color
             g.draw(teapot);
             g.popMatrix();
-        } else {
-            // Loading indicator
-            g.pushMatrix();
-            g.rotate(angle * 2, 1, 1, 0);
-            g.color(0.5, 0.5, 0.6);
-            Mesh cube;
-            addCube(cube, 0.3);
-            g.draw(cube);
-            g.popMatrix();
+            env.endReflect();
         }
+
+        // Floor
+        g.lighting(true);
+        g.pushMatrix();
+        g.translate(0, -0.6, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.25, 0.22, 0.2);
+        g.draw(floor);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.3f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-0.1f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 0.5f); break;
+            case 's': case 'S':   camDist = std::min(10.0f, camDist + 0.5f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
     }
 };
 
@@ -1343,11 +1430,17 @@ int main() {
     code: `/**
  * Trefoil Knot
  *
- * A procedurally generated trefoil knot -
- * a classic mathematical surface.
+ * A procedurally generated trefoil knot with
+ * HDR environment reflections.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include <cmath>
 
@@ -1356,14 +1449,16 @@ using namespace al;
 class TrefoilKnot : public WebApp {
 public:
     Mesh knot;
+    WebEnvironment env;
     double angle = 0;
+    float camAngleX = 0.4f, camAngleY = 0.3f;
+    float camDist = 4.0f;
 
-    // Trefoil knot parametric equations
     Vec3f trefoilPoint(float t) {
         float x = sin(t) + 2 * sin(2 * t);
         float y = cos(t) - 2 * cos(2 * t);
         float z = -sin(3 * t);
-        return Vec3f(x, y, z) * 0.3;
+        return Vec3f(x, y, z) * 0.35;
     }
 
     Vec3f trefoilTangent(float t) {
@@ -1374,36 +1469,36 @@ public:
     }
 
     void onCreate() override {
+        // Load HDR environment
+        env.load("/assets/environments/museum_of_ethnography_1k.hdr");
+        env.exposure(1.5f);
+
         // Generate tube mesh along trefoil curve
         int segments = 200;
-        int tubeSegments = 16;
-        float tubeRadius = 0.08;
+        int tubeSegments = 20;
+        float tubeRadius = 0.1;
 
         for (int i = 0; i <= segments; i++) {
             float t = (float)i / segments * M_2PI;
             Vec3f center = trefoilPoint(t);
             Vec3f tangent = trefoilTangent(t);
 
-            // Create perpendicular vectors
             Vec3f up(0, 1, 0);
             if (abs(tangent.dot(up)) > 0.9) up = Vec3f(1, 0, 0);
             Vec3f right = tangent.cross(up).normalize();
             Vec3f realUp = right.cross(tangent).normalize();
 
             for (int j = 0; j < tubeSegments; j++) {
-                float angle = (float)j / tubeSegments * M_2PI;
-                Vec3f offset = (right * cos(angle) + realUp * sin(angle)) * tubeRadius;
+                float a = (float)j / tubeSegments * M_2PI;
+                Vec3f offset = (right * cos(a) + realUp * sin(a)) * tubeRadius;
                 Vec3f pos = center + offset;
 
                 knot.vertex(pos);
                 knot.normal(offset.normalize());
-
-                // Rainbow color based on position
-                knot.color(HSV((float)i / segments, 0.8, 1.0));
             }
         }
 
-        // Generate indices for triangle strip
+        // Generate triangle indices
         for (int i = 0; i < segments; i++) {
             for (int j = 0; j < tubeSegments; j++) {
                 int next = (j + 1) % tubeSegments;
@@ -1421,23 +1516,50 @@ public:
         }
 
         knot.primitive(Mesh::TRIANGLES);
+        updateCamera();
+    }
 
-        nav().pos(0, 0, 3);
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY);
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
-        angle += dt * 30.0;
+        angle += dt * 25.0;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.05, 0.05, 0.08);
-        g.depthTesting(true);
-        g.lighting(true);
+        g.clear(0, 0, 0);
 
+        // Draw HDR skybox
+        env.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Draw reflective knot
+        env.beginReflect(g, nav().pos(), 0.85f);
         g.pushMatrix();
         g.rotate(angle, 0.3, 1, 0.2);
         g.draw(knot);
         g.popMatrix();
+        env.endReflect();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.4f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-1.4f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 0.4f); break;
+            case 's': case 'S':   camDist = std::min(10.0f, camDist + 0.4f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
     }
 };
 
@@ -1457,11 +1579,17 @@ int main() {
     code: `/**
  * Klein Bottle
  *
- * A non-orientable surface that passes through itself.
- * This mathematical curiosity has no inside or outside.
+ * A non-orientable surface that passes through itself,
+ * rendered with HDR environment reflections.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include <cmath>
 
@@ -1470,9 +1598,11 @@ using namespace al;
 class KleinBottle : public WebApp {
 public:
     Mesh klein;
+    WebEnvironment env;
     double angle = 0;
+    float camAngleX = 0.5f, camAngleY = 0.2f;
+    float camDist = 4.5f;
 
-    // Klein bottle parametric equations
     Vec3f kleinPoint(float u, float v) {
         float r = 4.0 * (1.0 - cos(u) / 2.0);
         float x, y, z;
@@ -1486,12 +1616,16 @@ public:
         }
         z = r * sin(v);
 
-        return Vec3f(x, y, z) * 0.05;
+        return Vec3f(x, y, z) * 0.055;
     }
 
     void onCreate() override {
-        int uSegments = 60;
-        int vSegments = 30;
+        // Load HDR environment
+        env.load("/assets/environments/gray_pier_1k.hdr");
+        env.exposure(1.4f);
+
+        int uSegments = 80;
+        int vSegments = 40;
 
         for (int i = 0; i <= uSegments; i++) {
             float u = (float)i / uSegments * M_2PI;
@@ -1502,13 +1636,10 @@ public:
                 Vec3f pos = kleinPoint(u, v);
                 klein.vertex(pos);
 
-                // Calculate normal numerically
+                // Numerical normal calculation
                 Vec3f du = kleinPoint(u + 0.01, v) - pos;
                 Vec3f dv = kleinPoint(u, v + 0.01) - pos;
                 klein.normal(du.cross(dv).normalize());
-
-                // Color gradient
-                klein.color(HSV((float)i / uSegments * 0.7, 0.6, 0.9));
             }
         }
 
@@ -1529,26 +1660,51 @@ public:
         }
 
         klein.primitive(Mesh::TRIANGLES);
+        updateCamera();
+    }
 
-        nav().pos(0, 0, 4);
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY);
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
-        angle += dt * 20.0;
+        angle += dt * 18.0;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.08, 0.06, 0.1);
-        g.depthTesting(true);
-        g.lighting(true);
-        g.blending(true);
-        g.blendAdd();
+        g.clear(0, 0, 0);
 
+        // Draw HDR skybox
+        env.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Draw reflective Klein bottle
+        env.beginReflect(g, nav().pos(), 0.8f);
         g.pushMatrix();
         g.rotate(angle, 0.2, 1, 0.1);
         g.rotate(90, 1, 0, 0);
         g.draw(klein);
         g.popMatrix();
+        env.endReflect();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.4f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-1.4f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 0.4f); break;
+            case 's': case 'S':   camDist = std::min(10.0f, camDist + 0.4f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
     }
 };
 
@@ -1573,25 +1729,38 @@ int main() {
  * Automatic LOD Demo
  *
  * Demonstrates automatic Level of Detail generation
- * and distance-based mesh simplification.
+ * and distance-based mesh simplification with HDR lighting.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out (changes LOD)
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebOBJ.hpp"
 #include "al_WebLOD.hpp"
+#include "al_WebEnvironment.hpp"
 
 using namespace al;
 
 class LODDemo : public WebApp {
 public:
     WebOBJ loader;
+    WebEnvironment env;
     Mesh originalMesh;
+    Mesh floor;
     LODMesh lodMesh;
     double angle = 0;
-    float cameraDistance = 5;
+    float camAngleX = 0.5f, camAngleY = 0.3f;
+    float camDist = 5.0f;
     bool meshLoaded = false;
 
     void onCreate() override {
+        // Load HDR environment
+        env.load("/assets/environments/forest_slope_1k.hdr");
+        env.exposure(1.4f);
+
         // Load mesh and generate LOD
         loader.load("/assets/meshes/bunny.obj", [this](bool success) {
             if (success) {
@@ -1610,7 +1779,19 @@ public:
             }
         });
 
-        nav().pos(0, 0, cameraDistance);
+        // Floor
+        addSurface(floor, 15, 15, 10, 10);
+        floor.generateNormals();
+
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 0.5f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0.3, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
@@ -1618,35 +1799,51 @@ public:
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.1, 0.1, 0.15);
+        g.clear(0, 0, 0);
+
+        // Draw HDR skybox
+        env.drawSkybox(g);
         g.depthTesting(true);
-        g.lighting(true);
 
         if (meshLoaded) {
+            // Get LOD based on camera distance
+            int lodIndex = lodMesh.getLODIndex(camDist);
+
+            // Draw mesh with environment reflections
+            env.beginReflect(g, nav().pos(), 0.6f);
             g.pushMatrix();
+            g.translate(0, 0.3, 0);
             g.rotate(angle, 0, 1, 0);
-
-            // Get LOD based on distance
-            int lodIndex = lodMesh.getLODIndex(cameraDistance);
-            g.color(0.9, 0.85, 0.8);
             g.draw(lodMesh.level(lodIndex));
-
             g.popMatrix();
+            env.endReflect();
 
-            // Show current LOD info
-            printf("\\rDistance: %.1f  LOD: %d  Triangles: %d    ",
-                   cameraDistance, lodIndex, lodMesh.triangleCount(lodIndex));
+            printf("\\rDist: %.1f  LOD: %d  Tris: %d    ",
+                   camDist, lodIndex, lodMesh.triangleCount(lodIndex));
         }
+
+        // Floor
+        g.lighting(true);
+        g.pushMatrix();
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.2, 0.25, 0.2);
+        g.draw(floor);
+        g.popMatrix();
     }
 
     bool onKeyDown(Keyboard const& k) override {
-        if (k.key() == '=' || k.key() == '+') {
-            cameraDistance = std::max(1.0f, cameraDistance - 2.0f);
-            nav().pos(0, 0, cameraDistance);
-        } else if (k.key() == '-') {
-            cameraDistance = std::min(100.0f, cameraDistance + 2.0f);
-            nav().pos(0, 0, cameraDistance);
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.2f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(-0.1f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(2.0f, camDist - 1.5f); break;
+            case 's': case 'S':   camDist = std::min(80.0f, camDist + 2.0f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
         }
+        updateCamera();
         return true;
     }
 };
@@ -1669,10 +1866,16 @@ int main() {
  *
  * Demonstrates rendering many objects with automatic
  * LOD selection for each based on camera distance.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   +/-: Adjust exposure
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebLOD.hpp"
+#include "al_WebEnvironment.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include <vector>
 
@@ -1682,29 +1885,47 @@ class LODGroupDemo : public WebApp {
 public:
     LODMesh lodSphere;
     LODGroup group;
+    WebEnvironment env;
     Mesh originalSphere;
+    Mesh floor;
     double time = 0;
     int totalTriangles = 0;
+    float camAngleX = 0.3f, camAngleY = 0.4f;
+    float camDist = 20.0f;
 
     void onCreate() override {
+        // Load HDR environment
+        env.load("/assets/environments/kloppenheim_02_puresky_1k.hdr");
+        env.exposure(1.2f);
+
         // Create sphere and generate LOD
-        addSphere(originalSphere, 0.3, 32, 32);
+        addSphere(originalSphere, 0.4, 32, 32);
         originalSphere.generateNormals();
         lodSphere.generate(originalSphere, 4);
-        lodSphere.setDistances({5, 15, 30, 100});
+        lodSphere.setDistances({8, 20, 40, 100});
 
         // Create a grid of objects
         for (int x = -5; x <= 5; x++) {
             for (int z = -5; z <= 5; z++) {
-                Vec3f pos(x * 2.0f, 0, z * 2.0f);
+                Vec3f pos(x * 2.5f, 0.4f, z * 2.5f);
                 group.add(&lodSphere, pos, 1.0f);
             }
         }
 
-        printf("Created %d objects with LOD\\n", (int)group.objectCount());
+        // Floor
+        addSurface(floor, 40, 40, 20, 20);
+        floor.generateNormals();
 
-        nav().pos(0, 5, 15);
-        nav().faceToward(Vec3d(0, 0, 0));
+        printf("Created %d objects with LOD\\n", (int)group.objectCount());
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 2.0f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0, 0), Vec3f(0, 1, 0));
     }
 
     void onAnimate(double dt) override {
@@ -1716,14 +1937,41 @@ public:
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.05, 0.05, 0.08);
-        g.depthTesting(true);
-        g.lighting(true);
+        g.clear(0, 0, 0);
 
-        g.color(0.7, 0.8, 0.9);
+        // Draw HDR skybox
+        env.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Draw spheres with reflections
+        env.beginReflect(g, nav().pos(), 0.7f);
         group.draw(g);
+        env.endReflect();
+
+        // Floor
+        g.lighting(true);
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.2, 0.2, 0.22);
+        g.draw(floor);
+        g.popMatrix();
 
         printf("\\rTotal triangles: %d    ", totalTriangles);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.12f; break;
+            case Keyboard::RIGHT: camAngleX += 0.12f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.3f, camAngleY + 0.1f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(0.1f, camAngleY - 0.1f); break;
+            case 'w': case 'W':   camDist = std::max(8.0f, camDist - 2.0f); break;
+            case 's': case 'S':   camDist = std::min(60.0f, camDist + 2.0f); break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
     }
 };
 
@@ -2347,6 +2595,405 @@ public:
 
 int main() {
     ParticleGalaxy app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASES - Big Demos
+  // ==========================================================================
+  {
+    id: 'studio-showcase-pbr-gallery',
+    title: 'PBR Material Gallery',
+    description: 'Comprehensive showcase of PBR materials with HDR lighting',
+    category: 'studio-templates',
+    subcategory: 'showcase',
+    code: `/**
+ * PBR Material Gallery
+ *
+ * A stunning showcase of physically-based rendering with
+ * various materials: gold, silver, copper, jade, ruby,
+ * and more, all lit by HDR image-based lighting.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   1-4: Change HDR environment
+ *   +/-: Adjust exposure
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al_WebOBJ.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class PBRGallery : public WebApp {
+public:
+    WebPBR pbr;
+    WebOBJ objLoader;
+    Mesh sphere;
+    Mesh floor;
+    Mesh teapot;
+    Mesh pedestal;
+    double time = 0;
+    float camAngleX = 0.0f, camAngleY = 0.35f;
+    float camDist = 12.0f;
+    bool teapotLoaded = false;
+    int currentEnv = 0;
+
+    const char* envPaths[4] = {
+        "/assets/environments/studio_small_09_1k.hdr",
+        "/assets/environments/museum_of_ethnography_1k.hdr",
+        "/assets/environments/kloofendal_48d_partly_cloudy_puresky_1k.hdr",
+        "/assets/environments/empty_warehouse_01_1k.hdr"
+    };
+
+    // Material definitions
+    struct MaterialDef {
+        const char* name;
+        Vec3f albedo;
+        float metallic;
+        float roughness;
+    };
+
+    MaterialDef materials[7] = {
+        {"Gold",     Vec3f(1.0, 0.84, 0.0), 1.0, 0.15},
+        {"Silver",   Vec3f(0.95, 0.95, 0.97), 1.0, 0.1},
+        {"Copper",   Vec3f(0.95, 0.64, 0.54), 1.0, 0.2},
+        {"Jade",     Vec3f(0.0, 0.66, 0.42), 0.0, 0.3},
+        {"Ruby",     Vec3f(0.88, 0.07, 0.37), 0.0, 0.15},
+        {"Chrome",   Vec3f(0.55, 0.55, 0.55), 1.0, 0.05},
+        {"Obsidian", Vec3f(0.05, 0.05, 0.07), 0.0, 0.1}
+    };
+
+    void onCreate() override {
+        // Load initial environment
+        pbr.loadEnvironment(envPaths[0]);
+        pbr.exposure(1.5f);
+
+        // Create sphere for material samples
+        addSphere(sphere, 0.5, 48, 48);
+        sphere.generateNormals();
+
+        // Create floor
+        addSurface(floor, 30, 30, 20, 20);
+        floor.generateNormals();
+
+        // Create pedestal
+        addCylinder(pedestal, 0.15, 0.6, 24, 2, 2);
+        pedestal.generateNormals();
+
+        // Load teapot for center piece
+        objLoader.load("/assets/meshes/teapot.obj", [this](bool success) {
+            if (success) {
+                teapot = objLoader.mesh();
+                teapot.fitToSphere(1.2);
+                teapotLoaded = true;
+            }
+        });
+
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY);
+        float y = camDist * sin(camAngleY) + 2.0f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 1.0, 0), Vec3f(0, 1, 0));
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+
+        // Draw HDR skybox
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Draw floor
+        g.lighting(true);
+        g.pushMatrix();
+        g.translate(0, 0, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.15, 0.15, 0.18);
+        g.draw(floor);
+        g.popMatrix();
+
+        // Draw material spheres in a semicircle
+        pbr.begin(g, nav().pos());
+        for (int i = 0; i < 7; i++) {
+            float angle = (i - 3) * 0.4f;
+            float x = sin(angle) * 5.0f;
+            float z = cos(angle) * 5.0f - 3.0f;
+
+            // Set material
+            PBRMaterial mat;
+            mat.albedo = materials[i].albedo;
+            mat.metallic = materials[i].metallic;
+            mat.roughness = materials[i].roughness;
+            pbr.material(mat);
+
+            // Draw pedestal
+            g.pushMatrix();
+            g.translate(x, 0.3f, z);
+            g.color(0.2, 0.2, 0.22);
+            g.draw(pedestal);
+            g.popMatrix();
+
+            // Draw sphere on pedestal
+            g.pushMatrix();
+            g.translate(x, 1.1f, z);
+            g.rotate(time * 15, 0, 1, 0);
+            g.draw(sphere);
+            g.popMatrix();
+        }
+
+        // Draw center piece teapot in gold
+        if (teapotLoaded) {
+            PBRMaterial goldMat = PBRMaterial::Gold();
+            pbr.material(goldMat);
+
+            g.pushMatrix();
+            g.translate(0, 1.5f, 0);
+            g.rotate(time * 10, 0, 1, 0);
+            g.draw(teapot);
+            g.popMatrix();
+
+            // Center pedestal
+            g.pushMatrix();
+            g.translate(0, 0.3f, 0);
+            g.scale(1.5, 1, 1.5);
+            g.color(0.25, 0.25, 0.28);
+            g.draw(pedestal);
+            g.popMatrix();
+        }
+
+        pbr.end();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.12f; break;
+            case Keyboard::RIGHT: camAngleX += 0.12f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.2f, camAngleY + 0.08f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(0.1f, camAngleY - 0.08f); break;
+            case 'w': case 'W':   camDist = std::max(5.0f, camDist - 1.0f); break;
+            case 's': case 'S':   camDist = std::min(25.0f, camDist + 1.0f); break;
+            case '1': case '2': case '3': case '4':
+                currentEnv = k.key() - '1';
+                pbr.loadEnvironment(envPaths[currentEnv]);
+                printf("Environment: %d\\n", currentEnv + 1);
+                break;
+            case '+': case '=':   pbr.exposure(pbr.exposure() + 0.2f); break;
+            case '-':             pbr.exposure(std::max(0.3f, pbr.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
+    }
+};
+
+int main() {
+    PBRGallery app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-showcase-museum',
+    title: 'Virtual Museum',
+    description: 'Interactive 3D museum with classic models and HDR lighting',
+    category: 'studio-templates',
+    subcategory: 'showcase',
+    code: `/**
+ * Virtual Museum Showcase
+ *
+ * An immersive 3D museum featuring classic computer graphics
+ * test models with HDR lighting and environment reflections.
+ *
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   W/S: Zoom in/out
+ *   A/D: Pan left/right
+ *   +/-: Adjust exposure
+ *   Space: Toggle auto-rotate
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebOBJ.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class VirtualMuseum : public WebApp {
+public:
+    WebOBJ loaders[4];
+    WebEnvironment env;
+    WebPBR pbr;
+    Mesh bunny, teapot, suzanne, spot;
+    Mesh floor, wall;
+    Mesh pedestal;
+    double time = 0;
+    float camAngleX = 0.0f, camAngleY = 0.25f;
+    float camDist = 15.0f;
+    float panX = 0;
+    bool autoRotate = true;
+    int loadedCount = 0;
+
+    void onCreate() override {
+        // Load HDR environment
+        env.load("/assets/environments/museum_of_ethnography_1k.hdr");
+        env.exposure(1.3f);
+
+        pbr.loadEnvironment("/assets/environments/museum_of_ethnography_1k.hdr");
+        pbr.exposure(1.3f);
+
+        // Load all models
+        loaders[0].load("/assets/meshes/bunny.obj", [this](bool s) {
+            if (s) { bunny = loaders[0].mesh(); bunny.fitToSphere(1.0); loadedCount++; }
+        });
+        loaders[1].load("/assets/meshes/teapot.obj", [this](bool s) {
+            if (s) { teapot = loaders[1].mesh(); teapot.fitToSphere(1.0); loadedCount++; }
+        });
+        loaders[2].load("/assets/meshes/suzanne.obj", [this](bool s) {
+            if (s) { suzanne = loaders[2].mesh(); suzanne.fitToSphere(0.9); loadedCount++; }
+        });
+        loaders[3].load("/assets/meshes/spot.obj", [this](bool s) {
+            if (s) { spot = loaders[3].mesh(); spot.fitToSphere(1.0); loadedCount++; }
+        });
+
+        // Create floor
+        addSurface(floor, 40, 40, 30, 30);
+        floor.generateNormals();
+
+        // Create walls
+        addSurface(wall, 40, 15, 20, 8);
+        wall.generateNormals();
+
+        // Create pedestal
+        addCylinder(pedestal, 0.8, 1.0, 32, 2, 2);
+        pedestal.generateNormals();
+
+        updateCamera();
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleX) * cos(camAngleY) + panX;
+        float y = camDist * sin(camAngleY) + 2.5f;
+        float z = camDist * cos(camAngleX) * cos(camAngleY);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(panX, 1.5f, 0), Vec3f(0, 1, 0));
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        if (autoRotate) {
+            camAngleX += dt * 0.1f;
+            updateCamera();
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+
+        // Draw HDR skybox
+        env.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Draw floor - dark polished
+        g.lighting(true);
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.08, 0.08, 0.1);
+        g.draw(floor);
+        g.popMatrix();
+
+        // Draw back wall
+        g.pushMatrix();
+        g.translate(0, 7.5, -20);
+        g.color(0.12, 0.12, 0.15);
+        g.draw(wall);
+        g.popMatrix();
+
+        // Model positions
+        float positions[4][2] = {{-6, -3}, {6, -3}, {-6, 5}, {6, 5}};
+        Mesh* models[4] = {&bunny, &teapot, &suzanne, &spot};
+
+        // Draw pedestals and models
+        for (int i = 0; i < 4; i++) {
+            float x = positions[i][0];
+            float z = positions[i][1];
+
+            // Pedestal
+            g.pushMatrix();
+            g.translate(x, 0.5f, z);
+            g.color(0.2, 0.2, 0.25);
+            g.draw(pedestal);
+            g.popMatrix();
+
+            // Model with environment reflection
+            if (loadedCount > i && models[i]->vertices().size() > 0) {
+                env.beginReflect(g, nav().pos(), 0.75f);
+                g.pushMatrix();
+                g.translate(x, 2.0f, z);
+                g.rotate(time * 20, 0, 1, 0);
+                g.draw(*models[i]);
+                g.popMatrix();
+                env.endReflect();
+            }
+        }
+
+        // Draw a center piece - reflective sphere
+        env.beginReflect(g, nav().pos(), 0.95f);
+        g.pushMatrix();
+        g.translate(0, 3.5f, 1);
+        Mesh centerSphere;
+        addSphere(centerSphere, 1.2, 48, 48);
+        centerSphere.generateNormals();
+        g.draw(centerSphere);
+        g.popMatrix();
+        env.endReflect();
+
+        // Center pedestal (taller)
+        g.pushMatrix();
+        g.translate(0, 1.0f, 1);
+        g.scale(1.2, 2, 1.2);
+        g.color(0.15, 0.15, 0.18);
+        g.draw(pedestal);
+        g.popMatrix();
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case Keyboard::LEFT:  camAngleX -= 0.15f; break;
+            case Keyboard::RIGHT: camAngleX += 0.15f; break;
+            case Keyboard::UP:    camAngleY = std::min(1.0f, camAngleY + 0.08f); break;
+            case Keyboard::DOWN:  camAngleY = std::max(0.05f, camAngleY - 0.08f); break;
+            case 'w': case 'W':   camDist = std::max(6.0f, camDist - 1.0f); break;
+            case 's': case 'S':   camDist = std::min(30.0f, camDist + 1.0f); break;
+            case 'a': case 'A':   panX -= 1.0f; break;
+            case 'd': case 'D':   panX += 1.0f; break;
+            case ' ':             autoRotate = !autoRotate; break;
+            case '+': case '=':   env.exposure(env.exposure() + 0.2f); break;
+            case '-':             env.exposure(std::max(0.3f, env.exposure() - 0.2f)); break;
+        }
+        updateCamera();
+        return true;
+    }
+};
+
+int main() {
+    VirtualMuseum app;
     app.start();
     return 0;
 }
