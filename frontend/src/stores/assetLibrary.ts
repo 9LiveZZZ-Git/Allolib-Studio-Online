@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { useProjectStore } from './project'
 
 // ─── Asset Types ─────────────────────────────────────────────────────────────
@@ -21,6 +21,24 @@ export type AssetType =
   | 'texture'
   | 'mesh'
   | 'environment'
+
+/**
+ * Asset loading state (PlayCanvas-style)
+ * - idle: Not yet requested
+ * - loading: Currently downloading/parsing
+ * - ready: Loaded and available
+ * - error: Failed to load
+ */
+export type AssetLoadingState = 'idle' | 'loading' | 'ready' | 'error'
+
+/**
+ * Priority levels for asset loading
+ * - critical: Load immediately, block app start (UI, essential meshes)
+ * - high: Load early in background (player models, common textures)
+ * - normal: Load on-demand when needed
+ * - low: Stream when idle (background music, distant scenery)
+ */
+export type AssetPriority = 'critical' | 'high' | 'normal' | 'low'
 
 export interface Asset {
   id: string
@@ -44,6 +62,16 @@ export interface Asset {
   license?: 'CC0' | 'MIT' | 'Apache-2.0'
   resolution?: string  // '2K', '4K', etc.
   fileSize?: string    // '2.4 MB'
+  fileSizeBytes?: number // Actual size for progress tracking
+
+  // ─── Loading & Streaming (PlayCanvas-style) ───
+  preload?: boolean           // If true, load before app starts
+  priority?: AssetPriority    // Loading priority level
+  loadingState?: AssetLoadingState  // Current loading state
+  loadProgress?: number       // 0-100 loading progress
+  loadError?: string          // Error message if failed
+  loadedData?: ArrayBuffer | string | ImageBitmap  // Cached loaded data
+  placeholderUrl?: string     // Placeholder image while loading
 
   // Metadata
   author?: string
@@ -2436,12 +2464,16 @@ inline int midiNoteOctave(int midiNote) {
     subcategory: 'Studio',
     type: 'environment',
     description: 'Small photography studio with soft lighting',
-    tags: ['environment', 'hdri', 'studio', 'lighting', 'indoor'],
+    tags: ['environment', 'hdri', 'studio', 'lighting', 'indoor', 'essential'],
     localPath: '/assets/environments/studio_small_09_1k.hdr',
     downloadUrl: 'https://polyhaven.com/a/studio_small_09',
     license: 'CC0',
     resolution: '1K',
     fileSize: '1.5 MB',
+    fileSizeBytes: 1615248,
+    preload: true,
+    priority: 'high',
+    loadingState: 'idle',
     isBuiltIn: true,
     isFavorite: false,
     createdAt: '2024-01-01',
@@ -2582,11 +2614,15 @@ inline int midiNoteOctave(int midiNote) {
     subcategory: 'Classic',
     type: 'mesh',
     description: 'Classic Stanford bunny test model - the iconic CG benchmark since 1994',
-    tags: ['mesh', '3d', 'bunny', 'classic', 'test', 'stanford'],
+    tags: ['mesh', '3d', 'bunny', 'classic', 'test', 'stanford', 'essential'],
     localPath: '/assets/meshes/bunny.obj',
     downloadUrl: 'https://graphics.stanford.edu/~mdfisher/Data/Meshes/bunny.obj',
     license: 'CC0',
     fileSize: '201 KB',
+    fileSizeBytes: 205917,
+    preload: false,
+    priority: 'normal',
+    loadingState: 'idle',
     isBuiltIn: true,
     isFavorite: false,
     createdAt: '2024-01-01',
@@ -2604,6 +2640,10 @@ inline int midiNoteOctave(int midiNote) {
     downloadUrl: 'https://graphics.stanford.edu/courses/cs148-10-summer/as3/code/as3/teapot.obj',
     license: 'CC0',
     fileSize: '206 KB',
+    fileSizeBytes: 210614,
+    preload: false,
+    priority: 'normal',
+    loadingState: 'idle',
     isBuiltIn: true,
     isFavorite: false,
     createdAt: '2024-01-01',
@@ -2621,6 +2661,10 @@ inline int midiNoteOctave(int midiNote) {
     downloadUrl: 'https://github.com/alecjacobson/common-3d-test-models',
     license: 'CC0',
     fileSize: '48 KB',
+    fileSizeBytes: 49137,
+    preload: false,
+    priority: 'normal',
+    loadingState: 'idle',
     isBuiltIn: true,
     isFavorite: false,
     createdAt: '2024-01-01',
@@ -2638,6 +2682,10 @@ inline int midiNoteOctave(int midiNote) {
     downloadUrl: 'https://github.com/alecjacobson/common-3d-test-models',
     license: 'CC0',
     fileSize: '323 KB',
+    fileSizeBytes: 330624,
+    preload: false,
+    priority: 'low',
+    loadingState: 'idle',
     isBuiltIn: true,
     isFavorite: false,
     createdAt: '2024-01-01',
@@ -2868,6 +2916,24 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
   const selectedCategory = ref<AssetCategory | null>(null)
   const selectedSubcategory = ref<string | null>(null)
   const isLibraryOpen = ref(false)
+
+  // ─── Loading State (PlayCanvas-style) ───
+  const loadingQueue = ref<string[]>([])           // Asset IDs queued for loading
+  const activeLoads = ref<Map<string, AbortController>>(new Map())  // Active fetch controllers
+  const maxConcurrentLoads = ref(4)                // Max parallel downloads
+  const totalBytesLoaded = ref(0)
+  const isPreloading = ref(false)                  // True during initial preload phase
+
+  // Placeholder images for progressive loading
+  const placeholders: Record<AssetType, string> = {
+    texture: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="%23333" width="64" height="64"/><text x="32" y="36" text-anchor="middle" fill="%23666" font-size="10">Loading...</text></svg>',
+    mesh: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="%23333" width="64" height="64"/><polygon points="32,8 56,56 8,56" fill="none" stroke="%23666" stroke-width="2"/></svg>',
+    environment: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="%23234" width="64" height="64"/><circle cx="48" cy="16" r="8" fill="%23ff8"/></svg>',
+    snippet: '',
+    file: '',
+    object: '',
+    shader: '',
+  }
 
   // Load favorites from storage
   const loadFavorites = () => {
@@ -3336,6 +3402,337 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     })
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STREAMING & LOADING SYSTEM (PlayCanvas-style)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get loading state for an asset
+   */
+  function getLoadingState(assetId: string): AssetLoadingState {
+    const asset = assets.value.find(a => a.id === assetId)
+    return asset?.loadingState || 'idle'
+  }
+
+  /**
+   * Get loading progress for an asset (0-100)
+   */
+  function getLoadProgress(assetId: string): number {
+    const asset = assets.value.find(a => a.id === assetId)
+    return asset?.loadProgress || 0
+  }
+
+  /**
+   * Check if asset is ready to use
+   */
+  function isAssetReady(assetId: string): boolean {
+    return getLoadingState(assetId) === 'ready'
+  }
+
+  /**
+   * Get placeholder URL for progressive loading
+   */
+  function getPlaceholder(asset: Asset): string {
+    return asset.placeholderUrl || placeholders[asset.type] || ''
+  }
+
+  /**
+   * Load a single asset asynchronously with progress tracking
+   */
+  async function loadAsset(assetId: string): Promise<boolean> {
+    const asset = assets.value.find(a => a.id === assetId)
+    if (!asset) {
+      console.warn(`[AssetLibrary] Asset not found: ${assetId}`)
+      return false
+    }
+
+    // Skip if already loaded or loading
+    if (asset.loadingState === 'ready') return true
+    if (asset.loadingState === 'loading') {
+      // Wait for existing load to complete
+      return new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+          if (asset.loadingState === 'ready') {
+            clearInterval(checkInterval)
+            resolve(true)
+          } else if (asset.loadingState === 'error') {
+            clearInterval(checkInterval)
+            resolve(false)
+          }
+        }, 100)
+      })
+    }
+
+    // Skip non-binary assets (snippets, templates)
+    if (!asset.localPath && !asset.downloadUrl) {
+      asset.loadingState = 'ready'
+      return true
+    }
+
+    const url = asset.localPath || asset.downloadUrl
+    if (!url) {
+      asset.loadingState = 'ready'
+      return true
+    }
+
+    // Start loading
+    asset.loadingState = 'loading'
+    asset.loadProgress = 0
+    asset.loadError = undefined
+
+    const controller = new AbortController()
+    activeLoads.value.set(assetId, controller)
+
+    try {
+      console.log(`[AssetLibrary] Loading: ${asset.name} from ${url}`)
+
+      const response = await fetch(url, { signal: controller.signal })
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const contentLength = response.headers.get('content-length')
+      const totalBytes = contentLength ? parseInt(contentLength, 10) : 0
+
+      // Stream the response with progress tracking
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response body')
+      }
+
+      const chunks: Uint8Array[] = []
+      let loadedBytes = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        chunks.push(value)
+        loadedBytes += value.length
+        totalBytesLoaded.value += value.length
+
+        if (totalBytes > 0) {
+          asset.loadProgress = Math.round((loadedBytes / totalBytes) * 100)
+        }
+      }
+
+      // Combine chunks into final buffer
+      const buffer = new Uint8Array(loadedBytes)
+      let offset = 0
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset)
+        offset += chunk.length
+      }
+
+      // Store loaded data based on type
+      if (asset.type === 'texture' || asset.type === 'environment') {
+        // Create blob URL for images
+        const blob = new Blob([buffer])
+        asset.loadedData = URL.createObjectURL(blob) as any
+      } else {
+        asset.loadedData = buffer.buffer
+      }
+
+      asset.loadingState = 'ready'
+      asset.loadProgress = 100
+      asset.fileSizeBytes = loadedBytes
+
+      console.log(`[AssetLibrary] Loaded: ${asset.name} (${formatFileSize(loadedBytes)})`)
+      return true
+
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log(`[AssetLibrary] Cancelled: ${asset.name}`)
+        asset.loadingState = 'idle'
+      } else {
+        console.error(`[AssetLibrary] Failed to load ${asset.name}:`, error)
+        asset.loadingState = 'error'
+        asset.loadError = error.message || 'Unknown error'
+      }
+      return false
+
+    } finally {
+      activeLoads.value.delete(assetId)
+    }
+  }
+
+  /**
+   * Load multiple assets by IDs
+   */
+  async function loadAssets(assetIds: string[]): Promise<Map<string, boolean>> {
+    const results = new Map<string, boolean>()
+
+    // Process in batches respecting maxConcurrentLoads
+    for (let i = 0; i < assetIds.length; i += maxConcurrentLoads.value) {
+      const batch = assetIds.slice(i, i + maxConcurrentLoads.value)
+      const batchResults = await Promise.all(batch.map(id => loadAsset(id)))
+      batch.forEach((id, idx) => results.set(id, batchResults[idx]))
+    }
+
+    return results
+  }
+
+  /**
+   * Load assets by tag (PlayCanvas-style grouped loading)
+   * Example: loadAssetsByTag('level-1') or loadAssetsByTag(['essential', 'ui'])
+   */
+  async function loadAssetsByTag(tags: string | string[]): Promise<Map<string, boolean>> {
+    const tagList = Array.isArray(tags) ? tags : [tags]
+    const matchingAssets = assets.value.filter(a =>
+      tagList.some(tag => a.tags.includes(tag))
+    )
+    const ids = matchingAssets.map(a => a.id)
+    console.log(`[AssetLibrary] Loading ${ids.length} assets with tags: ${tagList.join(', ')}`)
+    return loadAssets(ids)
+  }
+
+  /**
+   * Load assets by category
+   */
+  async function loadAssetsByCategory(category: AssetCategory): Promise<Map<string, boolean>> {
+    const ids = assets.value.filter(a => a.category === category).map(a => a.id)
+    console.log(`[AssetLibrary] Loading ${ids.length} assets in category: ${category}`)
+    return loadAssets(ids)
+  }
+
+  /**
+   * Preload all assets marked with preload: true
+   * Call this during app initialization
+   */
+  async function preloadAssets(): Promise<void> {
+    isPreloading.value = true
+    console.log('[AssetLibrary] Starting preload phase...')
+
+    // Sort by priority: critical > high > normal > low
+    const priorityOrder: AssetPriority[] = ['critical', 'high', 'normal', 'low']
+    const preloadable = assets.value
+      .filter(a => a.preload === true)
+      .sort((a, b) => {
+        const aIdx = priorityOrder.indexOf(a.priority || 'normal')
+        const bIdx = priorityOrder.indexOf(b.priority || 'normal')
+        return aIdx - bIdx
+      })
+
+    if (preloadable.length === 0) {
+      console.log('[AssetLibrary] No assets marked for preload')
+      isPreloading.value = false
+      return
+    }
+
+    console.log(`[AssetLibrary] Preloading ${preloadable.length} assets...`)
+
+    // Load critical assets first (blocking)
+    const critical = preloadable.filter(a => a.priority === 'critical')
+    if (critical.length > 0) {
+      console.log(`[AssetLibrary] Loading ${critical.length} critical assets...`)
+      await loadAssets(critical.map(a => a.id))
+    }
+
+    // Load remaining preload assets in background
+    const remaining = preloadable.filter(a => a.priority !== 'critical')
+    if (remaining.length > 0) {
+      console.log(`[AssetLibrary] Loading ${remaining.length} high/normal priority assets...`)
+      await loadAssets(remaining.map(a => a.id))
+    }
+
+    isPreloading.value = false
+    console.log(`[AssetLibrary] Preload complete. Total loaded: ${formatFileSize(totalBytesLoaded.value)}`)
+  }
+
+  /**
+   * Cancel loading for an asset
+   */
+  function cancelLoad(assetId: string): void {
+    const controller = activeLoads.value.get(assetId)
+    if (controller) {
+      controller.abort()
+      activeLoads.value.delete(assetId)
+    }
+  }
+
+  /**
+   * Cancel all active loads
+   */
+  function cancelAllLoads(): void {
+    for (const [id, controller] of activeLoads.value) {
+      controller.abort()
+    }
+    activeLoads.value.clear()
+    loadingQueue.value = []
+  }
+
+  /**
+   * Unload an asset to free memory
+   */
+  function unloadAsset(assetId: string): void {
+    const asset = assets.value.find(a => a.id === assetId)
+    if (!asset) return
+
+    // Revoke blob URL if applicable
+    if (asset.loadedData && typeof asset.loadedData === 'string' && asset.loadedData.startsWith('blob:')) {
+      URL.revokeObjectURL(asset.loadedData)
+    }
+
+    asset.loadedData = undefined
+    asset.loadingState = 'idle'
+    asset.loadProgress = 0
+    console.log(`[AssetLibrary] Unloaded: ${asset.name}`)
+  }
+
+  /**
+   * Unload assets by tag to free memory
+   */
+  function unloadAssetsByTag(tags: string | string[]): void {
+    const tagList = Array.isArray(tags) ? tags : [tags]
+    const matchingAssets = assets.value.filter(a =>
+      tagList.some(tag => a.tags.includes(tag)) && a.loadingState === 'ready'
+    )
+    matchingAssets.forEach(a => unloadAsset(a.id))
+  }
+
+  /**
+   * Get all assets with a specific tag
+   */
+  function getAssetsByTag(tags: string | string[]): Asset[] {
+    const tagList = Array.isArray(tags) ? tags : [tags]
+    return assets.value.filter(a => tagList.some(tag => a.tags.includes(tag)))
+  }
+
+  /**
+   * Get loading statistics
+   */
+  const loadingStats = computed(() => {
+    const all = assets.value.filter(a => a.localPath || a.downloadUrl)
+    const ready = all.filter(a => a.loadingState === 'ready')
+    const loading = all.filter(a => a.loadingState === 'loading')
+    const errors = all.filter(a => a.loadingState === 'error')
+
+    return {
+      total: all.length,
+      ready: ready.length,
+      loading: loading.length,
+      errors: errors.length,
+      bytesLoaded: totalBytesLoaded.value,
+      progress: all.length > 0 ? Math.round((ready.length / all.length) * 100) : 100
+    }
+  })
+
+  /**
+   * Get asset's usable URL (loaded blob URL or original path)
+   */
+  function getAssetUrl(assetId: string): string | null {
+    const asset = assets.value.find(a => a.id === assetId)
+    if (!asset) return null
+
+    // If loaded, return blob URL
+    if (asset.loadedData && typeof asset.loadedData === 'string') {
+      return asset.loadedData
+    }
+
+    // Otherwise return original path (will trigger load on use)
+    return asset.localPath || asset.downloadUrl || null
+  }
+
   return {
     // State
     assets,
@@ -3343,6 +3740,8 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     selectedCategory,
     selectedSubcategory,
     isLibraryOpen,
+    isPreloading,
+    loadingStats,
 
     // Computed
     filteredAssets,
@@ -3362,11 +3761,28 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     createAsset,
     deleteAsset,
 
-    // File loading
+    // File loading (existing)
     loadFile,
     loadFiles,
     detectFileType,
     getAssetsByCategory,
     searchAssets,
+
+    // Streaming & Loading (new PlayCanvas-style)
+    loadAsset,
+    loadAssets,
+    loadAssetsByTag,
+    loadAssetsByCategory,
+    preloadAssets,
+    cancelLoad,
+    cancelAllLoads,
+    unloadAsset,
+    unloadAssetsByTag,
+    getAssetsByTag,
+    getLoadingState,
+    getLoadProgress,
+    isAssetReady,
+    getPlaceholder,
+    getAssetUrl,
   }
 })
