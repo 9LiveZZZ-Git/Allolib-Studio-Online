@@ -24,7 +24,8 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
-#include <GLES3/gl3.h>
+// Note: GLES3/gl3.h removed - conflicts with GLAD. GL types come from GLAD via al_OpenGL.hpp
+#include "al/graphics/al_OpenGL.hpp"
 #endif
 
 namespace al {

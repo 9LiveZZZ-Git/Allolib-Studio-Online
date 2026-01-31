@@ -3387,68 +3387,100 @@ PBRMaterial rubber = PBRMaterial::Rubber(Color::Black);`,
   {
     term: 'enableAutoLOD',
     category: 'studio',
-    definition: 'Enables automatic Level of Detail for all meshes. Once enabled, use drawLOD() to draw meshes with automatic simplification based on camera distance.',
-    syntax: 'enableAutoLOD(4);  // 4 LOD levels\nautoLOD().setDistances({10, 25, 50, 100});',
-    example: `void onCreate() override {
-    // Enable automatic LOD - that's it!
-    enableAutoLOD(4);
-    autoLOD().setDistances({10, 25, 50, 100});
-}
+    definition: 'Enables automatic Level of Detail for all meshes. AUTO-LOD IS ENABLED BY DEFAULT - you do not need to call this. All g.draw() calls automatically use LOD. Use this only if you disabled auto-LOD and want to re-enable it, or to customize the number of LOD levels.',
+    syntax: 'enableAutoLOD(4);  // 4 LOD levels (default)\nautoLOD().setDistances({10, 25, 50, 100});',
+    example: `// AUTO-LOD IS ON BY DEFAULT - NO CODE CHANGES NEEDED!
+// Just use g.draw() normally - LOD happens automatically.
 
 void onDraw(Graphics& g) override {
-    // Just use drawLOD() instead of g.draw()
-    drawLOD(g, myMesh);  // LOD happens automatically!
+    g.draw(myMesh);  // Automatic LOD based on camera distance!
+}
+
+// To customize LOD (optional):
+void onCreate() override {
+    autoLOD().setDistances({5, 15, 30, 60});  // Custom thresholds
+    autoLOD().setBias(1.2);  // Adjust aggressiveness
 }`,
     platforms: ['web'],
-    relatedTerms: ['autoLOD', 'drawLOD', 'LODMesh'],
+    relatedTerms: ['autoLOD', 'drawLOD', 'LODMesh', 'LODSelectionMode'],
   },
   {
     term: 'autoLOD',
     category: 'studio',
-    definition: 'Accessor for the automatic LOD manager. Use to configure LOD settings like distance thresholds, bias, and statistics.',
-    syntax: 'autoLOD().setDistances({10, 25, 50, 100});\nautoLOD().setBias(1.5);',
-    example: `void onCreate() override {
-    enableAutoLOD(4);
-    autoLOD().setDistances({5, 15, 30, 60});
-    autoLOD().setBias(1.2);       // Higher = use simpler LOD sooner
-    autoLOD().enableStats(true);  // Track triangle counts
+    definition: 'Accessor for the automatic LOD manager (Unreal Engine-style). Auto-LOD is ENABLED BY DEFAULT with screen-size based selection. Use this to customize LOD settings like selection mode, distance thresholds, bias, triangle budget, and statistics.',
+    syntax: 'autoLOD().setBias(1.5);\nautoLOD().setSelectionMode(LODSelectionMode::ScreenError);',
+    example: `// Auto-LOD works automatically! Optional customization:
+void onCreate() override {
+    // Selection modes (like Unreal Engine):
+    autoLOD().setSelectionMode(LODSelectionMode::ScreenSize);  // Default (like Unreal)
+    // autoLOD().setSelectionMode(LODSelectionMode::ScreenError);  // Nanite-like
+    // autoLOD().setSelectionMode(LODSelectionMode::TriangleBudget);  // Fixed budget
+
+    autoLOD().setBias(1.2);           // Higher = use simpler LOD sooner
+    autoLOD().setBudget(500000);      // Max triangles per frame
+    autoLOD().enableStats(true);      // Track triangle counts
 }
 
 void onDraw(Graphics& g) override {
-    drawLOD(g, mesh);
+    g.draw(mesh);  // LOD automatic!
     printf("Triangles: %d\\n", autoLOD().frameTriangles());
 }`,
     platforms: ['web'],
-    relatedTerms: ['enableAutoLOD', 'drawLOD', 'LODMesh'],
+    relatedTerms: ['enableAutoLOD', 'drawLOD', 'LODMesh', 'LODSelectionMode'],
   },
   {
     term: 'drawLOD',
     category: 'studio',
-    definition: 'Draws a mesh with automatic LOD selection. The system selects the appropriate detail level based on camera distance. Must call enableAutoLOD() first.',
-    syntax: 'drawLOD(g, mesh);',
-    example: `void onCreate() override {
-    enableAutoLOD(4);
+    definition: 'Draws a mesh with automatic LOD selection based on screen-size metrics (Unreal Engine-style). NOTE: You typically do not need to call this directly - all g.draw() calls are automatically converted to use LOD. Use this only for explicit control.',
+    syntax: 'drawLOD(g, mesh);  // Usually not needed - g.draw() auto-converts!',
+    example: `// RECOMMENDED: Just use g.draw() - LOD is automatic!
+void onDraw(Graphics& g) override {
+    g.draw(myMesh);  // Auto-LOD applied behind the scenes
 }
 
+// ADVANCED: Explicit drawLOD call (rarely needed)
 void onDraw(Graphics& g) override {
     g.pushMatrix();
     g.translate(0, 1, 0);
-    drawLOD(g, myHighPolyMesh);  // Auto-simplifies based on distance
+    drawLOD(g, myHighPolyMesh);  // Explicit LOD call
     g.popMatrix();
 }`,
     platforms: ['web'],
-    relatedTerms: ['enableAutoLOD', 'autoLOD', 'LODMesh'],
+    relatedTerms: ['enableAutoLOD', 'autoLOD', 'LODMesh', 'LODSelectionMode'],
+  },
+  {
+    term: 'LODSelectionMode',
+    category: 'studio',
+    definition: 'Enum defining how the auto-LOD system selects detail levels. Inspired by Unreal Engine: Distance (classic), ScreenSize (Unreal default - based on projected screen coverage), ScreenError (Nanite-like - minimizes visual error), TriangleBudget (enforces triangle limit per frame).',
+    syntax: 'autoLOD().setSelectionMode(LODSelectionMode::ScreenSize);',
+    example: `void onCreate() override {
+    // Selection modes (Unreal Engine-style):
+
+    // Distance: Classic distance-based (fastest, least accurate)
+    autoLOD().setSelectionMode(LODSelectionMode::Distance);
+
+    // ScreenSize: Based on projected screen coverage (Unreal default)
+    autoLOD().setSelectionMode(LODSelectionMode::ScreenSize);
+
+    // ScreenError: Minimizes visual error (Nanite-like, highest quality)
+    autoLOD().setSelectionMode(LODSelectionMode::ScreenError);
+
+    // TriangleBudget: Enforces max triangles per frame
+    autoLOD().setSelectionMode(LODSelectionMode::TriangleBudget);
+    autoLOD().setBudget(500000);  // 500K triangle limit
+}`,
+    platforms: ['web'],
+    relatedTerms: ['autoLOD', 'enableAutoLOD', 'drawLOD', 'QualityManager'],
   },
   {
     term: 'LODMesh',
     category: 'studio',
-    definition: 'Manual Level of Detail mesh system. For most cases, use enableAutoLOD() and drawLOD() instead for automatic LOD. LODMesh is useful for advanced control.',
+    definition: 'Manual Level of Detail mesh system. NOTE: For most cases, auto-LOD is enabled by default and g.draw() automatically uses LOD. LODMesh is only needed for advanced manual control.',
     syntax: 'LODMesh lod;\nlod.generate(mesh, 4);  // 4 LOD levels',
-    example: `// For simple cases, use automatic LOD instead:
-// enableAutoLOD(4);
-// drawLOD(g, mesh);
+    example: `// AUTO-LOD IS ON BY DEFAULT - just use g.draw()!
+// LODMesh is only needed for advanced manual control:
 
-// LODMesh for manual control:
+// LODMesh for explicit per-object control:
 LODMesh lod;
 
 void onCreate() override {

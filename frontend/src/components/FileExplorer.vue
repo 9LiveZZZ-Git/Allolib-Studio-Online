@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useProjectStore, type FileTreeNode } from '@/stores/project'
+import { useAssetLibraryStore, type Asset } from '@/stores/assetLibrary'
 
 const projectStore = useProjectStore()
+const assetStore = useAssetLibraryStore()
+
+// Drag and drop state
+const isDragOver = ref(false)
+const dropTargetFolder = ref<string | null>(null)
 
 const emit = defineEmits<{
   selectFile: [path: string]
@@ -123,6 +129,94 @@ function handleClickOutside(e: MouseEvent) {
     closeContextMenu()
   }
 }
+
+// ─── Drag & Drop Support for Assets ────────────────────────────────────────
+
+function handleDragOver(e: DragEvent, folderPath: string = '') {
+  // Check if this is an asset being dragged
+  if (e.dataTransfer?.types.includes('application/asset')) {
+    e.preventDefault()
+    e.stopPropagation()
+    isDragOver.value = true
+    dropTargetFolder.value = folderPath
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }
+}
+
+function handleDragLeave(e: DragEvent) {
+  // Only reset if we're leaving the explorer entirely
+  const relatedTarget = e.relatedTarget as HTMLElement
+  if (!relatedTarget?.closest('.file-explorer-drop-zone')) {
+    isDragOver.value = false
+    dropTargetFolder.value = null
+  }
+}
+
+function handleDrop(e: DragEvent, folderPath: string = '') {
+  e.preventDefault()
+  e.stopPropagation()
+  isDragOver.value = false
+  dropTargetFolder.value = null
+
+  // Handle asset drops
+  const assetData = e.dataTransfer?.getData('application/asset')
+  if (assetData) {
+    try {
+      const asset = JSON.parse(assetData) as Asset
+      handleAssetDrop(asset, folderPath)
+    } catch (err) {
+      console.warn('[FileExplorer] Failed to parse dropped asset:', err)
+    }
+  }
+}
+
+function handleAssetDrop(asset: Asset, folderPath: string) {
+  // Determine target path based on asset type and drop location
+  let targetPath = ''
+
+  if (asset.type === 'file' && asset.content) {
+    // File templates go to the specified folder or root
+    const fileName = asset.name.replace(/\s+/g, '_').toLowerCase() + '.cpp'
+    targetPath = folderPath ? `${folderPath}/${fileName}` : fileName
+    projectStore.addOrUpdateFile(targetPath, asset.content)
+    projectStore.setActiveFile(targetPath)
+    console.log(`[FileExplorer] Added file from asset: ${targetPath}`)
+  }
+  else if (asset.type === 'object' && asset.objectDefinition) {
+    // Objects go to 'objects/' folder
+    const objFolder = folderPath || 'objects'
+    if (!projectStore.project.folders.some(f => f.path === 'objects')) {
+      projectStore.createFolder('objects')
+    }
+    const fileName = `${asset.id}.object.json`
+    targetPath = `${objFolder}/${fileName}`
+    projectStore.addOrUpdateFile(targetPath, JSON.stringify(asset.objectDefinition, null, 2))
+    console.log(`[FileExplorer] Added object from asset: ${targetPath}`)
+  }
+  else if (asset.type === 'shader' && asset.content) {
+    // Shaders go to 'shaders/' folder
+    const shaderFolder = folderPath || 'shaders'
+    if (!projectStore.project.folders.some(f => f.path === 'shaders')) {
+      projectStore.createFolder('shaders')
+    }
+    const fileName = asset.name.replace(/\s+/g, '_').toLowerCase() + '.glsl'
+    targetPath = `${shaderFolder}/${fileName}`
+    projectStore.addOrUpdateFile(targetPath, asset.content)
+    console.log(`[FileExplorer] Added shader from asset: ${targetPath}`)
+  }
+  else if (asset.type === 'snippet' && asset.content) {
+    // For snippets dropped on a file, create a new file with the snippet
+    const fileName = asset.name.replace(/\s+/g, '_').toLowerCase() + '.cpp'
+    targetPath = folderPath ? `${folderPath}/${fileName}` : fileName
+    // Wrap snippet in basic template
+    const content = `// ${asset.name}\n// ${asset.description}\n\n${asset.content}\n`
+    projectStore.addOrUpdateFile(targetPath, content)
+    projectStore.setActiveFile(targetPath)
+    console.log(`[FileExplorer] Added snippet as file: ${targetPath}`)
+  }
+}
 </script>
 
 <template>
@@ -184,8 +278,12 @@ function handleClickOutside(e: MouseEvent) {
     <!-- File Tree -->
     <div
       v-if="!projectStore.isExplorerCollapsed"
-      class="flex-1 overflow-y-auto overflow-x-hidden py-1"
+      class="flex-1 overflow-y-auto overflow-x-hidden py-1 file-explorer-drop-zone"
+      :class="{ 'bg-blue-900/20 ring-2 ring-blue-500/30 ring-inset': isDragOver }"
       @contextmenu="handleContextMenu($event)"
+      @dragover="handleDragOver($event)"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop($event)"
     >
       <!-- Project Name -->
       <div class="px-2 py-1 text-xs font-medium text-gray-300 flex items-center gap-1">

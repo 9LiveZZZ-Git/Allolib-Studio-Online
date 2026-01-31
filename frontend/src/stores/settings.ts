@@ -30,6 +30,7 @@ export interface CompilerSettings {
 export interface DisplaySettings {
   showAnalysisPanel: boolean
   showSequencer: boolean
+  showAssetLoadingTest: boolean
   studioFocus: boolean
   consoleHeight: number
   analysisPanelHeight: number
@@ -105,6 +106,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const display = ref<DisplaySettings>({
     showAnalysisPanel: true,
     showSequencer: false,
+    showAssetLoadingTest: false,
     studioFocus: false,
     consoleHeight: 200,
     analysisPanelHeight: 200,
@@ -217,6 +219,7 @@ export const useSettingsStore = defineStore('settings', () => {
     display.value = {
       showAnalysisPanel: true,
       showSequencer: false,
+      showAssetLoadingTest: false,
       studioFocus: false,
       consoleHeight: 200,
       analysisPanelHeight: 200,
@@ -454,6 +457,24 @@ export const useSettingsStore = defineStore('settings', () => {
           graphics.value.lodUnloadDistance +
           ', preset=' +
           graphics.value.qualityPreset
+      )
+    }
+
+    // Send texture LOD settings
+    if (w.allolib?.textureLOD) {
+      w.allolib.textureLOD.setEnabled(graphics.value.textureLODEnabled)
+      w.allolib.textureLOD.setBias(graphics.value.textureLODBias)
+      w.allolib.textureLOD.setMaxResolution(graphics.value.maxTextureSize)
+
+      console.log(
+        '[Settings] Texture LOD settings applied: enabled=' +
+          graphics.value.textureLODEnabled +
+          ', bias=' +
+          graphics.value.textureLODBias +
+          ', maxResolution=' +
+          graphics.value.maxTextureSize +
+          ', quality=' +
+          graphics.value.textureQuality
       )
     }
   }

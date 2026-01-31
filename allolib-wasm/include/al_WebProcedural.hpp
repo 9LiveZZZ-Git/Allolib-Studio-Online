@@ -85,6 +85,15 @@ public:
     }
 
     /**
+     * Generate FBM (Fractal Brownian Motion) noise texture
+     * This is an alias for perlinNoise with explicit FBM parameters
+     */
+    void fbmNoise(int width, int height, float scale = 4.0f,
+                  int octaves = 6, float persistence = 0.5f) {
+        perlinNoise(width, height, scale, octaves, persistence);
+    }
+
+    /**
      * Generate Worley/Voronoi cellular noise
      * @param cellCount Number of cells
      * @param mode 0=F1 (distance to nearest), 1=F2-F1 (edge), 2=cell ID
@@ -147,6 +156,25 @@ public:
     }
 
     // ========== Pattern Generators ==========
+
+    /**
+     * Fill with solid color
+     */
+    void solidColor(int width, int height, uint32_t color) {
+        resize(width, height);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                setPixelRGBA(x, y, color);
+            }
+        }
+    }
+
+    /**
+     * Alias for solidColor (convenient shorthand)
+     */
+    void fill(int width, int height, uint32_t color) {
+        solidColor(width, height, color);
+    }
 
     /**
      * Generate checkerboard pattern

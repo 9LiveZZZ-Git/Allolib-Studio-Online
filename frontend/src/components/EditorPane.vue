@@ -5,10 +5,13 @@ import FileTabBar from './FileTabBar.vue'
 import FileExplorer from './FileExplorer.vue'
 import NewFileDialog from './NewFileDialog.vue'
 import NewFolderDialog from './NewFolderDialog.vue'
+import AssetLibrary from './AssetLibrary.vue'
 import { useProjectStore } from '@/stores/project'
+import { useAssetLibraryStore } from '@/stores/assetLibrary'
 import type { CompilerDiagnostic } from '@/utils/error-parser'
 
 const projectStore = useProjectStore()
+const assetStore = useAssetLibraryStore()
 const editorRef = ref<InstanceType<typeof MonacoEditor>>()
 
 const emit = defineEmits<{
@@ -124,6 +127,16 @@ const handleFind = () => editorRef.value?.openFind()
 const handleReplace = () => editorRef.value?.openReplace()
 const handleGoToLine = () => editorRef.value?.openGoToLine()
 
+// Asset library handlers
+function handleInsertSnippet(content: string) {
+  // Insert snippet at cursor position in Monaco editor
+  editorRef.value?.insertAtCursor(content)
+}
+
+function handleCloseAssetLibrary() {
+  assetStore.closeLibrary()
+}
+
 // Watch for external file changes (e.g., loading examples)
 watch(() => projectStore.activeFileName, (newPath) => {
   if (newPath && editorRef.value) {
@@ -187,6 +200,14 @@ defineExpose({
       @delete-folder="handleDeleteFolder"
     />
 
+    <!-- Asset Library Sidebar (toggleable) -->
+    <AssetLibrary
+      v-if="assetStore.isLibraryOpen"
+      class="border-r border-editor-border"
+      @insert-snippet="handleInsertSnippet"
+      @close="handleCloseAssetLibrary"
+    />
+
     <!-- Main Editor Area -->
     <div class="flex-1 flex flex-col min-w-0">
       <!-- File Tabs -->
@@ -201,6 +222,18 @@ defineExpose({
       <!-- Editor Header with actions -->
       <div class="h-8 bg-editor-sidebar border-b border-editor-border flex items-center px-3 justify-between shrink-0">
         <div class="flex items-center gap-2">
+          <!-- Asset Library Toggle Button -->
+          <button
+            @click="assetStore.toggleLibrary()"
+            class="p-1 rounded transition-colors"
+            :class="assetStore.isLibraryOpen ? 'bg-blue-600/30 text-blue-400' : 'hover:bg-editor-active text-gray-400 hover:text-white'"
+            title="Toggle Asset Library"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </button>
+          <div class="w-px h-4 bg-editor-border"></div>
           <svg class="w-4 h-4 text-allolib-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
           </svg>

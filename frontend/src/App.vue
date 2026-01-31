@@ -10,6 +10,7 @@ import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
 import SequencerPanel from './components/SequencerPanel.vue'
+import AssetLoadingTest from './components/AssetLoadingTest.vue'
 import { defaultCode } from '@/utils/monaco-config'
 import { isMultiFileExample, type AnyExample } from '@/data/examples'
 import { wsService } from '@/services/websocket'
@@ -532,5 +533,8 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
         </div>
       </div>
     </div>
+
+    <!-- Asset Loading Test Panel (for development) -->
+    <AssetLoadingTest />
   </div>
 </template>

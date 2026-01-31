@@ -244,6 +244,23 @@ defineExpose({
   clearDiagnostics: () => clearEditorDiagnostics(editor),
   jumpToFirstError: (diagnostics: CompilerDiagnostic[]) => jumpToFirstError(editor, diagnostics),
   getEditor: () => editor,
+
+  // Insert text at cursor position
+  insertAtCursor: (text: string) => {
+    if (!editor) return
+    const selection = editor.getSelection()
+    if (!selection) return
+
+    const id = { major: 1, minor: 1 }
+    const op = {
+      identifier: id,
+      range: selection,
+      text: text,
+      forceMoveMarkers: true,
+    }
+    editor.executeEdits('insertSnippet', [op])
+    editor.focus()
+  },
 })
 </script>
 

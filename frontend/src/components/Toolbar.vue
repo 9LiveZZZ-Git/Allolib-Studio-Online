@@ -1004,6 +1004,28 @@ function getPlatformBadgeClass(platform: string) {
             </div>
           </div>
 
+          <!-- Asset Loading Test Panel (Development) -->
+          <div class="flex items-center justify-between">
+            <div>
+              <label class="text-sm text-gray-300">Asset Loading Test</label>
+              <div class="text-xs text-gray-500">Debug panel for asset streaming</div>
+            </div>
+            <button
+              @click="settings.display.showAssetLoadingTest = !settings.display.showAssetLoadingTest; handleSettingChange()"
+              :class="[
+                'w-12 h-6 rounded-full transition-colors relative',
+                settings.display.showAssetLoadingTest ? 'bg-allolib-blue' : 'bg-gray-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
+                  settings.display.showAssetLoadingTest ? 'left-7' : 'left-1'
+                ]"
+              />
+            </button>
+          </div>
+
           <div class="border-t border-editor-border pt-3 mt-3">
             <div class="flex items-center justify-between">
               <label class="text-sm text-gray-300">Default Point Size</label>

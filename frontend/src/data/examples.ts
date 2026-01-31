@@ -12,6 +12,7 @@
  */
 
 import { playgroundCategories, playgroundExamples } from './playgroundExamples'
+import { studioCategories, studioExamples, studioMultiFileExamples } from './studioExamples'
 
 export interface ExampleFile {
   path: string
@@ -150,12 +151,18 @@ export const categoryGroups: CategoryGroup[] = [
     title: 'AlloLib Playground',
     categories: playgroundCategories,
   },
+  {
+    id: 'studio',
+    title: 'AlloLib Studio',
+    categories: studioCategories,
+  },
 ]
 
 // Flat list of all categories for backwards compatibility
 export const categories: ExampleCategory[] = [
   ...categoryGroups[0].categories,
   ...playgroundCategories,
+  ...studioCategories,
 ]
 
 // Combine base examples with playground examples
@@ -619,6 +626,118 @@ ALLOLIB_WEB_MAIN(VertexColors)
   // ==========================================================================
   // GRAPHICS - Meshes
   // ==========================================================================
+  {
+    id: 'points-only-test',
+    title: 'Points Only Test',
+    description: 'Test if POINTS primitive causes the issue',
+    category: 'graphics',
+    subcategory: 'meshes',
+    code: `/**
+ * Points Only Test
+ * Tests if POINTS primitive causes function signature mismatch
+ */
+
+#include "al_WebApp.hpp"
+#include <cmath>
+
+using namespace al;
+
+class PointsTest : public WebApp {
+public:
+    Mesh points;
+
+    void onCreate() override {
+        points.primitive(Mesh::POINTS);
+
+        // Create a grid of colored points
+        for (int i = 0; i < 10; i++) {
+            for (int j = 0; j < 10; j++) {
+                float x = (i - 5) * 0.3f;
+                float y = (j - 5) * 0.3f;
+                points.vertex(x, y, 0);
+                points.color(i / 10.0f, j / 10.0f, 0.5f);
+            }
+        }
+
+        nav().pos(0, 0, 5);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.meshColor();
+        g.draw(points);
+    }
+};
+
+ALLOLIB_WEB_MAIN(PointsTest)
+`,
+  },
+  {
+    id: 'triangles-only-test',
+    title: 'Triangles Only Test',
+    description: 'Simple test with only TRIANGULAR meshes (no points/lines)',
+    category: 'graphics',
+    subcategory: 'meshes',
+    code: `/**
+ * Triangles Only Test
+ * Tests if the issue is specific to non-TRIANGLES primitives
+ */
+
+#include "al_WebApp.hpp"
+#include <cmath>
+
+using namespace al;
+
+class TrianglesTest : public WebApp {
+public:
+    Mesh triangles;
+    double time = 0;
+
+    void onCreate() override {
+        // Create simple colored triangles
+        triangles.primitive(Mesh::TRIANGLES);
+
+        // Triangle 1 - Red
+        triangles.vertex(-1.5f, -0.5f, 0);
+        triangles.vertex(-0.5f, -0.5f, 0);
+        triangles.vertex(-1.0f, 0.5f, 0);
+        triangles.color(1, 0, 0);
+        triangles.color(1, 0, 0);
+        triangles.color(1, 0, 0);
+
+        // Triangle 2 - Green
+        triangles.vertex(0.5f, -0.5f, 0);
+        triangles.vertex(1.5f, -0.5f, 0);
+        triangles.vertex(1.0f, 0.5f, 0);
+        triangles.color(0, 1, 0);
+        triangles.color(0, 1, 0);
+        triangles.color(0, 1, 0);
+
+        // Triangle 3 - Blue
+        triangles.vertex(-0.5f, -1.5f, 0);
+        triangles.vertex(0.5f, -1.5f, 0);
+        triangles.vertex(0.0f, -0.5f, 0);
+        triangles.color(0, 0, 1);
+        triangles.color(0, 0, 1);
+        triangles.color(0, 0, 1);
+
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.meshColor();
+        g.draw(triangles);
+    }
+};
+
+ALLOLIB_WEB_MAIN(TrianglesTest)
+`,
+  },
   {
     id: 'mesh-primitives',
     title: 'Mesh Primitives',
@@ -12354,6 +12473,9 @@ ALLOLIB_MAIN(MultiFileSynthApp)
 
   // Merge playground examples (from allolib_playground tutorials)
   ...playgroundExamples,
+
+  // Merge studio examples (AlloLib Studio Online originals)
+  ...studioExamples,
 ]
 
 // Multi-file examples (separate array for better organization)
@@ -12600,7 +12722,7 @@ public:
 ]
 
 // Combined list of all examples (single and multi-file)
-export const allExamples: AnyExample[] = [...examples, ...multiFileExamples]
+export const allExamples: AnyExample[] = [...examples, ...multiFileExamples, ...studioMultiFileExamples]
 
 // Helper function to get examples by category
 export function getExamplesByCategory(categoryId: string): AnyExample[] {
