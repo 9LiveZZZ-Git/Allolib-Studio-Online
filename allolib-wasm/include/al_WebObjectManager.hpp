@@ -267,12 +267,9 @@ public:
     g.scale(obj.transform.scale);
 
     if (obj.material.type == MaterialType::PBR && pbr) {
-      // Use PBR rendering
-      PBRMaterial mat(
-        obj.material.color.rgb(),
-        obj.material.metallic,
-        obj.material.roughness
-      );
+      // Use PBR rendering - convert Color to Vec3f for PBRMaterial
+      Vec3f albedo(obj.material.color.r, obj.material.color.g, obj.material.color.b);
+      PBRMaterial mat(albedo, obj.material.metallic, obj.material.roughness);
       pbr->material(mat);
       g.draw(*obj.mesh);
     } else {
