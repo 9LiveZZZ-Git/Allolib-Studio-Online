@@ -51,6 +51,18 @@ export const studioCategories: ExampleCategory[] = [
       { id: 'keyframes', title: 'Keyframes' },
     ],
   },
+  {
+    id: 'studio-showcase',
+    title: 'Studio - Showcase',
+    subcategories: [
+      { id: 'full-workflows', title: 'Full Workflows' },
+      { id: 'object-animation', title: 'Object Animation' },
+      { id: 'environment', title: 'Environment' },
+      { id: 'events-scripting', title: 'Events & Scripting' },
+      { id: 'audio-reactive', title: 'Audio-Reactive' },
+      { id: 'interactive', title: 'Interactive' },
+    ],
+  },
 ]
 
 export const studioExamples: Example[] = [
@@ -5081,6 +5093,7 @@ int main() {
 #include "al_WebApp.hpp"
 #include "al_WebObjectManager.hpp"
 #include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Light.hpp"
 
 using namespace al;
 
@@ -5155,7 +5168,8 @@ public:
             );
             // Rotate cube
             float cubeAngle = time * 0.5;
-            Quatf cubeRot = Quatf::fromEuler(cubeAngle, cubeAngle * 0.7, 0);
+            Quatf cubeRot;
+            cubeRot.fromEuler(cubeAngle, cubeAngle * 0.7, 0);
             objectManager().setRotation("cube1", cubeRot.x, cubeRot.y, cubeRot.z, cubeRot.w);
 
             // Torus spins and moves in figure-8
@@ -5165,7 +5179,8 @@ public:
                 0.5,
                 sin(angle3) * cos(angle3) * 3
             );
-            Quatf torusRot = Quatf::fromEuler(time, time * 1.3, 0);
+            Quatf torusRot;
+            torusRot.fromEuler(time, time * 1.3, 0);
             objectManager().setRotation("torus1", torusRot.x, torusRot.y, torusRot.z, torusRot.w);
 
             // Animate colors
@@ -5179,7 +5194,11 @@ public:
 
         g.depthTesting(true);
         g.lighting(true);
-        g.light().pos(5, 5, 5);
+
+        // Set up light
+        Light light;
+        light.pos(5, 5, 5);
+        g.light(light);
 
         // Draw ground plane
         g.pushMatrix();
@@ -5191,8 +5210,8 @@ public:
 
         // Draw objects via ObjectManager
         if (useObjectManager) {
-            // PBR rendering if available, otherwise basic
-            objectManager().draw(g, pbr());
+            // Basic rendering (pass nullptr for PBR)
+            objectManager().draw(g, nullptr);
         } else {
             // Manual fallback rendering
             float angle1 = time * 0.8;
@@ -5259,6 +5278,7 @@ int main() {
 #include "al_WebApp.hpp"
 #include "al_WebObjectManager.hpp"
 #include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Light.hpp"
 #include <vector>
 
 using namespace al;
@@ -5329,7 +5349,10 @@ public:
         g.clear(0.08, 0.08, 0.12);
         g.depthTesting(true);
         g.lighting(true);
-        g.light().pos(5, 8, 5);
+
+        Light light;
+        light.pos(5, 8, 5);
+        g.light(light);
 
         // Interpolate position and scale from keyframes
         Vec3f pos = interpolateKeyframes(positionKeyframes, time);
@@ -5375,6 +5398,1867 @@ public:
 
 int main() {
     KeyframeDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Full Workflows
+  // ==========================================================================
+  {
+    id: 'studio-showcase-crystal-cave',
+    title: 'Crystal Cave Journey',
+    description: 'Complete audiovisual experience with animated objects, dynamic environment, camera movements, and audio-reactive effects',
+    category: 'studio-showcase',
+    subcategory: 'full-workflows',
+    code: `/**
+ * Crystal Cave Journey
+ *
+ * A complete audiovisual showcase demonstrating all 4 track types:
+ * - Audio: Ambient pad synth + percussion
+ * - Objects: Crystal formations with animated glow and rotation
+ * - Environment: Skybox transition (dark → glowing), fog density animation
+ * - Events: Camera dolly shots, audio-reactive crystal pulses
+ *
+ * Timeline:
+ * 0:00 - Fade in, camera orbits cave entrance
+ * 0:15 - First crystals spawn, start glowing
+ * 0:30 - Camera pushes into cave, fog increases
+ * 1:00 - Climax: all crystals pulse with audio bass
+ * 1:30 - Camera pulls back, fade to black
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/scene/al_PolySynth.hpp"
+#include "al/scene/al_SynthSequencer.hpp"
+
+using namespace al;
+
+// Ambient Pad Synth
+class PadSynth : public SynthVoice {
+public:
+    gam::Sine<> osc1, osc2, osc3;
+    gam::AD<> env{3.0f, 4.0f};
+    float amp = 0.15f;
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = (osc1() + osc2() * 0.5f + osc3() * 0.25f) * env() * amp;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override {
+        osc1.freq(getInternalParameterValue("freq"));
+        osc2.freq(getInternalParameterValue("freq") * 2.01f);
+        osc3.freq(getInternalParameterValue("freq") * 3.02f);
+        env.reset();
+    }
+};
+
+// Crystal object with glow effect
+struct Crystal {
+    Vec3f position;
+    Vec3f rotation;
+    float scale;
+    float glowIntensity;
+    Color baseColor;
+
+    // Animation parameters
+    float rotationSpeed;
+    float pulsePhase;
+
+    Crystal(Vec3f pos, float sc, Color col)
+        : position(pos), scale(sc), baseColor(col),
+          rotationSpeed(0.5f + rnd::uniform() * 0.5f),
+          pulsePhase(rnd::uniform() * M_2PI),
+          glowIntensity(0.5f) {
+        rotation = Vec3f(rnd::uniform() * 360, rnd::uniform() * 360, 0);
+    }
+};
+
+class CrystalCaveJourney : public WebApp {
+public:
+    // Audio
+    PolySynth pSynth;
+    SynthSequencer sequencer;
+
+    // Crystals
+    std::vector<Crystal> crystals;
+    Mesh crystalMesh;
+    Mesh groundMesh;
+
+    // Environment
+    Color backgroundColor{0.02f, 0.02f, 0.05f, 1.0f};
+    Color fogColor{0.05f, 0.05f, 0.1f, 1.0f};
+    float fogDensity = 0.08f;
+    float ambientIntensity = 0.2f;
+
+    // Timeline
+    double playheadTime = 0.0;
+    bool isPlaying = true;
+    double duration = 90.0; // 1:30
+
+    // Camera state
+    Vec3f cameraTarget{0, 0, 0};
+    float cameraOrbitAngle = 0;
+    float cameraDistance = 15.0f;
+    float cameraHeight = 5.0f;
+
+    // Audio reactivity
+    float bassLevel = 0;
+
+    void onCreate() override {
+        // Setup synth
+        pSynth.allocatePolyphony<PadSynth>(8);
+        pSynth.setDefaultUserData(this);
+        sequencer.synth(pSynth);
+
+        // Create crystal mesh (elongated octahedron)
+        crystalMesh.primitive(Mesh::TRIANGLES);
+        int segments = 6;
+        for (int i = 0; i < segments; i++) {
+            float a1 = M_2PI * i / segments;
+            float a2 = M_2PI * (i + 1) / segments;
+            float r = 0.3f;
+            // Top pyramid
+            crystalMesh.vertex(0, 1.5f, 0);
+            crystalMesh.vertex(cos(a1) * r, 0, sin(a1) * r);
+            crystalMesh.vertex(cos(a2) * r, 0, sin(a2) * r);
+            // Bottom pyramid
+            crystalMesh.vertex(0, -0.5f, 0);
+            crystalMesh.vertex(cos(a2) * r, 0, sin(a2) * r);
+            crystalMesh.vertex(cos(a1) * r, 0, sin(a1) * r);
+        }
+        crystalMesh.generateNormals();
+
+        // Create ground
+        addSurface(groundMesh, 30, 30, 50, 50);
+        groundMesh.generateNormals();
+
+        // Spawn initial crystals
+        spawnCrystals(20);
+
+        // Initial camera
+        nav().pos(0, 5, 15);
+        nav().faceToward(Vec3d(0, 0, 0));
+
+        std::cout << "Crystal Cave Journey" << std::endl;
+        std::cout << "Press SPACE to play/pause, R to restart" << std::endl;
+    }
+
+    void spawnCrystals(int count) {
+        for (int i = 0; i < count; i++) {
+            Vec3f pos(
+                rnd::uniformS() * 10,
+                rnd::uniform() * 0.5f,
+                rnd::uniformS() * 10
+            );
+            float scale = 0.5f + rnd::uniform() * 1.5f;
+            Color col(
+                0.4f + rnd::uniform() * 0.3f,
+                0.6f + rnd::uniform() * 0.3f,
+                0.8f + rnd::uniform() * 0.2f,
+                0.9f
+            );
+            crystals.emplace_back(pos, scale, col);
+        }
+    }
+
+    void onAnimate(double dt) override {
+        if (!isPlaying) return;
+
+        playheadTime += dt;
+        if (playheadTime > duration) {
+            playheadTime = 0;
+        }
+
+        // Timeline phases
+        float phase = playheadTime / duration;
+
+        // Phase 1 (0-20%): Fade in, orbit
+        // Phase 2 (20-50%): Crystals glow, push in
+        // Phase 3 (50-80%): Climax, audio reactive
+        // Phase 4 (80-100%): Pull back, fade out
+
+        // Update environment based on phase
+        if (phase < 0.2f) {
+            // Fade in
+            float t = phase / 0.2f;
+            ambientIntensity = 0.1f + t * 0.2f;
+            fogDensity = 0.12f - t * 0.04f;
+        } else if (phase < 0.5f) {
+            // Crystals glowing
+            float t = (phase - 0.2f) / 0.3f;
+            ambientIntensity = 0.3f + t * 0.3f;
+            fogDensity = 0.08f - t * 0.03f;
+        } else if (phase < 0.8f) {
+            // Climax
+            ambientIntensity = 0.6f + bassLevel * 0.4f;
+            fogDensity = 0.05f;
+        } else {
+            // Fade out
+            float t = (phase - 0.8f) / 0.2f;
+            ambientIntensity = 0.6f * (1.0f - t) + 0.1f;
+            fogDensity = 0.05f + t * 0.1f;
+        }
+
+        // Camera movement
+        if (phase < 0.3f) {
+            // Orbit entrance
+            cameraOrbitAngle += dt * 20.0f;
+            cameraDistance = 15.0f;
+            cameraHeight = 5.0f;
+        } else if (phase < 0.6f) {
+            // Push into cave
+            float t = (phase - 0.3f) / 0.3f;
+            cameraDistance = 15.0f - t * 8.0f;
+            cameraHeight = 5.0f - t * 2.0f;
+            cameraOrbitAngle += dt * 10.0f;
+        } else {
+            // Slow orbit at climax, then pull back
+            float t = (phase - 0.6f) / 0.4f;
+            cameraDistance = 7.0f + t * 10.0f;
+            cameraHeight = 3.0f + t * 3.0f;
+            cameraOrbitAngle += dt * 5.0f;
+        }
+
+        // Apply camera
+        float camX = sin(cameraOrbitAngle * M_PI / 180) * cameraDistance;
+        float camZ = cos(cameraOrbitAngle * M_PI / 180) * cameraDistance;
+        nav().pos(camX, cameraHeight, camZ);
+        nav().faceToward(cameraTarget);
+
+        // Update crystals
+        for (auto& crystal : crystals) {
+            crystal.rotation.y += dt * crystal.rotationSpeed * 30.0f;
+
+            // Glow animation
+            float glowPhase = playheadTime * 2.0f + crystal.pulsePhase;
+            crystal.glowIntensity = 0.5f + 0.3f * sin(glowPhase);
+
+            // Audio reactivity during climax
+            if (phase > 0.5f && phase < 0.8f) {
+                crystal.glowIntensity += bassLevel * 0.5f;
+            }
+        }
+
+        // Trigger ambient notes periodically
+        static double lastNoteTime = 0;
+        if (playheadTime - lastNoteTime > 4.0) {
+            lastNoteTime = playheadTime;
+            float freq = 110.0f * pow(2.0f, (rand() % 12) / 12.0f);
+            auto* voice = pSynth.getVoice<PadSynth>();
+            if (voice) {
+                voice->setInternalParameterValue("freq", freq);
+                pSynth.triggerOn(voice);
+            }
+        }
+
+        // Simulate bass level (would come from audio analysis)
+        bassLevel = 0.5f + 0.5f * sin(playheadTime * 2.0f);
+    }
+
+    void onDraw(Graphics& g) override {
+        // Calculate fade
+        float phase = playheadTime / duration;
+        float fade = 1.0f;
+        if (phase < 0.05f) fade = phase / 0.05f;
+        else if (phase > 0.95f) fade = (1.0f - phase) / 0.05f;
+
+        // Clear with animated background
+        g.clear(backgroundColor.r * fade, backgroundColor.g * fade, backgroundColor.b * fade);
+
+        g.depthTesting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw ground with fog effect
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.translate(0, 0, -0.5f);
+        g.color(0.08f * ambientIntensity, 0.06f * ambientIntensity, 0.1f * ambientIntensity);
+        g.draw(groundMesh);
+        g.popMatrix();
+
+        // Draw crystals
+        g.lighting(true);
+        for (const auto& crystal : crystals) {
+            g.pushMatrix();
+            g.translate(crystal.position);
+            g.rotate(crystal.rotation.x, 1, 0, 0);
+            g.rotate(crystal.rotation.y, 0, 1, 0);
+            g.scale(crystal.scale);
+
+            // Glow color
+            Color glowColor = crystal.baseColor;
+            glowColor.r *= crystal.glowIntensity * ambientIntensity * 2.0f * fade;
+            glowColor.g *= crystal.glowIntensity * ambientIntensity * 2.0f * fade;
+            glowColor.b *= crystal.glowIntensity * ambientIntensity * 2.0f * fade;
+            g.color(glowColor);
+
+            g.draw(crystalMesh);
+            g.popMatrix();
+        }
+
+        // Timeline indicator
+        g.lighting(false);
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.9, -0.9, 0);
+        float progress = playheadTime / duration;
+        g.color(0.4, 0.6, 0.9, 0.7 * fade);
+        Mesh bar;
+        bar.primitive(Mesh::TRIANGLE_STRIP);
+        bar.vertex(0, 0, 0);
+        bar.vertex(0, 0.02, 0);
+        bar.vertex(1.8 * progress, 0, 0);
+        bar.vertex(1.8 * progress, 0.02, 0);
+        g.draw(bar);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        pSynth.render(io);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == ' ') {
+            isPlaying = !isPlaying;
+            std::cout << (isPlaying ? "Playing" : "Paused") << std::endl;
+        } else if (k.key() == 'r' || k.key() == 'R') {
+            playheadTime = 0;
+            std::cout << "Restarted" << std::endl;
+        }
+        return true;
+    }
+};
+
+int main() {
+    CrystalCaveJourney app;
+    app.configureAudio(48000, 512, 2, 0);
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Object Animation
+  // ==========================================================================
+  {
+    id: 'studio-showcase-procedural-planet',
+    title: 'Procedural Planet',
+    description: 'Animated procedural planet with atmosphere, rings, and orbiting moons',
+    category: 'studio-showcase',
+    subcategory: 'object-animation',
+    code: `/**
+ * Procedural Planet
+ *
+ * Demonstrates complex object keyframes and material animation:
+ * - Planet: sphere with procedural-like coloring, slow rotation
+ * - Atmosphere: transparent shell with animated glow
+ * - Rings: torus with independent rotation
+ * - Moons: orbiting spheres with keyframed positions
+ *
+ * All objects have keyframed properties for smooth animation.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class ProceduralPlanet : public WebApp {
+public:
+    // Meshes
+    Mesh planetMesh;
+    Mesh atmosphereMesh;
+    Mesh ringMesh;
+    Mesh moonMesh;
+
+    // Animation state
+    double time = 0;
+    float planetRotation = 0;
+    float ringRotation = 0;
+    float atmosphereGlow = 0.5f;
+
+    // Moon orbital positions
+    struct Moon {
+        float orbitRadius;
+        float orbitSpeed;
+        float size;
+        Color color;
+        float phase;
+    };
+    std::vector<Moon> moons;
+
+    // Keyframe time (0-60 seconds loop)
+    float duration = 60.0f;
+
+    void onCreate() override {
+        // Create planet sphere
+        addSphere(planetMesh, 2.0f, 64, 64);
+        planetMesh.generateNormals();
+
+        // Color vertices procedurally (simulating noise)
+        for (int i = 0; i < planetMesh.vertices().size(); i++) {
+            Vec3f& v = planetMesh.vertices()[i];
+            float noise = sin(v.x * 5) * cos(v.y * 4) * sin(v.z * 6);
+            float r = 0.2f + noise * 0.1f;
+            float g = 0.4f + noise * 0.15f;
+            float b = 0.7f + noise * 0.2f;
+            planetMesh.color(r, g, b, 1.0f);
+        }
+
+        // Create atmosphere shell (slightly larger)
+        addSphere(atmosphereMesh, 2.15f, 48, 48);
+        atmosphereMesh.generateNormals();
+
+        // Create ring (torus)
+        addTorus(ringMesh, 0.15f, 3.5f, 64, 16);
+        ringMesh.generateNormals();
+
+        // Create moon mesh
+        addSphere(moonMesh, 0.3f, 24, 24);
+        moonMesh.generateNormals();
+
+        // Setup moons
+        moons.push_back({4.5f, 0.8f, 0.3f, Color(0.8f, 0.7f, 0.6f), 0.0f});
+        moons.push_back({6.0f, 0.5f, 0.2f, Color(0.6f, 0.6f, 0.7f), M_PI * 0.5f});
+        moons.push_back({5.2f, 0.65f, 0.15f, Color(0.7f, 0.5f, 0.5f), M_PI});
+
+        // Camera position
+        nav().pos(0, 5, 12);
+        nav().faceToward(Vec3d(0, 0, 0));
+
+        std::cout << "Procedural Planet Demo" << std::endl;
+        std::cout << "Watch the planet rotate with orbiting moons!" << std::endl;
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        float t = fmod(time, duration) / duration; // 0-1 normalized time
+
+        // Planet rotation: 360° over full duration
+        planetRotation = t * 360.0f;
+
+        // Ring rotation: opposite direction, slower
+        ringRotation = t * -180.0f;
+
+        // Atmosphere glow: pulsing 0.3-0.7
+        atmosphereGlow = 0.5f + 0.2f * sin(time * 0.5f);
+
+        // Moon orbits (each has different speed)
+        for (auto& moon : moons) {
+            moon.phase += dt * moon.orbitSpeed;
+        }
+
+        // Slow camera orbit
+        float camAngle = time * 3.0f; // degrees per second
+        float camDist = 12.0f + sin(time * 0.1f) * 2.0f;
+        nav().pos(
+            sin(camAngle * M_PI / 180.0) * camDist,
+            5.0f + sin(time * 0.2f) * 2.0f,
+            cos(camAngle * M_PI / 180.0) * camDist
+        );
+        nav().faceToward(Vec3d(0, 0, 0));
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw planet
+        g.pushMatrix();
+        g.rotate(planetRotation, 0, 1, 0);
+        g.rotate(15, 1, 0, 0); // Axial tilt
+        g.draw(planetMesh);
+        g.popMatrix();
+
+        // Draw atmosphere (transparent shell)
+        g.pushMatrix();
+        g.rotate(planetRotation * 0.8f, 0, 1, 0); // Slower rotation
+        g.rotate(15, 1, 0, 0);
+        g.color(0.4f, 0.6f, 0.9f, atmosphereGlow * 0.3f);
+        g.draw(atmosphereMesh);
+        g.popMatrix();
+
+        // Draw rings
+        g.pushMatrix();
+        g.rotate(ringRotation, 0, 1, 0);
+        g.rotate(75, 1, 0, 0); // Tilted rings
+        g.color(0.7f, 0.6f, 0.5f, 0.6f);
+        g.draw(ringMesh);
+        g.popMatrix();
+
+        // Draw moons
+        for (const auto& moon : moons) {
+            g.pushMatrix();
+            float x = cos(moon.phase) * moon.orbitRadius;
+            float z = sin(moon.phase) * moon.orbitRadius;
+            float y = sin(moon.phase * 0.3f) * 0.5f; // Slight vertical bob
+            g.translate(x, y, z);
+            g.scale(moon.size / 0.3f);
+            g.color(moon.color);
+            g.draw(moonMesh);
+            g.popMatrix();
+        }
+
+        // Draw orbit paths (faint)
+        g.lighting(false);
+        for (const auto& moon : moons) {
+            g.pushMatrix();
+            g.color(0.3f, 0.3f, 0.4f, 0.2f);
+            // Draw orbit circle as line segments
+            Mesh orbit;
+            orbit.primitive(Mesh::LINE_LOOP);
+            for (int i = 0; i < 64; i++) {
+                float a = M_2PI * i / 64;
+                orbit.vertex(cos(a) * moon.orbitRadius, 0, sin(a) * moon.orbitRadius);
+            }
+            g.draw(orbit);
+            g.popMatrix();
+        }
+
+        // Info text position indicator
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.9, 0.85, 0);
+        g.color(0.5, 0.7, 1.0, 0.7);
+        // Time indicator
+        float progress = fmod(time, duration) / duration;
+        Mesh bar;
+        bar.primitive(Mesh::TRIANGLE_STRIP);
+        bar.vertex(0, 0, 0);
+        bar.vertex(0, 0.015, 0);
+        bar.vertex(0.5 * progress, 0, 0);
+        bar.vertex(0.5 * progress, 0.015, 0);
+        g.draw(bar);
+        g.popMatrix();
+    }
+};
+
+int main() {
+    ProceduralPlanet app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Environment
+  // ==========================================================================
+  {
+    id: 'studio-showcase-day-night',
+    title: 'Day-Night Cycle',
+    description: 'Complete day/night cycle with sun, moon, and atmospheric effects',
+    category: 'studio-showcase',
+    subcategory: 'environment',
+    code: `/**
+ * Day-Night Cycle
+ *
+ * Demonstrates environment animation:
+ * - Skybox color transitions (dawn → day → dusk → night)
+ * - Sun/moon positions and lighting
+ * - Fog density changes
+ * - Ambient color shifts
+ *
+ * Timeline (60s loop):
+ * 0:00 - Dawn: orange horizon, sun rises
+ * 15:00 - Midday: blue sky, full sun
+ * 30:00 - Dusk: purple/orange, sun sets
+ * 45:00 - Night: dark blue, moon, stars
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class DayNightCycle : public WebApp {
+public:
+    // Scene objects
+    Mesh groundMesh;
+    Mesh treeMesh;
+    Mesh sunMesh;
+    Mesh moonMesh;
+    Mesh starsMesh;
+
+    // Time
+    double time = 0;
+    float cycleDuration = 60.0f;
+
+    // Environment state (interpolated)
+    Color skyColorTop;
+    Color skyColorBottom;
+    Color ambientColor;
+    Color fogColor;
+    float fogDensity;
+    float sunIntensity;
+    float moonIntensity;
+
+    // Sun/moon angles
+    float sunAngle;
+    float moonAngle;
+
+    void onCreate() override {
+        // Create ground
+        addSurface(groundMesh, 50, 50, 30, 30);
+        groundMesh.generateNormals();
+        for (int i = 0; i < groundMesh.vertices().size(); i++) {
+            groundMesh.color(0.15f, 0.35f, 0.15f, 1.0f);
+        }
+
+        // Create simple tree (cone + cylinder)
+        treeMesh.primitive(Mesh::TRIANGLES);
+        // Trunk
+        int segments = 12;
+        float trunkH = 1.5f, trunkR = 0.15f;
+        for (int i = 0; i < segments; i++) {
+            float a1 = M_2PI * i / segments;
+            float a2 = M_2PI * (i + 1) / segments;
+            // Bottom face
+            treeMesh.vertex(0, 0, 0);
+            treeMesh.color(0.4f, 0.25f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a2) * trunkR, 0, sin(a2) * trunkR);
+            treeMesh.color(0.4f, 0.25f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a1) * trunkR, 0, sin(a1) * trunkR);
+            treeMesh.color(0.4f, 0.25f, 0.1f, 1.0f);
+            // Side
+            treeMesh.vertex(cos(a1) * trunkR, 0, sin(a1) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a2) * trunkR, 0, sin(a2) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a1) * trunkR, trunkH, sin(a1) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a2) * trunkR, 0, sin(a2) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a2) * trunkR, trunkH, sin(a2) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+            treeMesh.vertex(cos(a1) * trunkR, trunkH, sin(a1) * trunkR);
+            treeMesh.color(0.35f, 0.2f, 0.1f, 1.0f);
+        }
+        // Foliage cone
+        float coneH = 2.5f, coneR = 0.8f;
+        for (int i = 0; i < segments; i++) {
+            float a1 = M_2PI * i / segments;
+            float a2 = M_2PI * (i + 1) / segments;
+            treeMesh.vertex(0, trunkH + coneH, 0);
+            treeMesh.color(0.1f, 0.4f, 0.15f, 1.0f);
+            treeMesh.vertex(cos(a1) * coneR, trunkH, sin(a1) * coneR);
+            treeMesh.color(0.15f, 0.5f, 0.2f, 1.0f);
+            treeMesh.vertex(cos(a2) * coneR, trunkH, sin(a2) * coneR);
+            treeMesh.color(0.15f, 0.5f, 0.2f, 1.0f);
+        }
+        treeMesh.generateNormals();
+
+        // Create sun/moon spheres
+        addSphere(sunMesh, 2.0f, 24, 24);
+        addSphere(moonMesh, 1.5f, 24, 24);
+
+        // Create stars (random points)
+        starsMesh.primitive(Mesh::POINTS);
+        for (int i = 0; i < 200; i++) {
+            float theta = rnd::uniform() * M_2PI;
+            float phi = rnd::uniform() * M_PI;
+            float r = 80.0f;
+            starsMesh.vertex(
+                r * sin(phi) * cos(theta),
+                r * cos(phi),
+                r * sin(phi) * sin(theta)
+            );
+            float brightness = 0.5f + rnd::uniform() * 0.5f;
+            starsMesh.color(brightness, brightness, brightness * 0.9f, 1.0f);
+        }
+
+        nav().pos(0, 5, 20);
+        nav().faceToward(Vec3d(0, 2, 0));
+
+        std::cout << "Day-Night Cycle Demo" << std::endl;
+        std::cout << "Watch the 60-second day/night transition" << std::endl;
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        float phase = fmod(time, cycleDuration) / cycleDuration; // 0-1
+
+        // Calculate sun and moon angles (0 = horizon, 90 = zenith)
+        // Sun: rises at phase 0, peaks at 0.25, sets at 0.5
+        // Moon: rises at phase 0.5, peaks at 0.75, sets at 1.0
+        sunAngle = sin(phase * M_2PI) * 90.0f;
+        moonAngle = sin((phase + 0.5f) * M_2PI) * 90.0f;
+
+        // Interpolate sky colors based on phase
+        if (phase < 0.125f) {
+            // Night to dawn
+            float t = phase / 0.125f;
+            skyColorTop = lerp(Color(0.02f, 0.02f, 0.08f), Color(0.3f, 0.2f, 0.4f), t);
+            skyColorBottom = lerp(Color(0.05f, 0.05f, 0.1f), Color(0.8f, 0.4f, 0.2f), t);
+            ambientColor = lerp(Color(0.1f, 0.1f, 0.2f), Color(0.4f, 0.3f, 0.3f), t);
+        } else if (phase < 0.25f) {
+            // Dawn to midday
+            float t = (phase - 0.125f) / 0.125f;
+            skyColorTop = lerp(Color(0.3f, 0.2f, 0.4f), Color(0.3f, 0.5f, 0.9f), t);
+            skyColorBottom = lerp(Color(0.8f, 0.4f, 0.2f), Color(0.5f, 0.7f, 0.9f), t);
+            ambientColor = lerp(Color(0.4f, 0.3f, 0.3f), Color(0.8f, 0.8f, 0.75f), t);
+        } else if (phase < 0.375f) {
+            // Midday
+            skyColorTop = Color(0.3f, 0.5f, 0.9f);
+            skyColorBottom = Color(0.5f, 0.7f, 0.9f);
+            ambientColor = Color(0.8f, 0.8f, 0.75f);
+        } else if (phase < 0.5f) {
+            // Midday to dusk
+            float t = (phase - 0.375f) / 0.125f;
+            skyColorTop = lerp(Color(0.3f, 0.5f, 0.9f), Color(0.5f, 0.3f, 0.5f), t);
+            skyColorBottom = lerp(Color(0.5f, 0.7f, 0.9f), Color(0.9f, 0.4f, 0.2f), t);
+            ambientColor = lerp(Color(0.8f, 0.8f, 0.75f), Color(0.5f, 0.3f, 0.3f), t);
+        } else if (phase < 0.625f) {
+            // Dusk to night
+            float t = (phase - 0.5f) / 0.125f;
+            skyColorTop = lerp(Color(0.5f, 0.3f, 0.5f), Color(0.02f, 0.02f, 0.08f), t);
+            skyColorBottom = lerp(Color(0.9f, 0.4f, 0.2f), Color(0.05f, 0.05f, 0.1f), t);
+            ambientColor = lerp(Color(0.5f, 0.3f, 0.3f), Color(0.1f, 0.1f, 0.2f), t);
+        } else {
+            // Night
+            skyColorTop = Color(0.02f, 0.02f, 0.08f);
+            skyColorBottom = Color(0.05f, 0.05f, 0.1f);
+            ambientColor = Color(0.1f, 0.1f, 0.2f);
+        }
+
+        // Sun intensity
+        sunIntensity = std::max(0.0f, sin(phase * M_2PI));
+        moonIntensity = std::max(0.0f, sin((phase + 0.5f) * M_2PI));
+
+        // Fog
+        fogDensity = 0.02f + moonIntensity * 0.03f;
+        fogColor = lerp(ambientColor, Color(0.1f, 0.1f, 0.15f), moonIntensity);
+    }
+
+    Color lerp(Color a, Color b, float t) {
+        return Color(
+            a.r + (b.r - a.r) * t,
+            a.g + (b.g - a.g) * t,
+            a.b + (b.b - a.b) * t,
+            a.a + (b.a - a.a) * t
+        );
+    }
+
+    void onDraw(Graphics& g) override {
+        // Gradient sky (approximated with clear color)
+        Color skyAvg(
+            (skyColorTop.r + skyColorBottom.r) * 0.5f,
+            (skyColorTop.g + skyColorBottom.g) * 0.5f,
+            (skyColorTop.b + skyColorBottom.b) * 0.5f
+        );
+        g.clear(skyAvg);
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw stars (only visible at night)
+        if (moonIntensity > 0.1f) {
+            g.lighting(false);
+            g.pointSize(2.0f);
+            g.pushMatrix();
+            float starAlpha = std::min(1.0f, moonIntensity * 1.5f);
+            g.color(1, 1, 1, starAlpha * 0.7f);
+            g.draw(starsMesh);
+            g.popMatrix();
+        }
+
+        // Draw sun
+        if (sunAngle > -10) {
+            g.lighting(false);
+            g.pushMatrix();
+            float sunY = sin(sunAngle * M_PI / 180.0f) * 50.0f;
+            float sunZ = -cos(sunAngle * M_PI / 180.0f) * 50.0f;
+            g.translate(0, sunY, sunZ);
+            g.color(1.0f, 0.9f, 0.7f, sunIntensity);
+            g.draw(sunMesh);
+            g.popMatrix();
+        }
+
+        // Draw moon
+        if (moonAngle > -10) {
+            g.lighting(false);
+            g.pushMatrix();
+            float moonY = sin(moonAngle * M_PI / 180.0f) * 50.0f;
+            float moonZ = -cos(moonAngle * M_PI / 180.0f) * 50.0f;
+            g.translate(0, moonY, moonZ);
+            g.color(0.9f, 0.9f, 0.95f, moonIntensity * 0.9f);
+            g.draw(moonMesh);
+            g.popMatrix();
+        }
+
+        // Draw ground with ambient lighting
+        g.lighting(true);
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        // Modulate ground color by ambient
+        Color groundCol(
+            0.15f * (0.5f + ambientColor.r),
+            0.35f * (0.5f + ambientColor.g),
+            0.15f * (0.5f + ambientColor.b)
+        );
+        g.color(groundCol);
+        g.draw(groundMesh);
+        g.popMatrix();
+
+        // Draw trees
+        g.pushMatrix();
+        for (int i = 0; i < 15; i++) {
+            float x = sin(i * 2.4f) * (5 + i * 1.5f);
+            float z = cos(i * 2.4f) * (5 + i * 1.5f);
+            g.pushMatrix();
+            g.translate(x, 0, z);
+            float scale = 0.8f + (i % 3) * 0.3f;
+            g.scale(scale);
+            g.draw(treeMesh);
+            g.popMatrix();
+        }
+        g.popMatrix();
+
+        // Time of day indicator
+        g.lighting(false);
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.9, 0.85, 0);
+
+        // Clock background
+        g.color(0.2, 0.2, 0.25, 0.7);
+        Mesh bg;
+        bg.primitive(Mesh::TRIANGLE_FAN);
+        bg.vertex(0, 0, 0);
+        for (int i = 0; i <= 24; i++) {
+            float a = M_2PI * i / 24;
+            bg.vertex(cos(a) * 0.08f, sin(a) * 0.08f, 0);
+        }
+        g.draw(bg);
+
+        // Clock hand
+        float phase = fmod(time, cycleDuration) / cycleDuration;
+        float handAngle = -M_PI_2 + phase * M_2PI;
+        g.color(1, 1, 1, 0.9);
+        Mesh hand;
+        hand.primitive(Mesh::LINES);
+        hand.vertex(0, 0, 0);
+        hand.vertex(cos(handAngle) * 0.06f, sin(handAngle) * 0.06f, 0);
+        g.draw(hand);
+
+        g.popMatrix();
+    }
+};
+
+int main() {
+    DayNightCycle app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Events & Scripting
+  // ==========================================================================
+  {
+    id: 'studio-showcase-camera-demo',
+    title: 'Interactive Camera Demo',
+    description: 'Cinematic camera system with multiple modes and user-triggerable transitions',
+    category: 'studio-showcase',
+    subcategory: 'events-scripting',
+    code: `/**
+ * Interactive Camera Demo
+ *
+ * Demonstrates camera events and scripting:
+ * - Orbit mode: smooth rotation around center
+ * - Follow mode: tracks moving object with offset
+ * - Cinematic mode: scripted dolly shots
+ * - Shake mode: triggered by events
+ *
+ * Controls:
+ *   1: Orbit mode
+ *   2: Follow mode
+ *   3: Cinematic mode
+ *   SPACE: Trigger camera shake
+ *   R: Reset to orbit
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+enum class CameraMode {
+    Orbit,
+    Follow,
+    Cinematic,
+    Shake
+};
+
+class CameraDemo : public WebApp {
+public:
+    // Scene objects
+    Mesh sphereMesh;
+    Mesh cubeMesh;
+    Mesh groundMesh;
+    Mesh pathMesh;
+
+    // Moving target for follow mode
+    Vec3f targetPosition{0, 1, 0};
+    float targetPhase = 0;
+
+    // Camera state
+    CameraMode cameraMode = CameraMode::Orbit;
+    Vec3f cameraPosition{0, 5, 10};
+    Vec3f cameraTarget{0, 0, 0};
+    Vec3f followOffset{0, 3, 8};
+
+    // Orbit parameters
+    float orbitAngle = 0;
+    float orbitRadius = 12.0f;
+    float orbitHeight = 6.0f;
+    float orbitSpeed = 20.0f;
+
+    // Cinematic parameters
+    std::vector<Vec3f> cinematicPath;
+    float cinematicProgress = 0;
+    float cinematicSpeed = 0.1f;
+
+    // Shake parameters
+    float shakeIntensity = 0;
+    float shakeDuration = 0;
+    float shakeTimer = 0;
+
+    // Timeline
+    double time = 0;
+
+    void onCreate() override {
+        // Create meshes
+        addSphere(sphereMesh, 0.5f, 24, 24);
+        sphereMesh.generateNormals();
+
+        addCube(cubeMesh);
+        cubeMesh.generateNormals();
+
+        addSurface(groundMesh, 30, 30, 20, 20);
+        groundMesh.generateNormals();
+
+        // Setup cinematic path (figure 8)
+        for (int i = 0; i <= 100; i++) {
+            float t = (float)i / 100.0f * M_2PI * 2;
+            cinematicPath.push_back(Vec3f(
+                sin(t) * 8,
+                4 + sin(t * 2) * 2,
+                cos(t * 0.5f) * 10
+            ));
+        }
+
+        // Create path visualization
+        pathMesh.primitive(Mesh::LINE_STRIP);
+        for (const auto& p : cinematicPath) {
+            pathMesh.vertex(p);
+            pathMesh.color(0.3f, 0.5f, 0.8f, 0.5f);
+        }
+
+        std::cout << "Interactive Camera Demo" << std::endl;
+        std::cout << "Press 1=Orbit, 2=Follow, 3=Cinematic, SPACE=Shake" << std::endl;
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        // Update moving target (for follow mode)
+        targetPhase += dt * 0.5f;
+        targetPosition.x = sin(targetPhase) * 5;
+        targetPosition.z = cos(targetPhase) * 5;
+        targetPosition.y = 1 + sin(targetPhase * 2) * 0.5f;
+
+        // Update shake
+        if (shakeTimer > 0) {
+            shakeTimer -= dt;
+            shakeIntensity = shakeDuration > 0 ? (shakeTimer / shakeDuration) * 0.5f : 0;
+        } else {
+            shakeIntensity = 0;
+            if (cameraMode == CameraMode::Shake) {
+                cameraMode = CameraMode::Orbit;
+            }
+        }
+
+        // Update camera based on mode
+        Vec3f basePosition;
+        Vec3f baseTarget;
+
+        switch (cameraMode) {
+            case CameraMode::Orbit:
+                orbitAngle += dt * orbitSpeed;
+                basePosition = Vec3f(
+                    sin(orbitAngle * M_PI / 180) * orbitRadius,
+                    orbitHeight,
+                    cos(orbitAngle * M_PI / 180) * orbitRadius
+                );
+                baseTarget = Vec3f(0, 1, 0);
+                break;
+
+            case CameraMode::Follow:
+                basePosition = targetPosition + followOffset;
+                baseTarget = targetPosition;
+                break;
+
+            case CameraMode::Cinematic:
+                cinematicProgress += dt * cinematicSpeed;
+                if (cinematicProgress >= 1.0f) cinematicProgress = 0;
+                {
+                    int idx = (int)(cinematicProgress * (cinematicPath.size() - 1));
+                    float t = cinematicProgress * (cinematicPath.size() - 1) - idx;
+                    idx = std::min(idx, (int)cinematicPath.size() - 2);
+                    basePosition = cinematicPath[idx] * (1 - t) + cinematicPath[idx + 1] * t;
+                }
+                baseTarget = Vec3f(0, 1, 0);
+                break;
+
+            case CameraMode::Shake:
+                basePosition = cameraPosition;
+                baseTarget = cameraTarget;
+                break;
+        }
+
+        // Apply shake
+        if (shakeIntensity > 0) {
+            basePosition.x += (rnd::uniformS()) * shakeIntensity;
+            basePosition.y += (rnd::uniformS()) * shakeIntensity;
+            basePosition.z += (rnd::uniformS()) * shakeIntensity;
+        }
+
+        // Smooth camera movement
+        cameraPosition = cameraPosition * 0.9f + basePosition * 0.1f;
+        cameraTarget = cameraTarget * 0.9f + baseTarget * 0.1f;
+
+        nav().pos(cameraPosition);
+        nav().faceToward(cameraTarget);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw ground
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.2f, 0.25f, 0.3f);
+        g.draw(groundMesh);
+        g.popMatrix();
+
+        // Draw center marker
+        g.pushMatrix();
+        g.translate(0, 0.5f, 0);
+        g.color(0.4f, 0.4f, 0.5f);
+        g.draw(cubeMesh);
+        g.popMatrix();
+
+        // Draw moving target
+        g.pushMatrix();
+        g.translate(targetPosition);
+        g.color(0.9f, 0.5f, 0.2f);
+        g.draw(sphereMesh);
+        g.popMatrix();
+
+        // Draw cinematic path (if in cinematic mode)
+        if (cameraMode == CameraMode::Cinematic) {
+            g.lighting(false);
+            g.draw(pathMesh);
+
+            // Draw current position on path
+            int idx = (int)(cinematicProgress * (cinematicPath.size() - 1));
+            idx = std::min(idx, (int)cinematicPath.size() - 1);
+            g.pushMatrix();
+            g.translate(cinematicPath[idx]);
+            g.scale(0.2f);
+            g.color(1, 1, 0, 0.8f);
+            g.draw(sphereMesh);
+            g.popMatrix();
+        }
+
+        // Draw some scene objects
+        g.lighting(true);
+        for (int i = 0; i < 8; i++) {
+            float angle = M_2PI * i / 8;
+            g.pushMatrix();
+            g.translate(cos(angle) * 7, 0.5f, sin(angle) * 7);
+            g.rotate(time * 30 + i * 45, 0, 1, 0);
+            g.color(
+                0.3f + 0.2f * sin(i * 0.8f),
+                0.4f + 0.2f * cos(i * 0.6f),
+                0.6f + 0.2f * sin(i * 1.2f)
+            );
+            g.draw(cubeMesh);
+            g.popMatrix();
+        }
+
+        // Draw mode indicator
+        g.lighting(false);
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.9, 0.85, 0);
+
+        const char* modeText;
+        Color modeColor;
+        switch (cameraMode) {
+            case CameraMode::Orbit:
+                modeColor = Color(0.3f, 0.8f, 0.3f);
+                break;
+            case CameraMode::Follow:
+                modeColor = Color(0.8f, 0.6f, 0.2f);
+                break;
+            case CameraMode::Cinematic:
+                modeColor = Color(0.3f, 0.5f, 0.9f);
+                break;
+            case CameraMode::Shake:
+                modeColor = Color(0.9f, 0.3f, 0.3f);
+                break;
+        }
+
+        // Mode indicator dot
+        g.color(modeColor);
+        Mesh dot;
+        dot.primitive(Mesh::TRIANGLE_FAN);
+        dot.vertex(0, 0, 0);
+        for (int i = 0; i <= 16; i++) {
+            float a = M_2PI * i / 16;
+            dot.vertex(cos(a) * 0.02f, sin(a) * 0.02f, 0);
+        }
+        g.draw(dot);
+
+        g.popMatrix();
+    }
+
+    void triggerShake(float duration, float intensity) {
+        shakeDuration = duration;
+        shakeTimer = duration;
+        shakeIntensity = intensity;
+        cameraMode = CameraMode::Shake;
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case '1':
+                cameraMode = CameraMode::Orbit;
+                std::cout << "Camera: Orbit mode" << std::endl;
+                break;
+            case '2':
+                cameraMode = CameraMode::Follow;
+                std::cout << "Camera: Follow mode" << std::endl;
+                break;
+            case '3':
+                cameraMode = CameraMode::Cinematic;
+                cinematicProgress = 0;
+                std::cout << "Camera: Cinematic mode" << std::endl;
+                break;
+            case ' ':
+                triggerShake(0.5f, 0.3f);
+                std::cout << "Camera: Shake!" << std::endl;
+                break;
+            case 'r':
+            case 'R':
+                cameraMode = CameraMode::Orbit;
+                orbitAngle = 0;
+                std::cout << "Camera: Reset" << std::endl;
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    CameraDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Audio-Reactive
+  // ==========================================================================
+  {
+    id: 'studio-showcase-audio-visualizer',
+    title: 'Audio Visualizer',
+    description: '3D audio visualizer with frequency bands driving geometry',
+    category: 'studio-showcase',
+    subcategory: 'audio-reactive',
+    code: `/**
+ * Audio Visualizer
+ *
+ * Demonstrates audio-reactive visuals:
+ * - 64 bars in circular arrangement
+ * - Each bar height driven by FFT bin
+ * - Bass triggers background flash and camera shake
+ * - Mid-range triggers rotation
+ * - Highs spawn particles at peaks
+ *
+ * Uses simulated audio data for demo purposes.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class AudioVisualizer : public WebApp {
+public:
+    // Bar meshes
+    Mesh barMesh;
+    Mesh groundMesh;
+
+    // FFT simulation
+    static const int NUM_BARS = 64;
+    float fftBins[NUM_BARS];
+    float smoothedBins[NUM_BARS];
+
+    // Audio levels
+    float bassLevel = 0;
+    float midLevel = 0;
+    float highLevel = 0;
+
+    // Visual state
+    float ringRotation = 0;
+    float backgroundFlash = 0;
+    Color backgroundColor{0.05f, 0.05f, 0.08f};
+
+    // Camera shake
+    float shakeAmount = 0;
+
+    // Particles (for high frequency events)
+    struct Particle {
+        Vec3f position;
+        Vec3f velocity;
+        float life;
+        Color color;
+    };
+    std::vector<Particle> particles;
+    Mesh particleMesh;
+
+    // Time
+    double time = 0;
+
+    void onCreate() override {
+        // Create bar mesh (elongated box)
+        barMesh.primitive(Mesh::TRIANGLES);
+        float w = 0.08f, d = 0.1f;
+        // Front
+        barMesh.vertex(-w, 0, d); barMesh.vertex(w, 0, d); barMesh.vertex(w, 1, d);
+        barMesh.vertex(-w, 0, d); barMesh.vertex(w, 1, d); barMesh.vertex(-w, 1, d);
+        // Back
+        barMesh.vertex(w, 0, -d); barMesh.vertex(-w, 0, -d); barMesh.vertex(-w, 1, -d);
+        barMesh.vertex(w, 0, -d); barMesh.vertex(-w, 1, -d); barMesh.vertex(w, 1, -d);
+        // Left
+        barMesh.vertex(-w, 0, -d); barMesh.vertex(-w, 0, d); barMesh.vertex(-w, 1, d);
+        barMesh.vertex(-w, 0, -d); barMesh.vertex(-w, 1, d); barMesh.vertex(-w, 1, -d);
+        // Right
+        barMesh.vertex(w, 0, d); barMesh.vertex(w, 0, -d); barMesh.vertex(w, 1, -d);
+        barMesh.vertex(w, 0, d); barMesh.vertex(w, 1, -d); barMesh.vertex(w, 1, d);
+        // Top
+        barMesh.vertex(-w, 1, d); barMesh.vertex(w, 1, d); barMesh.vertex(w, 1, -d);
+        barMesh.vertex(-w, 1, d); barMesh.vertex(w, 1, -d); barMesh.vertex(-w, 1, -d);
+        barMesh.generateNormals();
+
+        // Ground
+        addSurface(groundMesh, 20, 20, 20, 20);
+        groundMesh.generateNormals();
+
+        // Particle mesh
+        addSphere(particleMesh, 0.05f, 8, 8);
+
+        // Initialize FFT bins
+        for (int i = 0; i < NUM_BARS; i++) {
+            fftBins[i] = 0;
+            smoothedBins[i] = 0;
+        }
+
+        nav().pos(0, 8, 15);
+        nav().faceToward(Vec3d(0, 2, 0));
+
+        std::cout << "Audio Visualizer" << std::endl;
+        std::cout << "Watch the bars react to simulated audio!" << std::endl;
+    }
+
+    void simulateAudio(double dt) {
+        // Simulate FFT with multiple frequency components
+        float beatPhase = time * 2.0f; // 120 BPM
+        float beat = pow(fmax(0, sin(beatPhase * M_PI)), 8.0f); // Kick pulse
+
+        for (int i = 0; i < NUM_BARS; i++) {
+            float freq = (float)i / NUM_BARS;
+
+            // Bass (low frequencies)
+            if (freq < 0.15f) {
+                fftBins[i] = beat * (1.0f - freq * 4) +
+                             0.3f * sin(time * 3 + i * 0.5f) * (0.15f - freq);
+            }
+            // Mids
+            else if (freq < 0.5f) {
+                fftBins[i] = 0.4f * sin(time * 5 + i * 0.3f) * sin(time * 0.7f) +
+                             0.2f * (1.0f + sin(time * 2.5f));
+            }
+            // Highs
+            else {
+                fftBins[i] = 0.3f * sin(time * 8 + i * 0.8f) *
+                             (0.5f + 0.5f * sin(time * 1.3f)) +
+                             0.1f * rnd::uniform() * beat;
+            }
+
+            fftBins[i] = fmax(0, fftBins[i]);
+
+            // Smooth
+            smoothedBins[i] = smoothedBins[i] * 0.8f + fftBins[i] * 0.2f;
+        }
+
+        // Calculate frequency band levels
+        bassLevel = 0;
+        midLevel = 0;
+        highLevel = 0;
+        for (int i = 0; i < NUM_BARS; i++) {
+            float freq = (float)i / NUM_BARS;
+            if (freq < 0.15f) bassLevel += smoothedBins[i];
+            else if (freq < 0.5f) midLevel += smoothedBins[i];
+            else highLevel += smoothedBins[i];
+        }
+        bassLevel /= (NUM_BARS * 0.15f);
+        midLevel /= (NUM_BARS * 0.35f);
+        highLevel /= (NUM_BARS * 0.5f);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        // Simulate audio
+        simulateAudio(dt);
+
+        // Audio-reactive effects
+
+        // Bass triggers background flash and shake
+        if (bassLevel > 0.6f) {
+            backgroundFlash = fmin(1.0f, backgroundFlash + dt * 10);
+            shakeAmount = bassLevel * 0.3f;
+        } else {
+            backgroundFlash *= 0.9f;
+            shakeAmount *= 0.85f;
+        }
+
+        // Mid-range rotates the ring
+        ringRotation += dt * 30 * (1.0f + midLevel * 3);
+
+        // High frequencies spawn particles
+        if (highLevel > 0.5f && particles.size() < 100) {
+            for (int i = 0; i < 3; i++) {
+                int peakBin = NUM_BARS / 2 + rand() % (NUM_BARS / 2);
+                float angle = M_2PI * peakBin / NUM_BARS + ringRotation * M_PI / 180;
+                float radius = 5.0f;
+
+                Particle p;
+                p.position = Vec3f(cos(angle) * radius, smoothedBins[peakBin] * 3, sin(angle) * radius);
+                p.velocity = Vec3f(
+                    cos(angle) * 2 + rnd::uniformS(),
+                    2 + rnd::uniform() * 2,
+                    sin(angle) * 2 + rnd::uniformS()
+                );
+                p.life = 1.0f;
+                p.color = Color(
+                    0.8f + rnd::uniform() * 0.2f,
+                    0.4f + highLevel * 0.5f,
+                    0.2f + rnd::uniform() * 0.3f,
+                    1.0f
+                );
+                particles.push_back(p);
+            }
+        }
+
+        // Update particles
+        for (auto it = particles.begin(); it != particles.end();) {
+            it->position += it->velocity * dt;
+            it->velocity.y -= 5 * dt; // Gravity
+            it->life -= dt * 0.8f;
+            if (it->life <= 0) {
+                it = particles.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // Camera with shake
+        Vec3f camBase(0, 8, 15);
+        Vec3f shake(
+            rnd::uniformS() * shakeAmount,
+            rnd::uniformS() * shakeAmount,
+            rnd::uniformS() * shakeAmount
+        );
+        nav().pos(camBase + shake);
+        nav().faceToward(Vec3d(0, 2, 0));
+    }
+
+    void onDraw(Graphics& g) override {
+        // Background with flash
+        Color bg = backgroundColor;
+        bg.r += backgroundFlash * 0.15f;
+        bg.g += backgroundFlash * 0.1f;
+        bg.b += backgroundFlash * 0.2f;
+        g.clear(bg);
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw ground
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.1f + bassLevel * 0.1f, 0.1f, 0.15f + bassLevel * 0.05f);
+        g.draw(groundMesh);
+        g.popMatrix();
+
+        // Draw frequency bars in circle
+        float radius = 5.0f;
+        for (int i = 0; i < NUM_BARS; i++) {
+            float angle = M_2PI * i / NUM_BARS + ringRotation * M_PI / 180;
+            float height = smoothedBins[i] * 4 + 0.1f;
+
+            // Color based on frequency
+            float freq = (float)i / NUM_BARS;
+            Color barColor;
+            if (freq < 0.15f) {
+                barColor = Color(0.9f, 0.3f, 0.2f); // Bass = red
+            } else if (freq < 0.5f) {
+                barColor = Color(0.3f, 0.9f, 0.3f); // Mid = green
+            } else {
+                barColor = Color(0.3f, 0.5f, 0.9f); // High = blue
+            }
+            barColor.a = 0.7f + smoothedBins[i] * 0.3f;
+
+            g.pushMatrix();
+            g.translate(cos(angle) * radius, 0, sin(angle) * radius);
+            g.rotate(angle * 180 / M_PI + 90, 0, 1, 0);
+            g.scale(1, height, 1);
+            g.color(barColor);
+            g.draw(barMesh);
+            g.popMatrix();
+        }
+
+        // Draw particles
+        for (const auto& p : particles) {
+            g.pushMatrix();
+            g.translate(p.position);
+            Color c = p.color;
+            c.a = p.life;
+            g.color(c);
+            g.draw(particleMesh);
+            g.popMatrix();
+        }
+
+        // Draw level meters
+        g.lighting(false);
+        g.pushMatrix();
+        g.loadIdentity();
+
+        // Bass meter
+        g.translate(-0.9, -0.8, 0);
+        g.color(0.9f, 0.3f, 0.2f, 0.8f);
+        Mesh bassMeter;
+        bassMeter.primitive(Mesh::TRIANGLE_STRIP);
+        bassMeter.vertex(0, 0, 0);
+        bassMeter.vertex(0, 0.3f * bassLevel, 0);
+        bassMeter.vertex(0.03f, 0, 0);
+        bassMeter.vertex(0.03f, 0.3f * bassLevel, 0);
+        g.draw(bassMeter);
+
+        // Mid meter
+        g.translate(0.05f, 0, 0);
+        g.color(0.3f, 0.9f, 0.3f, 0.8f);
+        Mesh midMeter;
+        midMeter.primitive(Mesh::TRIANGLE_STRIP);
+        midMeter.vertex(0, 0, 0);
+        midMeter.vertex(0, 0.3f * midLevel, 0);
+        midMeter.vertex(0.03f, 0, 0);
+        midMeter.vertex(0.03f, 0.3f * midLevel, 0);
+        g.draw(midMeter);
+
+        // High meter
+        g.translate(0.05f, 0, 0);
+        g.color(0.3f, 0.5f, 0.9f, 0.8f);
+        Mesh highMeter;
+        highMeter.primitive(Mesh::TRIANGLE_STRIP);
+        highMeter.vertex(0, 0, 0);
+        highMeter.vertex(0, 0.3f * highLevel, 0);
+        highMeter.vertex(0.03f, 0, 0);
+        highMeter.vertex(0.03f, 0.3f * highLevel, 0);
+        g.draw(highMeter);
+
+        g.popMatrix();
+    }
+};
+
+int main() {
+    AudioVisualizer app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Interactive
+  // ==========================================================================
+  {
+    id: 'studio-showcase-simple-game',
+    title: 'Simple Collect Game',
+    description: 'Simple collect-the-orbs game with score tracking and collision detection',
+    category: 'studio-showcase',
+    subcategory: 'interactive',
+    code: `/**
+ * Simple Collect Game
+ *
+ * Demonstrates interactive gameplay:
+ * - Player sphere controlled by WASD
+ * - Collectible orbs that spawn randomly
+ * - Obstacles to avoid
+ * - Score tracking
+ *
+ * Controls:
+ *   W/A/S/D: Move player
+ *   R: Restart game
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+struct GameObject {
+    Vec3f position;
+    float radius;
+    Color color;
+    bool active;
+};
+
+class SimpleGame : public WebApp {
+public:
+    // Meshes
+    Mesh sphereMesh;
+    Mesh groundMesh;
+
+    // Player
+    Vec3f playerPos{0, 0.5f, 0};
+    Vec3f playerVel{0, 0, 0};
+    float playerRadius = 0.5f;
+    float playerSpeed = 8.0f;
+
+    // Game objects
+    std::vector<GameObject> orbs;
+    std::vector<GameObject> obstacles;
+
+    // Game state
+    int score = 0;
+    int highScore = 0;
+    bool gameOver = false;
+    float gameTime = 0;
+
+    // Input state
+    bool keyW = false, keyA = false, keyS = false, keyD = false;
+
+    // Arena bounds
+    float arenaSize = 12.0f;
+
+    void onCreate() override {
+        addSphere(sphereMesh, 1.0f, 24, 24);
+        sphereMesh.generateNormals();
+
+        addSurface(groundMesh, arenaSize * 2, arenaSize * 2, 20, 20);
+        groundMesh.generateNormals();
+
+        resetGame();
+
+        nav().pos(0, 15, 15);
+        nav().faceToward(Vec3d(0, 0, 0));
+
+        std::cout << "Simple Collect Game" << std::endl;
+        std::cout << "Use WASD to move, collect green orbs, avoid red obstacles!" << std::endl;
+        std::cout << "Press R to restart" << std::endl;
+    }
+
+    void resetGame() {
+        playerPos = Vec3f(0, 0.5f, 0);
+        playerVel = Vec3f(0, 0, 0);
+        score = 0;
+        gameOver = false;
+        gameTime = 0;
+
+        // Spawn orbs
+        orbs.clear();
+        for (int i = 0; i < 10; i++) {
+            spawnOrb();
+        }
+
+        // Spawn obstacles
+        obstacles.clear();
+        for (int i = 0; i < 5; i++) {
+            spawnObstacle();
+        }
+    }
+
+    void spawnOrb() {
+        GameObject orb;
+        orb.position = Vec3f(
+            rnd::uniformS() * (arenaSize - 2),
+            0.4f,
+            rnd::uniformS() * (arenaSize - 2)
+        );
+        orb.radius = 0.3f;
+        orb.color = Color(0.2f, 0.9f, 0.3f, 0.9f);
+        orb.active = true;
+        orbs.push_back(orb);
+    }
+
+    void spawnObstacle() {
+        GameObject obs;
+        // Don't spawn too close to player start
+        do {
+            obs.position = Vec3f(
+                rnd::uniformS() * (arenaSize - 2),
+                0.6f,
+                rnd::uniformS() * (arenaSize - 2)
+            );
+        } while (obs.position.mag() < 3.0f);
+
+        obs.radius = 0.5f + rnd::uniform() * 0.3f;
+        obs.color = Color(0.9f, 0.2f, 0.2f, 0.9f);
+        obs.active = true;
+        obstacles.push_back(obs);
+    }
+
+    void onAnimate(double dt) override {
+        if (gameOver) return;
+
+        gameTime += dt;
+
+        // Player movement
+        Vec3f accel(0, 0, 0);
+        if (keyW) accel.z -= 1;
+        if (keyS) accel.z += 1;
+        if (keyA) accel.x -= 1;
+        if (keyD) accel.x += 1;
+
+        if (accel.mag() > 0) {
+            accel.normalize();
+            playerVel += accel * playerSpeed * dt;
+        }
+
+        // Friction
+        playerVel *= 0.95f;
+
+        // Update position
+        playerPos += playerVel * dt;
+
+        // Arena bounds
+        playerPos.x = std::max(-arenaSize + playerRadius,
+                              std::min(arenaSize - playerRadius, playerPos.x));
+        playerPos.z = std::max(-arenaSize + playerRadius,
+                              std::min(arenaSize - playerRadius, playerPos.z));
+
+        // Check orb collisions
+        for (auto& orb : orbs) {
+            if (!orb.active) continue;
+
+            float dist = (playerPos - orb.position).mag();
+            if (dist < playerRadius + orb.radius) {
+                orb.active = false;
+                score++;
+
+                // Spawn new orb
+                spawnOrb();
+
+                // Every 5 points, add an obstacle
+                if (score % 5 == 0) {
+                    spawnObstacle();
+                }
+            }
+        }
+
+        // Check obstacle collisions
+        for (const auto& obs : obstacles) {
+            if (!obs.active) continue;
+
+            float dist = (playerPos - obs.position).mag();
+            if (dist < playerRadius + obs.radius) {
+                gameOver = true;
+                if (score > highScore) {
+                    highScore = score;
+                }
+                std::cout << "Game Over! Score: " << score << " High Score: " << highScore << std::endl;
+            }
+        }
+
+        // Animate orbs (bob up and down)
+        for (auto& orb : orbs) {
+            orb.position.y = 0.4f + sin(gameTime * 3 + orb.position.x) * 0.1f;
+        }
+
+        // Animate obstacles (slow rotation pulse)
+        for (auto& obs : obstacles) {
+            float pulse = 1.0f + sin(gameTime * 2 + obs.position.z) * 0.1f;
+            obs.radius = (0.5f + rnd::uniform() * 0.001f) * pulse;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        if (gameOver) {
+            g.clear(0.3f, 0.1f, 0.1f);
+        } else {
+            g.clear(0.1f, 0.12f, 0.15f);
+        }
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.blending(true);
+        g.blendTrans();
+
+        // Draw ground
+        g.pushMatrix();
+        g.rotate(-90, 1, 0, 0);
+        g.color(0.15f, 0.2f, 0.15f);
+        g.draw(groundMesh);
+        g.popMatrix();
+
+        // Draw arena border
+        g.lighting(false);
+        Mesh border;
+        border.primitive(Mesh::LINE_LOOP);
+        border.vertex(-arenaSize, 0.01f, -arenaSize);
+        border.vertex(arenaSize, 0.01f, -arenaSize);
+        border.vertex(arenaSize, 0.01f, arenaSize);
+        border.vertex(-arenaSize, 0.01f, arenaSize);
+        g.color(0.4f, 0.4f, 0.5f);
+        g.draw(border);
+        g.lighting(true);
+
+        // Draw player
+        g.pushMatrix();
+        g.translate(playerPos);
+        g.scale(playerRadius);
+        g.color(0.3f, 0.6f, 0.9f);
+        g.draw(sphereMesh);
+        g.popMatrix();
+
+        // Draw orbs
+        for (const auto& orb : orbs) {
+            if (!orb.active) continue;
+            g.pushMatrix();
+            g.translate(orb.position);
+            g.scale(orb.radius);
+            g.color(orb.color);
+            g.draw(sphereMesh);
+            g.popMatrix();
+        }
+
+        // Draw obstacles
+        for (const auto& obs : obstacles) {
+            if (!obs.active) continue;
+            g.pushMatrix();
+            g.translate(obs.position);
+            g.scale(obs.radius);
+            g.color(obs.color);
+            g.draw(sphereMesh);
+            g.popMatrix();
+        }
+
+        // Draw score
+        g.lighting(false);
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.9, 0.85, 0);
+
+        // Score bar (green)
+        g.color(0.2f, 0.8f, 0.3f, 0.8f);
+        float scoreWidth = std::min(1.0f, score / 20.0f) * 0.5f;
+        Mesh scoreBar;
+        scoreBar.primitive(Mesh::TRIANGLE_STRIP);
+        scoreBar.vertex(0, 0, 0);
+        scoreBar.vertex(0, 0.03f, 0);
+        scoreBar.vertex(scoreWidth, 0, 0);
+        scoreBar.vertex(scoreWidth, 0.03f, 0);
+        g.draw(scoreBar);
+
+        // High score marker
+        if (highScore > 0) {
+            float hsPos = std::min(1.0f, highScore / 20.0f) * 0.5f;
+            g.color(1.0f, 0.8f, 0.2f, 0.9f);
+            Mesh hsMarker;
+            hsMarker.primitive(Mesh::TRIANGLES);
+            hsMarker.vertex(hsPos, 0.04f, 0);
+            hsMarker.vertex(hsPos - 0.01f, 0.06f, 0);
+            hsMarker.vertex(hsPos + 0.01f, 0.06f, 0);
+            g.draw(hsMarker);
+        }
+
+        g.popMatrix();
+
+        // Game over overlay
+        if (gameOver) {
+            g.pushMatrix();
+            g.loadIdentity();
+            g.color(0.9f, 0.2f, 0.2f, 0.5f);
+            Mesh overlay;
+            overlay.primitive(Mesh::TRIANGLE_STRIP);
+            overlay.vertex(-0.3f, 0.1f, 0);
+            overlay.vertex(-0.3f, -0.1f, 0);
+            overlay.vertex(0.3f, 0.1f, 0);
+            overlay.vertex(0.3f, -0.1f, 0);
+            g.draw(overlay);
+            g.popMatrix();
+        }
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'w': case 'W': keyW = true; break;
+            case 'a': case 'A': keyA = true; break;
+            case 's': case 'S': keyS = true; break;
+            case 'd': case 'D': keyD = true; break;
+            case 'r': case 'R':
+                resetGame();
+                std::cout << "Game restarted!" << std::endl;
+                break;
+        }
+        return true;
+    }
+
+    bool onKeyUp(Keyboard const& k) override {
+        switch (k.key()) {
+            case 'w': case 'W': keyW = false; break;
+            case 'a': case 'A': keyA = false; break;
+            case 's': case 'S': keyS = false; break;
+            case 'd': case 'D': keyD = false; break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    SimpleGame app;
     app.start();
     return 0;
 }

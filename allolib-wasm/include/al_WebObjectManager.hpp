@@ -57,7 +57,12 @@ struct ObjectTransform {
     Mat4f mat;
     mat.setIdentity();
     mat.translate(position);
-    mat *= rotation.toMatrix();
+
+    // Convert quaternion to rotation matrix
+    Mat4f rotMat;
+    rotation.toMatrix(rotMat.elems());
+    mat *= rotMat;
+
     mat.scale(scale);
     return mat;
   }
