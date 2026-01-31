@@ -3751,83 +3751,79 @@ int main() {
     category: 'studio-textures',
     subcategory: 'texture-lod',
     code: `/**
- * Unreal-Style Mipmap Texture LOD
+ * Unreal-Style Continuous LOD Visualization
  *
- * Demonstrates continuous texture LOD using GPU-generated mipmaps.
- * This approach mirrors Unreal Engine's texture streaming:
- * - Upload ONE high-resolution texture
- * - GPU auto-generates full mipmap chain
- * - Continuous LOD selection (float, not integer levels)
- * - Shader samples mip level using textureLod()
+ * Demonstrates continuous LOD calculation based on camera distance.
+ * The cube changes color to visualize the LOD level:
+ * - RED = LOD 0 (closest, full quality)
+ * - PURPLE = LOD 2 (mid distance)
+ * - BLUE = LOD 4+ (farthest, lowest quality)
  *
- * LOD Formula: LOD = log2(distance / referenceDistance) + bias
+ * LOD Formula: LOD = log2(distance / referenceDistance)
  *
  * Controls:
- *   W/S: Move camera forward/backward
- *   Arrow keys: Rotate view
- *   +/-: Adjust LOD bias
+ *   W/S: Move camera closer/farther
+ *   Watch the color and console for LOD changes
  */
 
 #include "al_WebApp.hpp"
-#include "al_WebMipmapTexture.hpp"
-#include "al_WebAutoLOD.hpp"
 #include "al_WebPBR.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
-class MipmapLODDemo : public WebApp {
+class ContinuousLODDemo : public WebApp {
 public:
     WebPBR pbr;
-    MipmapTexture texture;
     Mesh cube;
 
     float camDist = 10.0f;
     float camAngle = 0;
-    float lodBias = 0.0f;
     float lastLOD = -1.0f;
+
+    // LOD calculation parameters
+    float referenceDistance = 5.0f;
 
     void onCreate() override {
         pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
 
-        // Create cube mesh with UV coordinates
+        // Create cube mesh
         addCube(cube, true, 2.0f);
         cube.generateNormals();
-
-        // Load texture - GPU will auto-generate mipmaps
-        // The texture will be uploaded when first bound
-        texture.setReferenceDistance(5.0f);  // LOD 0 at 5 units
-        texture.setLODBias(0.0f);
-
-        // Enable auto-LOD system
-        enableAutoLOD();
 
         nav().pos(0, 2, camDist);
         nav().faceToward(Vec3f(0, 0, 0));
 
-        printf("\\n=== Unreal-Style Mipmap LOD Demo ===\\n");
-        printf("Reference distance: 5.0 (full res at this distance)\\n");
-        printf("At distance 10: LOD = 1.0 (half res)\\n");
-        printf("At distance 20: LOD = 2.0 (quarter res)\\n");
-        printf("Controls: W/S = zoom, +/- = LOD bias\\n\\n");
+        printf("\\n=== Continuous LOD Visualization ===\\n");
+        printf("Reference distance: %.1f (LOD 0 = full quality)\\n", referenceDistance);
+        printf("Distance 10 -> LOD 1.0\\n");
+        printf("Distance 20 -> LOD 2.0\\n");
+        printf("Distance 40 -> LOD 3.0\\n");
+        printf("\\nControls: W = closer, S = farther\\n");
+        printf("Watch the cube color change!\\n\\n");
+    }
+
+    // Calculate continuous LOD (Unreal-style formula)
+    float calculateLOD(float distance) {
+        float lod = log2f(distance / referenceDistance);
+        return std::max(0.0f, lod);  // Clamp to >= 0
     }
 
     void onAnimate(double dt) override {
-        camAngle += dt * 5.0;
-
-        // Update camera
-        nav().pos(camDist * sin(camAngle * 0.05), 2, camDist * cos(camAngle * 0.05));
+        // Slowly orbit camera
+        camAngle += dt * 10.0;
+        float x = camDist * sin(camAngle * 0.02f);
+        float z = camDist * cos(camAngle * 0.02f);
+        nav().pos(x, 2, z);
         nav().faceToward(Vec3f(0, 0, 0));
 
-        // Calculate continuous LOD using the global helper
+        // Calculate and log LOD changes
         float dist = nav().pos().mag();
-        float currentLOD = getTextureLODContinuous(dist, 8);
+        float lod = calculateLOD(dist);
 
-        // Log LOD changes (with some tolerance to reduce spam)
-        if (fabs(currentLOD - lastLOD) > 0.1f) {
-            printf("[MipmapLOD] Distance: %.1f, Continuous LOD: %.2f\\n",
-                   dist, currentLOD);
-            lastLOD = currentLOD;
+        if (fabs(lod - lastLOD) > 0.05f) {
+            printf("Distance: %.1f -> LOD: %.2f\\n", dist, lod);
+            lastLOD = lod;
         }
     }
 
@@ -3837,60 +3833,44 @@ public:
         pbr.drawSkybox(g);
         g.depthTesting(true);
 
-        // Calculate continuous LOD
+        // Calculate current LOD
         float dist = nav().pos().mag();
-        float lod = getTextureLODContinuous(dist, 8);
+        float lod = calculateLOD(dist);
 
-        // Use LOD-aware PBR rendering
-        pbr.beginWithLOD(g, nav().pos(), lod);
+        // Start PBR rendering
+        pbr.begin(g, nav().pos());
 
-        // Create material with visualization based on LOD
-        // Smooth color gradient from red (LOD 0) to blue (LOD 4+)
-        PBRMaterial mat;
+        // Create material with LOD-based color
+        // Red (close) -> Purple (mid) -> Blue (far)
         float t = std::min(lod / 4.0f, 1.0f);
-        mat.albedo = Vec3f(1.0f - t, 0.3f, t);  // Red to blue gradient
-        mat.metallic = 0.1f;
+
+        PBRMaterial mat;
+        mat.albedo = Vec3f(1.0f - t, 0.2f, t);  // Red to Blue
+        mat.metallic = 0.3f;
         mat.roughness = 0.4f;
         pbr.material(mat);
 
-        // Draw cube
         g.draw(cube);
 
         pbr.end(g);
-
-        // Draw info text
-        g.lighting(false);
-        g.depthTesting(false);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         switch (k.key()) {
             case 'w': case 'W':
-                camDist = std::max(2.0f, camDist - 2.0f);
+                camDist = std::max(3.0f, camDist - 3.0f);
+                printf("Camera distance: %.1f\\n", camDist);
                 break;
             case 's': case 'S':
-                camDist = std::min(100.0f, camDist + 2.0f);
-                break;
-            case '+': case '=':
-                lodBias = std::min(2.0f, lodBias + 0.1f);
-                setTextureLODBias(1.0f + lodBias);
-                printf("[MipmapLOD] LOD Bias: %.1f\\n", lodBias);
-                break;
-            case '-': case '_':
-                lodBias = std::max(-2.0f, lodBias - 0.1f);
-                setTextureLODBias(1.0f + lodBias);
-                printf("[MipmapLOD] LOD Bias: %.1f\\n", lodBias);
+                camDist = std::min(80.0f, camDist + 3.0f);
+                printf("Camera distance: %.1f\\n", camDist);
                 break;
         }
         return true;
     }
 };
 
-int main() {
-    MipmapLODDemo app;
-    app.start();
-    return 0;
-}
+ALLOLIB_WEB_MAIN(ContinuousLODDemo)
 `,
   },
   {
