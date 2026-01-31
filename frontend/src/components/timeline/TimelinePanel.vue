@@ -147,21 +147,24 @@
             :scrollX="timeline.viewport.scrollX"
             :headerWidth="HEADER_WIDTH"
             :categoryColor="cat.color"
+            @edit-curve="openEnvironmentCurveEditor"
           />
         </template>
 
         <!-- Event Tracks -->
         <template v-else-if="cat.id === 'events'">
           <EventTrackLane
-            v-for="eventTrack in eventTracks"
+            v-for="eventTrack in eventsStore.tracks"
             :key="eventTrack.id"
             :track="eventTrack"
             :zoom="timeline.viewport.zoomX"
             :scrollX="timeline.viewport.scrollX"
             :headerWidth="HEADER_WIDTH"
-            :categoryColor="cat.color"
+            :categoryColor="eventTrack.color"
+            @delete="handleDeleteEventTrack(eventTrack.id)"
+            @add-event="(time) => handleAddEvent(eventTrack.id, time)"
           />
-          <div v-if="eventTracks.length === 0" class="empty-section">
+          <div v-if="eventsStore.tracks.length === 0" class="empty-section">
             No event tracks. Click + to add camera or markers.
           </div>
         </template>
@@ -189,6 +192,20 @@
       :currentTime="timeline.currentTime"
       @close="showCreateObjectDialog = false"
       @created="onObjectCreated"
+    />
+
+    <!-- Environment Curve Editor -->
+    <CurveEditor
+      v-if="showEnvCurveEditor"
+      :visible="showEnvCurveEditor"
+      :propertyName="envCurveProperty"
+      :startTime="envCurveStartTime"
+      :endTime="envCurveEndTime"
+      :startValue="envCurveStartValue"
+      :endValue="envCurveEndValue"
+      :initialBezier="envCurveBezier"
+      @close="showEnvCurveEditor = false"
+      @apply="saveEnvironmentCurve"
     />
 
     <!-- Tone Lattice Popup -->
@@ -315,7 +332,9 @@ import { useTimelineStore, type TrackCategory } from '@/stores/timeline'
 import { useSequencerStore } from '@/stores/sequencer'
 import { useObjectsStore, type SceneObject } from '@/stores/objects'
 import { useEnvironmentStore } from '@/stores/environment'
+import { useEventsStore, type EventTrack } from '@/stores/events'
 import { parameterSystem } from '@/utils/parameter-system'
+import { useTimelineShortcuts } from '@/composables/useTimelineShortcuts'
 
 import TransportBar from './TransportBar.vue'
 import TimeRuler from './TimeRuler.vue'
@@ -325,6 +344,7 @@ import ObjectTrackLane from './tracks/ObjectTrackLane.vue'
 import EnvironmentTrackLane from './tracks/EnvironmentTrackLane.vue'
 import EventTrackLane from './tracks/EventTrackLane.vue'
 import CreateObjectDialog from './CreateObjectDialog.vue'
+import CurveEditor from './CurveEditor.vue'
 
 // Full sequencer components for Audio section
 import ClipTimeline from '@/components/sequencer/ClipTimeline.vue'
@@ -337,15 +357,30 @@ const timeline = useTimelineStore()
 const sequencer = useSequencerStore()
 const objectsStore = useObjectsStore()
 const environmentStore = useEnvironmentStore()
+const eventsStore = useEventsStore()
+
+// Initialize keyboard shortcuts
+const { shortcuts, isActive: shortcutsActive } = useTimelineShortcuts({
+  nudgeAmount: 0.5,
+  fineNudgeAmount: 0.1,
+})
+
+// Initialize default event tracks
+eventsStore.initDefaults()
 
 const trackContainerRef = ref<InstanceType<typeof TrackContainer>>()
-
-// Event tracks (placeholder until event store is created)
-const eventTracks = ref<Array<{ id: string; name: string; type: string }>>([])
 
 // Dialog state
 const showCreateObjectDialog = ref(false)
 const showLatticePopup = ref(false)
+const showEnvCurveEditor = ref(false)
+const envCurveProperty = ref<string>('')
+const envCurveKeyframeTime = ref<number>(0)
+const envCurveStartTime = ref<number>(0)
+const envCurveEndTime = ref<number>(1)
+const envCurveStartValue = ref<number>(0)
+const envCurveEndValue = ref<number>(1)
+const envCurveBezier = ref<[number, number, number, number]>([0.25, 0.1, 0.25, 1.0])
 
 // Active track type for context-aware edit controls
 const activeTrackType = ref<TrackCategory>('audio')
@@ -378,7 +413,7 @@ function getTrackCount(category: TrackCategory): number {
     case 'environment':
       return 1 // Always one environment track
     case 'events':
-      return eventTracks.value.length
+      return eventsStore.tracks.length
     default:
       return 0
   }
@@ -402,12 +437,34 @@ function handleAddTrack(category: TrackCategory) {
       showCreateObjectDialog.value = true
       break
     case 'events':
-      // TODO: Show event type picker (camera, marker, script)
-      eventTracks.value.push({
-        id: `event_${Date.now()}`,
-        name: 'Camera',
-        type: 'camera',
+      // Add a new script track (camera and marker tracks are auto-created)
+      eventsStore.addTrack('script', `Script ${eventsStore.tracks.filter(t => t.type === 'script').length + 1}`)
+      break
+  }
+}
+
+function handleDeleteEventTrack(trackId: string) {
+  eventsStore.removeTrack(trackId)
+}
+
+function handleAddEvent(trackId: string, time: number) {
+  const track = eventsStore.getTrack(trackId)
+  if (!track) return
+
+  switch (track.type) {
+    case 'camera':
+      eventsStore.addCameraKeyframe(time, {
+        position: [0, 0, 5],
+        target: [0, 0, 0],
+        fov: 60,
+        mode: 'free',
       })
+      break
+    case 'marker':
+      eventsStore.addMarker(time, `Marker ${eventsStore.markers.length + 1}`)
+      break
+    case 'script':
+      eventsStore.addScriptEvent(trackId, time, '// Your script here\nlog("Event triggered!")')
       break
   }
 }
@@ -416,6 +473,47 @@ function onObjectCreated(object: SceneObject) {
   // Select the newly created object
   objectsStore.selectObject(object.id)
   console.log(`[Timeline] Created object: ${object.name}`)
+}
+
+function openEnvironmentCurveEditor(property: string, time: number) {
+  const curve = environmentStore.keyframeCurves.get(property)
+  if (!curve || curve.keyframes.length === 0) return
+
+  // Find the keyframe and the next one for the range
+  const keyframes = curve.keyframes
+  const kfIndex = keyframes.findIndex(k => Math.abs(k.time - time) < 0.001)
+  if (kfIndex === -1) return
+
+  const kf = keyframes[kfIndex]
+  const nextKf = kfIndex < keyframes.length - 1 ? keyframes[kfIndex + 1] : kf
+
+  envCurveProperty.value = property
+  envCurveKeyframeTime.value = time
+  envCurveStartTime.value = kf.time
+  envCurveEndTime.value = nextKf.time
+
+  // Get scalar values (for color arrays, use the first component)
+  const startVal = kf.value
+  const endVal = nextKf.value
+  envCurveStartValue.value = typeof startVal === 'number' ? startVal : (Array.isArray(startVal) ? startVal[0] : 0)
+  envCurveEndValue.value = typeof endVal === 'number' ? endVal : (Array.isArray(endVal) ? endVal[0] : 1)
+
+  // Get existing bezier points if any
+  envCurveBezier.value = (kf as any).bezierPoints || [0.25, 0.1, 0.25, 1.0]
+
+  showEnvCurveEditor.value = true
+}
+
+function saveEnvironmentCurve(bezierPoints: [number, number, number, number]) {
+  const curve = environmentStore.keyframeCurves.get(envCurveProperty.value)
+  if (!curve) return
+
+  const kf = curve.keyframes.find(k => Math.abs(k.time - envCurveKeyframeTime.value) < 0.001)
+  if (kf) {
+    kf.easing = 'bezier' as any  // Extended easing type
+    ;(kf as any).bezierPoints = bezierPoints
+  }
+  showEnvCurveEditor.value = false
 }
 </script>
 

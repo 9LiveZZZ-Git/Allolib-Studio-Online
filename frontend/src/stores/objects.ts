@@ -11,6 +11,8 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { coercePropertyValue } from '@/utils/property-validation'
+import { useCommandsStore, createPropertyCommand, createKeyframeCommand, createObjectCommand } from './commands'
 
 // ─── Object Definition Types ─────────────────────────────────────────────────
 
@@ -146,6 +148,9 @@ export const useObjectsStore = defineStore('objects', () => {
     objects.value.set(id, obj)
     console.log(`[ObjectsStore] Created object: ${obj.name} (${id})`)
 
+    // Create in WASM if connected
+    createObjectInWasm(obj)
+
     return obj
   }
 
@@ -164,6 +169,9 @@ export const useObjectsStore = defineStore('objects', () => {
     if (selectedObjectId.value === id) {
       selectedObjectId.value = null
     }
+
+    // Remove from WASM
+    removeObjectFromWasm(id)
 
     objects.value.delete(id)
     console.log(`[ObjectsStore] Deleted object: ${obj.name} (${id})`)
@@ -187,35 +195,95 @@ export const useObjectsStore = defineStore('objects', () => {
   /**
    * Set a property value on an object.
    * This is the main entry point from the parameter panel.
+   *
+   * @param objectId - Object to modify
+   * @param propertyName - Property to set
+   * @param value - New value
+   * @param options - Optional settings
+   * @param options.recordCommand - Whether to record for undo/redo (default: true)
+   * @param options.validate - Whether to validate value (default: true)
    */
-  function setProperty(objectId: string, propertyName: string, value: number | number[]): void {
+  function setProperty(
+    objectId: string,
+    propertyName: string,
+    value: number | number[],
+    options: { recordCommand?: boolean; validate?: boolean } = {}
+  ): void {
+    const { recordCommand = true, validate = true } = options
+
     const obj = objects.value.get(objectId)
     if (!obj) {
       console.warn(`[ObjectsStore] Object not found: ${objectId}`)
       return
     }
 
+    // Validate value if requested
+    let validatedValue = value
+    if (validate) {
+      // Map legacy property names to validation keys
+      const validationKey = mapPropertyNameToValidationKey(propertyName)
+      if (validationKey) {
+        validatedValue = coercePropertyValue(validationKey, value)
+      }
+    }
+
+    // Get old value for undo
+    const oldValue = getProperty(objectId, propertyName)
+
+    // Record command if requested (and commands store is recording)
+    if (recordCommand) {
+      const commandsStore = useCommandsStore()
+      if (commandsStore.isRecording()) {
+        const cmd = createPropertyCommand(
+          objectId,
+          propertyName,
+          oldValue,
+          validatedValue,
+          (id, prop, val) => setPropertyInternal(id, prop, val)
+        )
+        commandsStore.execute(cmd)
+        return  // Command execution will call setPropertyInternal
+      }
+    }
+
+    // Apply value directly
+    setPropertyInternal(objectId, propertyName, validatedValue)
+  }
+
+  /**
+   * Internal property setter - applies value without recording command
+   */
+  function setPropertyInternal(objectId: string, propertyName: string, value: number | number[]): void {
+    const obj = objects.value.get(objectId)
+    if (!obj) return
+
     // Map property names to object structure
     switch (propertyName) {
       // Transform - Position
       case 'positionX':
+      case 'position.x':
         obj.transform.position[0] = value as number
         break
       case 'positionY':
+      case 'position.y':
         obj.transform.position[1] = value as number
         break
       case 'positionZ':
+      case 'position.z':
         obj.transform.position[2] = value as number
         break
 
       // Transform - Scale
       case 'scaleX':
+      case 'scale.x':
         obj.transform.scale[0] = value as number
         break
       case 'scaleY':
+      case 'scale.y':
         obj.transform.scale[1] = value as number
         break
       case 'scaleZ':
+      case 'scale.z':
         obj.transform.scale[2] = value as number
         break
 
@@ -242,6 +310,11 @@ export const useObjectsStore = defineStore('objects', () => {
           obj.material.roughness = value as number
         }
         break
+      case 'opacity':
+        if (obj.material.color) {
+          obj.material.color[3] = value as number
+        }
+        break
 
       // Material - Custom uniforms
       default:
@@ -254,6 +327,24 @@ export const useObjectsStore = defineStore('objects', () => {
 
     // Sync to WASM if runtime is available
     syncObjectToWasm(objectId)
+  }
+
+  /**
+   * Map legacy property names to validation keys
+   */
+  function mapPropertyNameToValidationKey(name: string): string | null {
+    const mapping: Record<string, string> = {
+      positionX: 'position.x',
+      positionY: 'position.y',
+      positionZ: 'position.z',
+      scaleX: 'scale.x',
+      scaleY: 'scale.y',
+      scaleZ: 'scale.z',
+      'rotation.x': 'rotation.x',
+      'rotation.y': 'rotation.y',
+      'rotation.z': 'rotation.z',
+    }
+    return mapping[name] || name
   }
 
   /**
@@ -395,8 +486,23 @@ export const useObjectsStore = defineStore('objects', () => {
 
   // ─── WASM Sync ───────────────────────────────────────────────────────────
 
+  const wasmConnected = ref(false)
+
+  function connectWasm(): void {
+    wasmConnected.value = true
+    // Sync all existing objects to WASM
+    for (const obj of objects.value.values()) {
+      syncObjectToWasm(obj.id)
+    }
+  }
+
+  function disconnectWasm(): void {
+    wasmConnected.value = false
+  }
+
   /**
    * Sync object state to WASM runtime
+   * Uses WASM exports from al_WebObjectManager.hpp
    */
   function syncObjectToWasm(objectId: string): void {
     const obj = objects.value.get(objectId)
@@ -406,9 +512,152 @@ export const useObjectsStore = defineStore('objects', () => {
     const wasmModule = (window as any).__alloWasmModule
     if (!wasmModule) return
 
-    // TODO: Call WASM functions to update object transform/material
-    // This will be implemented when ObjectManager is added to C++
-    // For now, objects are managed in user C++ code
+    // Convert string ID to C string for WASM
+    const allocString = (str: string): number => {
+      const encoder = new TextEncoder()
+      const bytes = encoder.encode(str + '\0')
+      const ptr = wasmModule._malloc(bytes.length)
+      wasmModule.HEAPU8.set(bytes, ptr)
+      return ptr
+    }
+
+    const freeString = (ptr: number): void => {
+      wasmModule._free(ptr)
+    }
+
+    const idPtr = allocString(obj.id)
+
+    try {
+      // Sync transform - Position
+      if (wasmModule._al_obj_set_position) {
+        wasmModule._al_obj_set_position(
+          idPtr,
+          obj.transform.position[0],
+          obj.transform.position[1],
+          obj.transform.position[2]
+        )
+      }
+
+      // Sync transform - Rotation (quaternion)
+      if (wasmModule._al_obj_set_rotation) {
+        wasmModule._al_obj_set_rotation(
+          idPtr,
+          obj.transform.rotation[0],
+          obj.transform.rotation[1],
+          obj.transform.rotation[2],
+          obj.transform.rotation[3]
+        )
+      }
+
+      // Sync transform - Scale
+      if (wasmModule._al_obj_set_scale) {
+        wasmModule._al_obj_set_scale(
+          idPtr,
+          obj.transform.scale[0],
+          obj.transform.scale[1],
+          obj.transform.scale[2]
+        )
+      }
+
+      // Sync material - Color
+      if (wasmModule._al_obj_set_color && obj.material.color) {
+        wasmModule._al_obj_set_color(
+          idPtr,
+          obj.material.color[0],
+          obj.material.color[1],
+          obj.material.color[2],
+          obj.material.color[3]
+        )
+      }
+
+      // Sync material - PBR params
+      if (wasmModule._al_obj_set_pbr_params && obj.material.type === 'pbr') {
+        wasmModule._al_obj_set_pbr_params(
+          idPtr,
+          obj.material.metallic ?? 0,
+          obj.material.roughness ?? 0.5
+        )
+      }
+
+      // Sync visibility
+      if (wasmModule._al_obj_set_visible) {
+        wasmModule._al_obj_set_visible(idPtr, obj.visible ? 1 : 0)
+      }
+
+      // Sync lifecycle times
+      if (wasmModule._al_obj_set_spawn_time && obj.spawnTime !== undefined) {
+        wasmModule._al_obj_set_spawn_time(idPtr, obj.spawnTime)
+      }
+
+      if (wasmModule._al_obj_set_destroy_time && obj.destroyTime !== undefined) {
+        wasmModule._al_obj_set_destroy_time(idPtr, obj.destroyTime)
+      }
+    } finally {
+      freeString(idPtr)
+    }
+  }
+
+  /**
+   * Create object in WASM runtime
+   */
+  function createObjectInWasm(obj: SceneObject): void {
+    const wasmModule = (window as any).__alloWasmModule
+    if (!wasmModule || !wasmModule._al_obj_create) return
+
+    const allocString = (str: string): number => {
+      const encoder = new TextEncoder()
+      const bytes = encoder.encode(str + '\0')
+      const ptr = wasmModule._malloc(bytes.length)
+      wasmModule.HEAPU8.set(bytes, ptr)
+      return ptr
+    }
+
+    const freeString = (ptr: number): void => {
+      wasmModule._free(ptr)
+    }
+
+    const idPtr = allocString(obj.id)
+    const namePtr = allocString(obj.name)
+    const primitivePtr = allocString(obj.mesh.primitive || 'cube')
+
+    try {
+      wasmModule._al_obj_create(idPtr, namePtr, primitivePtr)
+      // Now sync all properties
+      syncObjectToWasm(obj.id)
+    } finally {
+      freeString(idPtr)
+      freeString(namePtr)
+      freeString(primitivePtr)
+    }
+  }
+
+  /**
+   * Remove object from WASM runtime
+   */
+  function removeObjectFromWasm(id: string): void {
+    const wasmModule = (window as any).__alloWasmModule
+    if (!wasmModule || !wasmModule._al_obj_remove) return
+
+    const encoder = new TextEncoder()
+    const bytes = encoder.encode(id + '\0')
+    const ptr = wasmModule._malloc(bytes.length)
+    wasmModule.HEAPU8.set(bytes, ptr)
+
+    try {
+      wasmModule._al_obj_remove(ptr)
+    } finally {
+      wasmModule._free(ptr)
+    }
+  }
+
+  /**
+   * Update object lifecycles based on current timeline time
+   */
+  function updateLifecycles(currentTime: number): void {
+    const wasmModule = (window as any).__alloWasmModule
+    if (wasmModule && wasmModule._al_obj_update_lifecycles) {
+      wasmModule._al_obj_update_lifecycles(currentTime)
+    }
   }
 
   // ─── Serialization ───────────────────────────────────────────────────────
@@ -433,11 +682,16 @@ export const useObjectsStore = defineStore('objects', () => {
    * Import objects and keyframes from JSON
    */
   function fromJSON(data: ReturnType<typeof toJSON>): void {
+    // Clear WASM objects first
+    clearWasmObjects()
+
     objects.value.clear()
     keyframeCurves.value.clear()
 
     for (const obj of data.objects) {
       objects.value.set(obj.id, obj)
+      // Create in WASM
+      createObjectInWasm(obj)
     }
 
     for (const { key, curve } of data.keyframeCurves) {
@@ -448,9 +702,20 @@ export const useObjectsStore = defineStore('objects', () => {
   }
 
   /**
+   * Clear all WASM objects
+   */
+  function clearWasmObjects(): void {
+    const wasmModule = (window as any).__alloWasmModule
+    if (wasmModule && wasmModule._al_obj_clear) {
+      wasmModule._al_obj_clear()
+    }
+  }
+
+  /**
    * Clear all objects
    */
   function clear(): void {
+    clearWasmObjects()
     objects.value.clear()
     keyframeCurves.value.clear()
     selectedObjectId.value = null
@@ -483,6 +748,13 @@ export const useObjectsStore = defineStore('objects', () => {
     getKeyframeCurve,
     hasKeyframes,
     getValueAtTime,
+
+    // WASM Sync
+    wasmConnected,
+    connectWasm,
+    disconnectWasm,
+    syncObjectToWasm,
+    updateLifecycles,
 
     // Serialization
     toJSON,
