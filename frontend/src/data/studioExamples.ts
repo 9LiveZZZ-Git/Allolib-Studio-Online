@@ -3746,85 +3746,120 @@ int main() {
   },
   {
     id: 'studio-tex-mipmap-lod',
-    title: 'Mipmap Texture LOD (Unreal-Style)',
-    description: 'Continuous texture LOD with GPU-generated mipmaps like Unreal Engine',
+    title: 'Procedural PBR Textures',
+    description: 'Procedural brick, marble, and metal textures with PBR rendering',
     category: 'studio-textures',
     subcategory: 'texture-lod',
     code: `/**
- * Unreal-Style Continuous LOD Visualization
+ * Procedural PBR Textures Demo
  *
- * Demonstrates continuous LOD calculation based on camera distance.
- * The cube changes color to visualize the LOD level:
- * - RED = LOD 0 (closest, full quality)
- * - PURPLE = LOD 2 (mid distance)
- * - BLUE = LOD 4+ (farthest, lowest quality)
- *
- * LOD Formula: LOD = log2(distance / referenceDistance)
+ * Generates procedural textures (brick, marble, metal) on the CPU
+ * and applies them with full PBR materials including:
+ * - Albedo (base color)
+ * - Normal maps (surface detail)
+ * - Roughness maps
+ * - Ambient occlusion
  *
  * Controls:
+ *   1/2/3: Switch materials (Brick, Marble, Metal)
  *   W/S: Move camera closer/farther
- *   Watch the color and console for LOD changes
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebPBR.hpp"
+#include "al_WebProcedural.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
-class ContinuousLODDemo : public WebApp {
+class ProceduralPBRDemo : public WebApp {
 public:
     WebPBR pbr;
-    Mesh cube;
+    Mesh sphere;
 
-    float camDist = 10.0f;
-    float camAngle = 0;
-    float lastLOD = -1.0f;
+    // Procedural texture generators
+    ProceduralTexture albedoTex, normalTex, roughnessTex, aoTex, metallicTex;
 
-    // LOD calculation parameters
-    float referenceDistance = 5.0f;
+    // GPU texture IDs
+    GLuint albedoId = 0, normalId = 0, roughnessId = 0, aoId = 0, metallicId = 0;
+
+    int currentMaterial = 0;  // 0=brick, 1=marble, 2=metal
+    float camDist = 6.0f;
+    float rotation = 0;
+    bool texturesReady = false;
 
     void onCreate() override {
         pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
 
-        // Create cube mesh
-        addCube(cube, true, 2.0f);
-        cube.generateNormals();
+        // Create sphere with UV coordinates
+        addSphere(sphere, 1.5f, 64, 64);
+        sphere.generateNormals();
 
-        nav().pos(0, 2, camDist);
+        nav().pos(0, 0, camDist);
         nav().faceToward(Vec3f(0, 0, 0));
 
-        printf("\\n=== Continuous LOD Visualization ===\\n");
-        printf("Reference distance: %.1f (LOD 0 = full quality)\\n", referenceDistance);
-        printf("Distance 10 -> LOD 1.0\\n");
-        printf("Distance 20 -> LOD 2.0\\n");
-        printf("Distance 40 -> LOD 3.0\\n");
-        printf("\\nControls: W = closer, S = farther\\n");
-        printf("Watch the cube color change!\\n\\n");
+        printf("\\n=== Procedural PBR Textures ===\\n");
+        printf("Generating textures...\\n");
+
+        // Generate initial material (brick)
+        generateMaterial(0);
+
+        printf("Controls: 1=Brick, 2=Marble, 3=Metal\\n");
+        printf("          W/S = zoom\\n\\n");
     }
 
-    // Calculate continuous LOD (Unreal-style formula)
-    float calculateLOD(float distance) {
-        float lod = log2f(distance / referenceDistance);
-        return std::max(0.0f, lod);  // Clamp to >= 0
+    void generateMaterial(int type) {
+        currentMaterial = type;
+        int res = 512;  // Texture resolution
+
+        printf("Generating material %d...\\n", type);
+
+        switch (type) {
+            case 0:  // Brick
+                ProceduralPresets::generateBrickPBR(albedoTex, normalTex, roughnessTex, aoTex, res);
+                metallicTex.fill(res, res, 0xFF000000);  // Non-metallic
+                printf("Generated: Brick\\n");
+                break;
+
+            case 1:  // Marble
+                ProceduralPresets::generateMarblePBR(albedoTex, normalTex, roughnessTex, res);
+                aoTex.fill(res, res, 0xFFFFFFFF);  // Full AO
+                metallicTex.fill(res, res, 0xFF000000);  // Non-metallic
+                printf("Generated: Marble\\n");
+                break;
+
+            case 2:  // Metal
+                ProceduralPresets::generateMetalPBR(albedoTex, normalTex, roughnessTex, metallicTex, res, 0xFFD4AF37);
+                aoTex.fill(res, res, 0xFFFFFFFF);  // Full AO
+                printf("Generated: Metal (Gold)\\n");
+                break;
+        }
+
+        // Upload to GPU
+        uploadTextures();
+        texturesReady = true;
+    }
+
+    void uploadTextures() {
+        // Delete old textures if they exist
+        if (albedoId) glDeleteTextures(1, &albedoId);
+        if (normalId) glDeleteTextures(1, &normalId);
+        if (roughnessId) glDeleteTextures(1, &roughnessId);
+        if (aoId) glDeleteTextures(1, &aoId);
+        if (metallicId) glDeleteTextures(1, &metallicId);
+
+        // Create new textures
+        albedoId = albedoTex.createTexture();
+        normalId = normalTex.createTexture();
+        roughnessId = roughnessTex.createTexture();
+        aoId = aoTex.createTexture();
+        metallicId = metallicTex.createTexture();
+
+        printf("Textures uploaded to GPU\\n");
     }
 
     void onAnimate(double dt) override {
-        // Slowly orbit camera
-        camAngle += dt * 10.0;
-        float x = camDist * sin(camAngle * 0.02f);
-        float z = camDist * cos(camAngle * 0.02f);
-        nav().pos(x, 2, z);
-        nav().faceToward(Vec3f(0, 0, 0));
-
-        // Calculate and log LOD changes
-        float dist = nav().pos().mag();
-        float lod = calculateLOD(dist);
-
-        if (fabs(lod - lastLOD) > 0.05f) {
-            printf("Distance: %.1f -> LOD: %.2f\\n", dist, lod);
-            lastLOD = lod;
-        }
+        rotation += dt * 20.0f;
     }
 
     void onDraw(Graphics& g) override {
@@ -3833,44 +3868,74 @@ public:
         pbr.drawSkybox(g);
         g.depthTesting(true);
 
-        // Calculate current LOD
-        float dist = nav().pos().mag();
-        float lod = calculateLOD(dist);
+        if (!texturesReady) return;
 
-        // Start PBR rendering
+        // Bind textures to texture units 3-7 (0-2 used by PBR for IBL)
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, albedoId);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, normalId);
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, roughnessId);
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, metallicId);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, aoId);
+
         pbr.begin(g, nav().pos());
 
-        // Create material with LOD-based color
-        // Red (close) -> Purple (mid) -> Blue (far)
-        float t = std::min(lod / 4.0f, 1.0f);
+        // Set up textured PBR material
+        PBRMaterialEx mat;
+        mat.albedo = Vec3f(1, 1, 1);  // White base (texture provides color)
+        mat.metallic = (currentMaterial == 2) ? 1.0f : 0.0f;
+        mat.roughness = 0.5f;
 
-        PBRMaterial mat;
-        mat.albedo = Vec3f(1.0f - t, 0.2f, t);  // Red to Blue
-        mat.metallic = 0.3f;
-        mat.roughness = 0.4f;
-        pbr.material(mat);
+        // Enable texture maps
+        mat.withAlbedoMap(3)
+           .withNormalMap(1.0f, 4)
+           .withRoughnessMap(5)
+           .withMetallicMap(6)
+           .withAOMap(7);
 
-        g.draw(cube);
+        pbr.materialEx(mat);
+
+        // Rotate and draw sphere
+        g.pushMatrix();
+        g.rotate(rotation, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
 
         pbr.end(g);
+
+        // Reset texture units
+        glActiveTexture(GL_TEXTURE0);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         switch (k.key()) {
+            case '1':
+                generateMaterial(0);  // Brick
+                break;
+            case '2':
+                generateMaterial(1);  // Marble
+                break;
+            case '3':
+                generateMaterial(2);  // Metal
+                break;
             case 'w': case 'W':
-                camDist = std::max(3.0f, camDist - 3.0f);
-                printf("Camera distance: %.1f\\n", camDist);
+                camDist = std::max(3.0f, camDist - 1.0f);
+                nav().pos(0, 0, camDist);
                 break;
             case 's': case 'S':
-                camDist = std::min(80.0f, camDist + 3.0f);
-                printf("Camera distance: %.1f\\n", camDist);
+                camDist = std::min(20.0f, camDist + 1.0f);
+                nav().pos(0, 0, camDist);
                 break;
         }
         return true;
     }
 };
 
-ALLOLIB_WEB_MAIN(ContinuousLODDemo)
+ALLOLIB_WEB_MAIN(ProceduralPBRDemo)
 `,
   },
   {
