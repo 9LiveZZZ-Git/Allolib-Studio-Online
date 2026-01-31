@@ -5778,33 +5778,43 @@ int main() {
   {
     id: 'studio-showcase-procedural-planet',
     title: 'Procedural Planet',
-    description: 'Animated procedural planet with atmosphere, rings, and orbiting moons',
+    description: 'Animated procedural planet with atmosphere, rings, and orbiting moons - Timeline integrated!',
     category: 'studio-showcase',
     subcategory: 'object-animation',
     code: `/**
- * Procedural Planet
+ * Procedural Planet - Timeline Integrated
  *
- * Demonstrates complex object keyframes and material animation:
- * - Planet: sphere with procedural-like coloring, slow rotation
- * - Atmosphere: transparent shell with animated glow
- * - Rings: torus with independent rotation
- * - Moons: orbiting spheres with keyframed positions
+ * This example registers its objects with the timeline, so they appear
+ * in the Objects panel and can have their transforms animated via keyframes.
  *
- * All objects have keyframed properties for smooth animation.
+ * Objects registered:
+ * - Planet: The main sphere (can keyframe position, scale)
+ * - Rings: The planetary rings (can keyframe rotation)
+ * - Moon1, Moon2, Moon3: Orbiting moons
+ *
+ * Try adding keyframes in the timeline to override the procedural animation!
  */
 
 #include "al_WebApp.hpp"
+#include "al_WebObjectManager.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
 class ProceduralPlanet : public WebApp {
 public:
-    // Meshes
+    // Meshes (custom rendering - not using ObjectManager's meshes)
     Mesh planetMesh;
     Mesh atmosphereMesh;
     Mesh ringMesh;
     Mesh moonMesh;
+
+    // Timeline objects (for tracking transforms)
+    SceneObject* tlPlanet = nullptr;
+    SceneObject* tlRings = nullptr;
+    SceneObject* tlMoon1 = nullptr;
+    SceneObject* tlMoon2 = nullptr;
+    SceneObject* tlMoon3 = nullptr;
 
     // Animation state
     double time = 0;
@@ -5819,6 +5829,7 @@ public:
         float size;
         Color color;
         float phase;
+        SceneObject* timeline; // Link to timeline object
     };
     std::vector<Moon> moons;
 
@@ -5826,8 +5837,34 @@ public:
     float duration = 60.0f;
 
     void onCreate() override {
-        // Create planet sphere
-        addSphere(planetMesh, 2.0f, 64, 64);
+        // Initialize ObjectManager meshes (required for timeline integration)
+        objectManager().initMeshes();
+
+        // Register objects with timeline (these will appear in the Objects panel)
+        // Users can add keyframes to animate position, scale, rotation, color
+        tlPlanet = registerTimelineObject("planet", "Planet", PrimitiveType::Sphere,
+                                          Vec3f(0, 0, 0), Vec3f(2, 2, 2),
+                                          Color(0.3f, 0.5f, 0.8f, 1.0f));
+
+        tlRings = registerTimelineObject("rings", "Rings", PrimitiveType::Torus,
+                                         Vec3f(0, 0, 0), Vec3f(3.5f, 0.15f, 3.5f),
+                                         Color(0.7f, 0.6f, 0.5f, 0.6f));
+
+        // Register moons
+        tlMoon1 = registerTimelineObject("moon1", "Moon 1", PrimitiveType::Sphere,
+                                         Vec3f(4.5f, 0, 0), Vec3f(0.3f, 0.3f, 0.3f),
+                                         Color(0.8f, 0.7f, 0.6f, 1.0f));
+
+        tlMoon2 = registerTimelineObject("moon2", "Moon 2", PrimitiveType::Sphere,
+                                         Vec3f(0, 0, 6.0f), Vec3f(0.2f, 0.2f, 0.2f),
+                                         Color(0.6f, 0.6f, 0.7f, 1.0f));
+
+        tlMoon3 = registerTimelineObject("moon3", "Moon 3", PrimitiveType::Sphere,
+                                         Vec3f(-5.2f, 0, 0), Vec3f(0.15f, 0.15f, 0.15f),
+                                         Color(0.7f, 0.5f, 0.5f, 1.0f));
+
+        // Create custom planet mesh with procedural coloring
+        addSphere(planetMesh, 1.0f, 64, 64);  // Unit sphere, scale via transform
         planetMesh.generateNormals();
 
         // Color vertices procedurally (simulating noise)
@@ -5841,50 +5878,58 @@ public:
         }
 
         // Create atmosphere shell (slightly larger)
-        addSphere(atmosphereMesh, 2.15f, 48, 48);
+        addSphere(atmosphereMesh, 1.08f, 48, 48);
         atmosphereMesh.generateNormals();
 
-        // Create ring (torus)
-        addTorus(ringMesh, 0.15f, 3.5f, 64, 16);
+        // Create ring (torus) - unit size, scale via transform
+        addTorus(ringMesh, 0.04f, 1.0f, 64, 16);
         ringMesh.generateNormals();
 
-        // Create moon mesh
-        addSphere(moonMesh, 0.3f, 24, 24);
+        // Create moon mesh - unit sphere
+        addSphere(moonMesh, 1.0f, 24, 24);
         moonMesh.generateNormals();
 
-        // Setup moons
-        moons.push_back({4.5f, 0.8f, 0.3f, Color(0.8f, 0.7f, 0.6f), 0.0f});
-        moons.push_back({6.0f, 0.5f, 0.2f, Color(0.6f, 0.6f, 0.7f), M_PI * 0.5f});
-        moons.push_back({5.2f, 0.65f, 0.15f, Color(0.7f, 0.5f, 0.5f), M_PI});
+        // Setup moons with links to timeline objects
+        moons.push_back({4.5f, 0.8f, 0.3f, Color(0.8f, 0.7f, 0.6f), 0.0f, tlMoon1});
+        moons.push_back({6.0f, 0.5f, 0.2f, Color(0.6f, 0.6f, 0.7f), M_PI * 0.5f, tlMoon2});
+        moons.push_back({5.2f, 0.65f, 0.15f, Color(0.7f, 0.5f, 0.5f), M_PI, tlMoon3});
 
         // Camera position
         nav().pos(0, 5, 12);
         nav().faceToward(Vec3d(0, 0, 0));
 
-        std::cout << "Procedural Planet Demo" << std::endl;
-        std::cout << "Watch the planet rotate with orbiting moons!" << std::endl;
+        std::cout << "Procedural Planet Demo - Timeline Integrated" << std::endl;
+        std::cout << "Objects registered in timeline: Planet, Rings, Moon 1-3" << std::endl;
+        std::cout << "Add keyframes in the timeline panel to animate them!" << std::endl;
     }
 
     void onAnimate(double dt) override {
         time += dt;
         float t = fmod(time, duration) / duration; // 0-1 normalized time
 
-        // Planet rotation: 360° over full duration
+        // Update procedural animation (will be overridden by keyframes if set)
         planetRotation = t * 360.0f;
-
-        // Ring rotation: opposite direction, slower
         ringRotation = t * -180.0f;
-
-        // Atmosphere glow: pulsing 0.3-0.7
         atmosphereGlow = 0.5f + 0.2f * sin(time * 0.5f);
 
-        // Moon orbits (each has different speed)
-        for (auto& moon : moons) {
+        // Update moon positions procedurally
+        // (Timeline keyframes can override these via the SceneObject transforms)
+        for (size_t i = 0; i < moons.size(); i++) {
+            auto& moon = moons[i];
             moon.phase += dt * moon.orbitSpeed;
+
+            // Update timeline object position (for display in timeline)
+            // If user has keyframes, the objectManagerBridge will override this
+            if (moon.timeline) {
+                float x = cos(moon.phase) * moon.orbitRadius;
+                float z = sin(moon.phase) * moon.orbitRadius;
+                float y = sin(moon.phase * 0.3f) * 0.5f;
+                moon.timeline->transform.position.set(x, y, z);
+            }
         }
 
         // Slow camera orbit
-        float camAngle = time * 3.0f; // degrees per second
+        float camAngle = time * 3.0f;
         float camDist = 12.0f + sin(time * 0.1f) * 2.0f;
         nav().pos(
             sin(camAngle * M_PI / 180.0) * camDist,
@@ -5902,38 +5947,59 @@ public:
         g.blending(true);
         g.blendTrans();
 
-        // Draw planet
+        // Get planet transform from timeline (allows keyframe animation)
+        Vec3f planetPos = tlPlanet ? tlPlanet->transform.position : Vec3f(0, 0, 0);
+        Vec3f planetScale = tlPlanet ? tlPlanet->transform.scale : Vec3f(2, 2, 2);
+
+        // Draw planet using timeline transform
         g.pushMatrix();
+        g.translate(planetPos);
+        g.scale(planetScale);
         g.rotate(planetRotation, 0, 1, 0);
-        g.rotate(15, 1, 0, 0); // Axial tilt
+        g.rotate(15, 1, 0, 0);
         g.draw(planetMesh);
         g.popMatrix();
 
-        // Draw atmosphere (transparent shell)
+        // Draw atmosphere
         g.pushMatrix();
-        g.rotate(planetRotation * 0.8f, 0, 1, 0); // Slower rotation
+        g.translate(planetPos);
+        g.scale(planetScale);
+        g.rotate(planetRotation * 0.8f, 0, 1, 0);
         g.rotate(15, 1, 0, 0);
         g.color(0.4f, 0.6f, 0.9f, atmosphereGlow * 0.3f);
         g.draw(atmosphereMesh);
         g.popMatrix();
 
+        // Get rings transform from timeline
+        Vec3f ringsScale = tlRings ? tlRings->transform.scale : Vec3f(3.5f, 0.15f, 3.5f);
+
         // Draw rings
         g.pushMatrix();
+        g.translate(planetPos);  // Rings follow planet
+        g.scale(ringsScale);
         g.rotate(ringRotation, 0, 1, 0);
-        g.rotate(75, 1, 0, 0); // Tilted rings
-        g.color(0.7f, 0.6f, 0.5f, 0.6f);
+        g.rotate(75, 1, 0, 0);
+        g.color(tlRings ? tlRings->material.color : Color(0.7f, 0.6f, 0.5f, 0.6f));
         g.draw(ringMesh);
         g.popMatrix();
 
-        // Draw moons
+        // Draw moons using timeline transforms
         for (const auto& moon : moons) {
             g.pushMatrix();
-            float x = cos(moon.phase) * moon.orbitRadius;
-            float z = sin(moon.phase) * moon.orbitRadius;
-            float y = sin(moon.phase * 0.3f) * 0.5f; // Slight vertical bob
-            g.translate(x, y, z);
-            g.scale(moon.size / 0.3f);
-            g.color(moon.color);
+            if (moon.timeline) {
+                // Use timeline position (can be keyframed)
+                g.translate(moon.timeline->transform.position);
+                g.scale(moon.timeline->transform.scale);
+                g.color(moon.timeline->material.color);
+            } else {
+                // Fallback to procedural
+                float x = cos(moon.phase) * moon.orbitRadius;
+                float z = sin(moon.phase) * moon.orbitRadius;
+                float y = sin(moon.phase * 0.3f) * 0.5f;
+                g.translate(x, y, z);
+                g.scale(moon.size);
+                g.color(moon.color);
+            }
             g.draw(moonMesh);
             g.popMatrix();
         }
@@ -5943,7 +6009,6 @@ public:
         for (const auto& moon : moons) {
             g.pushMatrix();
             g.color(0.3f, 0.3f, 0.4f, 0.2f);
-            // Draw orbit circle as line segments
             Mesh orbit;
             orbit.primitive(Mesh::LINE_LOOP);
             for (int i = 0; i < 64; i++) {
@@ -5954,12 +6019,11 @@ public:
             g.popMatrix();
         }
 
-        // Info text position indicator
+        // Time indicator bar
         g.pushMatrix();
         g.loadIdentity();
         g.translate(-0.9, 0.85, 0);
         g.color(0.5, 0.7, 1.0, 0.7);
-        // Time indicator
         float progress = fmod(time, duration) / duration;
         Mesh bar;
         bar.primitive(Mesh::TRIANGLE_STRIP);
@@ -7283,6 +7347,874 @@ public:
 
 int main() {
     SimpleGame app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - SHOWCASE - Full Workflows
+  // ==========================================================================
+  {
+    id: 'studio-showcase-emergence',
+    title: 'Emergence - Complete Audiovisual Experience',
+    description: 'A 3-minute journey from chaos to order demonstrating all Allolib Studio capabilities: multi-voice synthesis, particle systems, environment transitions, camera choreography, and audio-reactive visuals',
+    category: 'studio-showcase',
+    subcategory: 'full-workflows',
+    code: `/**
+ * EMERGENCE - A 3-Minute Audiovisual Journey
+ *
+ * Category: Studio - Showcase > Full Workflows
+ *
+ * A complete audiovisual piece demonstrating all Allolib Studio capabilities:
+ * - Multi-voice polyphonic synthesis (4 synth types)
+ * - Particle systems with behavioral states (chaos → formation)
+ * - Timeline-driven animation across 3 acts
+ * - Environment transitions (fog, lighting, sky color)
+ * - Camera choreography with smooth interpolation
+ * - Audio-reactive visual effects
+ *
+ * Structure:
+ *   ACT 1 (0:00-1:00): CHAOS - Noise, scattered particles, darkness
+ *   ACT 2 (1:00-2:00): EMERGENCE - Melody forms, particles coalesce
+ *   ACT 3 (2:00-3:00): ORDER - Full arrangement, crystal structure
+ *
+ * Controls:
+ *   Space: Play/Pause
+ *   R: Reset to beginning
+ *   1/2/3: Jump to Act 1/2/3
+ *   Arrow keys: Manual camera control (when paused)
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Noise.h"
+#include "Gamma/Filter.h"
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+using namespace al;
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
+
+inline float noteToFreq(int note) {
+    // note 0 = A4 (440 Hz), negative = lower
+    return 440.0f * pow(2.0f, note / 12.0f);
+}
+
+inline float lerpf(float a, float b, float t) {
+    return a + (b - a) * std::clamp(t, 0.0f, 1.0f);
+}
+
+inline Vec3f lerpVec(Vec3f a, Vec3f b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return Vec3f(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+}
+
+inline float smoothstep(float edge0, float edge1, float x) {
+    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// ============================================================
+// SYNTH VOICE 1: NOISE TEXTURE
+// ============================================================
+
+class NoiseVoice : public SynthVoice {
+public:
+    gam::NoiseWhite<> noise;
+    gam::Reson<> filter;
+    gam::Env<3> env;
+    float amplitude = 0.15f;
+    float cutoff = 200.0f;
+    float resonance = 0.7f;
+
+    void init() override {
+        env.levels(0, 1, 0.6, 0);
+        env.lengths(0.5, 2.0, 1.0);
+        env.curve(-2);
+        env.sustainPoint(2);
+        filter.set(cutoff, resonance);
+    }
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float n = noise() * env() * amplitude;
+            filter.set(cutoff, resonance);
+            float s = filter(n);
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override { env.reset(); }
+    void onTriggerOff() override { env.release(); }
+};
+
+// ============================================================
+// SYNTH VOICE 2: FM MELODY
+// ============================================================
+
+class MelodyVoice : public SynthVoice {
+public:
+    gam::Sine<> carrier, modulator, vibrato;
+    gam::ADSR<> ampEnv, modEnv;
+    float frequency = 440.0f;
+    float amplitude = 0.25f;
+    float modIndex = 2.0f;
+    float modRatio = 2.0f;
+
+    void init() override {
+        ampEnv.attack(0.08f);
+        ampEnv.decay(0.2f);
+        ampEnv.sustain(0.7f);
+        ampEnv.release(0.8f);
+        modEnv.attack(0.01f);
+        modEnv.decay(0.3f);
+        modEnv.sustain(0.4f);
+        modEnv.release(0.5f);
+        vibrato.freq(5.0f);
+
+        createInternalTriggerParameter("frequency", 440, 100, 2000);
+        createInternalTriggerParameter("amplitude", 0.25f, 0, 1);
+    }
+
+    void onProcess(AudioIOData& io) override {
+        frequency = getInternalParameterValue("frequency");
+        amplitude = getInternalParameterValue("amplitude");
+
+        while (io()) {
+            float vib = 1.0f + vibrato() * 0.003f;
+            modulator.freq(frequency * modRatio * vib);
+            float mod = modulator() * modIndex * modEnv() * frequency;
+            carrier.freq(frequency * vib + mod);
+            float s = carrier() * ampEnv() * amplitude;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (ampEnv.done()) free();
+    }
+
+    void onTriggerOn() override {
+        ampEnv.reset();
+        modEnv.reset();
+    }
+    void onTriggerOff() override {
+        ampEnv.release();
+        modEnv.release();
+    }
+};
+
+// ============================================================
+// SYNTH VOICE 3: PAD (DETUNED OSCILLATORS)
+// ============================================================
+
+class PadVoice : public SynthVoice {
+public:
+    gam::Sine<> osc1, osc2, osc3;
+    gam::AD<> env{3.0f, 4.0f};
+    float frequency = 220.0f;
+    float amplitude = 0.12f;
+    float detune = 1.003f;
+
+    void init() override {
+        createInternalTriggerParameter("frequency", 220, 50, 1000);
+        createInternalTriggerParameter("amplitude", 0.12f, 0, 0.5f);
+    }
+
+    void onProcess(AudioIOData& io) override {
+        frequency = getInternalParameterValue("frequency");
+        amplitude = getInternalParameterValue("amplitude");
+
+        osc1.freq(frequency);
+        osc2.freq(frequency * detune);
+        osc3.freq(frequency / detune);
+
+        while (io()) {
+            float e = env();
+            float s = (osc1() + osc2() * 0.7f + osc3() * 0.7f) * e * amplitude / 2.4f;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override { env.reset(); }
+    void onTriggerOff() override { }
+};
+
+// ============================================================
+// SYNTH VOICE 4: PERCUSSION
+// ============================================================
+
+class PercVoice : public SynthVoice {
+public:
+    gam::NoiseWhite<> noise;
+    gam::Reson<> filter;
+    gam::Env<2> env;
+    float pitch = 200.0f;
+    float amplitude = 0.3f;
+
+    void init() override {
+        env.levels(1, 0.3, 0);
+        env.lengths(0.01, 0.15);
+        env.curve(-4);
+        filter.set(pitch, 0.9f);
+
+        createInternalTriggerParameter("pitch", 200, 50, 800);
+        createInternalTriggerParameter("amplitude", 0.3f, 0, 1);
+    }
+
+    void onProcess(AudioIOData& io) override {
+        pitch = getInternalParameterValue("pitch");
+        amplitude = getInternalParameterValue("amplitude");
+        filter.set(pitch, 0.9f);
+
+        while (io()) {
+            float e = env();
+            float s = filter(noise()) * e * amplitude;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onTriggerOn() override { env.reset(); }
+    void onTriggerOff() override { }
+};
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+
+struct Particle {
+    Vec3f pos;
+    Vec3f vel;
+    int index;
+    float phase;
+    float hue;
+    float brightness;
+};
+
+// ============================================================
+// CAMERA KEYFRAME
+// ============================================================
+
+struct CameraKey {
+    float time;
+    Vec3f position;
+    Vec3f target;
+    float fov;
+};
+
+// ============================================================
+// MAIN APPLICATION
+// ============================================================
+
+class Emergence : public WebApp {
+public:
+    // Audio
+    PolySynth noiseSynth, melodySynth, padSynth, percSynth;
+    float audioLevel = 0;
+    float smoothedAudio = 0;
+
+    // Particles
+    static const int NUM_PARTICLES = 100;
+    std::vector<Particle> particles;
+    Mesh particleMesh;
+    Mesh crystalCoreMesh;
+
+    // Timeline
+    double time = 0;
+    const double DURATION = 180.0;
+    bool playing = true;
+
+    // Environment
+    float fogDensity = 0.15f;
+    float ambientIntensity = 0.1f;
+    Color skyColor{0.02f, 0.02f, 0.03f};
+
+    // Camera
+    Vec3f camPos{0, 0, 50};
+    Vec3f camTarget{0, 0, 0};
+    float fov = 90;
+
+    // Camera keyframes
+    std::vector<CameraKey> cameraKeys;
+
+    // Scheduled events tracking
+    double lastNoiseTime = -10;
+    double lastPercTime = -10;
+    double lastMelodyTime = -10;
+    double lastPadTime = -10;
+    int melodyNoteIndex = 0;
+    int chordIndex = 0;
+
+    // Crystal rotation
+    float crystalAngle = 0;
+
+    // Noise voice reference for continuous control
+    NoiseVoice* activeNoise = nullptr;
+
+    void onCreate() override {
+        // Initialize synths
+        noiseSynth.allocatePolyphony<NoiseVoice>(4);
+        melodySynth.allocatePolyphony<MelodyVoice>(8);
+        padSynth.allocatePolyphony<PadVoice>(12);
+        percSynth.allocatePolyphony<PercVoice>(8);
+
+        // Initialize particles
+        particles.resize(NUM_PARTICLES);
+        for (int i = 0; i < NUM_PARTICLES; i++) {
+            resetParticle(particles[i], i);
+        }
+
+        // Create particle mesh (small glowing sphere)
+        addSphere(particleMesh, 0.15f, 12, 12);
+        particleMesh.generateNormals();
+
+        // Create crystal core mesh
+        addSphere(crystalCoreMesh, 0.5f, 32, 32);
+        crystalCoreMesh.generateNormals();
+
+        // Setup camera keyframes
+        setupCameraKeys();
+
+        // Camera starting position
+        nav().pos(0, 0, 50);
+        nav().faceToward(Vec3d(0, 0, 0));
+
+        // Start noise texture in ACT 1
+        triggerNoiseTexture();
+    }
+
+    void setupCameraKeys() {
+        // ACT 1: Far, observing chaos
+        cameraKeys.push_back({0.0f, Vec3f(0, 0, 50), Vec3f(0, 0, 0), 90});
+        cameraKeys.push_back({30.0f, Vec3f(10, 5, 45), Vec3f(0, 0, 0), 85});
+        // ACT 2: Moving closer
+        cameraKeys.push_back({60.0f, Vec3f(0, 10, 35), Vec3f(0, 0, 0), 75});
+        cameraKeys.push_back({90.0f, Vec3f(-15, 8, 25), Vec3f(0, 2, 0), 65});
+        // ACT 3: Orbiting the crystal
+        cameraKeys.push_back({120.0f, Vec3f(20, 10, 20), Vec3f(0, 0, 0), 55});
+        cameraKeys.push_back({150.0f, Vec3f(-20, 5, 20), Vec3f(0, 0, 0), 50});
+        cameraKeys.push_back({175.0f, Vec3f(0, 15, 15), Vec3f(0, 0, 0), 45});
+        cameraKeys.push_back({180.0f, Vec3f(0, 18, 12), Vec3f(0, 0, 0), 40});
+    }
+
+    void resetParticle(Particle& p, int index) {
+        // Random position in large volume
+        float r = 15.0f + (rand() % 100) / 10.0f;
+        float theta = (rand() % 1000) / 1000.0f * M_2PI;
+        float phi = (rand() % 1000) / 1000.0f * M_PI;
+
+        p.pos = Vec3f(
+            r * sin(phi) * cos(theta),
+            r * cos(phi),
+            r * sin(phi) * sin(theta)
+        );
+        p.vel = Vec3f(
+            (rand() % 100 - 50) / 100.0f,
+            (rand() % 100 - 50) / 100.0f,
+            (rand() % 100 - 50) / 100.0f
+        );
+        p.index = index;
+        p.phase = (rand() % 1000) / 1000.0f * M_2PI;
+        p.hue = (float)index / NUM_PARTICLES;
+        p.brightness = 0.5f + (rand() % 50) / 100.0f;
+    }
+
+    Vec3f getCrystalPosition(int i) {
+        // Multi-shell icosahedron-like structure
+        int shell = i / 20;
+        int idx = i % 20;
+        float radius = 1.2f + shell * 0.9f;
+        float phi = idx * M_2PI / 20.0f + shell * 0.35f;
+        float theta = (idx % 5) * M_PI / 5.0f + 0.3f;
+        return Vec3f(
+            radius * sin(theta) * cos(phi),
+            radius * cos(theta),
+            radius * sin(theta) * sin(phi)
+        );
+    }
+
+    void onAnimate(double dt) override {
+        if (!playing) return;
+
+        time += dt;
+        if (time >= DURATION) {
+            time = DURATION;
+            playing = false;
+        }
+
+        float t = (float)time;
+
+        // Determine current act
+        int act = (t < 60) ? 1 : (t < 120) ? 2 : 3;
+
+        // Update based on act
+        if (act == 1) {
+            updateAct1(t, dt);
+        } else if (act == 2) {
+            updateAct2(t - 60.0f, dt);
+        } else {
+            updateAct3(t - 120.0f, dt);
+        }
+
+        // Update environment
+        updateEnvironment(t);
+
+        // Update camera
+        updateCamera(t);
+
+        // Update particles
+        updateParticles(t, dt, act);
+
+        // Smooth audio level for visual effects
+        smoothedAudio = smoothedAudio * 0.9f + audioLevel * 0.1f;
+    }
+
+    void updateAct1(float t, double dt) {
+        // Noise texture - continuous rumble (already triggered in onCreate)
+
+        // Random percussion hits
+        float percTimes[] = {5.0f, 12.0f, 23.0f, 35.0f, 48.0f, 55.0f};
+        for (float pt : percTimes) {
+            if (t >= pt && t < pt + 0.1f && lastPercTime < pt) {
+                triggerPercHit(100 + rand() % 200, 0.25f);
+                lastPercTime = pt;
+            }
+        }
+
+        // Low drone hint at 30s
+        if (t >= 30.0f && t < 30.1f && lastPadTime < 30.0f) {
+            triggerPadNote(noteToFreq(-19), 0.04f); // Very low D2
+            lastPadTime = 30.0f;
+        }
+
+        // Fade noise starting at 50s
+        if (activeNoise && t > 50.0f) {
+            float fadeAmount = (t - 50.0f) / 10.0f;
+            activeNoise->amplitude = 0.15f * (1.0f - fadeAmount);
+        }
+    }
+
+    void updateAct2(float t, double dt) {
+        // First melody note at start of Act 2
+        if (t >= 0.0f && t < 0.1f && lastMelodyTime < 60.0f) {
+            triggerMelodyNote(noteToFreq(-7), 0.2f); // D4
+            lastMelodyTime = 60.0f;
+        }
+
+        // Pad chord at 5s (Dm7: D, F, A, C)
+        if (t >= 5.0f && t < 5.1f && lastPadTime < 65.0f) {
+            triggerPadNote(noteToFreq(-7), 0.08f);  // D4
+            triggerPadNote(noteToFreq(-4), 0.07f);  // F4
+            triggerPadNote(noteToFreq(-2), 0.07f);  // A4 (actually G4 for Dm)
+            lastPadTime = 65.0f;
+        }
+
+        // More melody notes
+        float melodyTimes[] = {15.0f, 25.0f, 35.0f, 45.0f, 52.0f};
+        int melodyNotes[] = {-5, -4, -2, 0, 2}; // E4, F4, G4, A4, B4
+        for (int i = 0; i < 5; i++) {
+            if (t >= melodyTimes[i] && t < melodyTimes[i] + 0.1f && lastMelodyTime < 60.0f + melodyTimes[i]) {
+                triggerMelodyNote(noteToFreq(melodyNotes[i]), 0.22f);
+                lastMelodyTime = 60.0f + melodyTimes[i];
+            }
+        }
+
+        // Percussion becomes rhythmic at 20s
+        if (t >= 20.0f) {
+            float beatInterval = 0.5f; // 120 BPM
+            float beatPhase = fmod(t - 20.0f, beatInterval);
+            if (beatPhase < dt && t - lastPercTime > 0.4f) {
+                triggerPercHit(200 + (int)(t * 10) % 100, 0.2f);
+                lastPercTime = t + 60.0f;
+            }
+        }
+
+        // Chord progression
+        if (t >= 25.0f && t < 25.1f && lastPadTime < 85.0f) {
+            // G7
+            triggerPadNote(noteToFreq(-2), 0.07f);  // G4
+            triggerPadNote(noteToFreq(2), 0.06f);   // B4
+            lastPadTime = 85.0f;
+        }
+
+        if (t >= 45.0f && t < 45.1f && lastPadTime < 105.0f) {
+            // Am7
+            triggerPadNote(noteToFreq(0), 0.08f);   // A4
+            triggerPadNote(noteToFreq(3), 0.06f);   // C5
+            triggerPadNote(noteToFreq(7), 0.05f);   // E5
+            lastPadTime = 105.0f;
+        }
+    }
+
+    void updateAct3(float t, double dt) {
+        // Full arrangement begins
+
+        // Steady rhythmic pulse
+        float beatInterval = 0.5f;
+        float beatPhase = fmod(t, beatInterval);
+        if (beatPhase < dt && t - (lastPercTime - 120.0f) > 0.45f) {
+            float intensity = 0.25f + smoothedAudio * 0.2f;
+            triggerPercHit(250, intensity);
+            lastPercTime = t + 120.0f;
+        }
+
+        // Melodic climax at 20s
+        if (t >= 20.0f && t < 20.1f && lastMelodyTime < 140.0f) {
+            triggerMelodyNote(noteToFreq(5), 0.28f); // D5 (octave up)
+            lastMelodyTime = 140.0f;
+        }
+
+        // Full chord at 0s - Dm9
+        if (t >= 0.0f && t < 0.1f && lastPadTime < 120.0f) {
+            triggerPadNote(noteToFreq(-7), 0.1f);   // D4
+            triggerPadNote(noteToFreq(-4), 0.08f);  // F4
+            triggerPadNote(noteToFreq(0), 0.08f);   // A4
+            triggerPadNote(noteToFreq(3), 0.06f);   // C5
+            triggerPadNote(noteToFreq(5), 0.05f);   // E5
+            lastPadTime = 120.0f;
+        }
+
+        // Harmonic resolution at 40s - A major
+        if (t >= 40.0f && t < 40.1f && lastPadTime < 160.0f) {
+            triggerPadNote(noteToFreq(0), 0.1f);    // A4
+            triggerPadNote(noteToFreq(4), 0.08f);   // C#5
+            triggerPadNote(noteToFreq(7), 0.08f);   // E5
+            lastPadTime = 160.0f;
+        }
+
+        // Final chord at 55s - D major
+        if (t >= 55.0f && t < 55.1f && lastPadTime < 175.0f) {
+            triggerPadNote(noteToFreq(-7), 0.12f);  // D4
+            triggerPadNote(noteToFreq(-3), 0.1f);   // F#4
+            triggerPadNote(noteToFreq(0), 0.1f);    // A4
+            triggerPadNote(noteToFreq(5), 0.08f);   // D5
+            lastPadTime = 175.0f;
+        }
+
+        // Crystal rotation
+        crystalAngle += dt * 20.0f;
+    }
+
+    void updateEnvironment(float t) {
+        // Interpolate environment based on time
+        struct EnvKey { float time; float fog; float ambient; Vec3f sky; };
+        EnvKey keys[] = {
+            {0, 0.15f, 0.1f, Vec3f(0.02f, 0.02f, 0.03f)},
+            {30, 0.12f, 0.15f, Vec3f(0.03f, 0.03f, 0.06f)},
+            {60, 0.08f, 0.25f, Vec3f(0.05f, 0.03f, 0.08f)},
+            {90, 0.04f, 0.45f, Vec3f(0.08f, 0.06f, 0.15f)},
+            {120, 0.02f, 0.65f, Vec3f(0.15f, 0.12f, 0.25f)},
+            {150, 0.0f, 0.85f, Vec3f(0.3f, 0.25f, 0.4f)},
+            {175, 0.0f, 1.0f, Vec3f(0.8f, 0.75f, 0.9f)},
+            {180, 0.0f, 1.0f, Vec3f(1.0f, 1.0f, 1.0f)}
+        };
+
+        // Find surrounding keyframes
+        int prevIdx = 0;
+        for (int i = 0; i < 7; i++) {
+            if (keys[i+1].time <= t) prevIdx = i + 1;
+        }
+        int nextIdx = std::min(prevIdx + 1, 7);
+
+        float localT = 0;
+        if (prevIdx != nextIdx) {
+            localT = (t - keys[prevIdx].time) / (keys[nextIdx].time - keys[prevIdx].time);
+        }
+
+        fogDensity = lerpf(keys[prevIdx].fog, keys[nextIdx].fog, localT);
+        ambientIntensity = lerpf(keys[prevIdx].ambient, keys[nextIdx].ambient, localT);
+        skyColor.r = lerpf(keys[prevIdx].sky.x, keys[nextIdx].sky.x, localT);
+        skyColor.g = lerpf(keys[prevIdx].sky.y, keys[nextIdx].sky.y, localT);
+        skyColor.b = lerpf(keys[prevIdx].sky.z, keys[nextIdx].sky.z, localT);
+    }
+
+    void updateCamera(float t) {
+        // Find surrounding keyframes
+        int prevIdx = 0;
+        for (size_t i = 0; i < cameraKeys.size() - 1; i++) {
+            if (cameraKeys[i+1].time <= t) prevIdx = i + 1;
+        }
+        int nextIdx = std::min(prevIdx + 1, (int)cameraKeys.size() - 1);
+
+        float localT = 0;
+        if (prevIdx != nextIdx) {
+            localT = (t - cameraKeys[prevIdx].time) /
+                     (cameraKeys[nextIdx].time - cameraKeys[prevIdx].time);
+            localT = smoothstep(0, 1, localT); // Smooth interpolation
+        }
+
+        camPos = lerpVec(cameraKeys[prevIdx].position, cameraKeys[nextIdx].position, localT);
+        camTarget = lerpVec(cameraKeys[prevIdx].target, cameraKeys[nextIdx].target, localT);
+        fov = lerpf(cameraKeys[prevIdx].fov, cameraKeys[nextIdx].fov, localT);
+
+        nav().pos(camPos);
+        nav().faceToward(Vec3d(camTarget.x, camTarget.y, camTarget.z), Vec3d(0, 1, 0));
+    }
+
+    void updateParticles(float t, double dt, int act) {
+        for (auto& p : particles) {
+            Vec3f crystalPos = getCrystalPosition(p.index);
+
+            if (act == 1) {
+                // Brownian motion
+                p.vel.x += (rand() % 100 - 50) / 100.0f * 0.3f;
+                p.vel.y += (rand() % 100 - 50) / 100.0f * 0.3f;
+                p.vel.z += (rand() % 100 - 50) / 100.0f * 0.3f;
+                p.vel *= 0.98f;
+                p.pos += p.vel * dt * 2.0f;
+
+                // Keep in bounds
+                float maxR = 20.0f;
+                if (p.pos.mag() > maxR) {
+                    p.pos = p.pos.normalize() * maxR;
+                    p.vel *= -0.5f;
+                }
+            }
+            else if (act == 2) {
+                // Attraction to crystal positions
+                float actProgress = (t - 60.0f) / 60.0f; // 0 to 1 over Act 2
+                Vec3f toTarget = crystalPos - p.pos;
+                float attractStrength = actProgress * 0.03f;
+                p.vel += toTarget * attractStrength;
+                p.vel *= 0.96f;
+                p.pos += p.vel * dt;
+            }
+            else {
+                // Lock into crystal formation with rotation
+                float angleRad = crystalAngle * M_PI / 180.0f;
+                Vec3f rotatedPos(
+                    crystalPos.x * cos(angleRad) - crystalPos.z * sin(angleRad),
+                    crystalPos.y,
+                    crystalPos.x * sin(angleRad) + crystalPos.z * cos(angleRad)
+                );
+                p.pos = lerpVec(p.pos, rotatedPos, 0.08f);
+                p.vel *= 0.9f;
+            }
+
+            // Oscillating brightness
+            p.brightness = 0.5f + 0.3f * sin(t * 2.0f + p.phase);
+            p.brightness += smoothedAudio * 0.5f; // Audio reactive
+        }
+    }
+
+    // Audio trigger functions
+    void triggerNoiseTexture() {
+        auto* voice = noiseSynth.getVoice<NoiseVoice>();
+        voice->amplitude = 0.15f;
+        voice->cutoff = 150.0f;
+        noiseSynth.triggerOn(voice);
+        activeNoise = voice;
+    }
+
+    void triggerMelodyNote(float freq, float amp) {
+        auto* voice = melodySynth.getVoice<MelodyVoice>();
+        voice->setInternalParameterValue("frequency", freq);
+        voice->setInternalParameterValue("amplitude", amp);
+        melodySynth.triggerOn(voice);
+    }
+
+    void triggerPadNote(float freq, float amp) {
+        auto* voice = padSynth.getVoice<PadVoice>();
+        voice->setInternalParameterValue("frequency", freq);
+        voice->setInternalParameterValue("amplitude", amp);
+        padSynth.triggerOn(voice);
+    }
+
+    void triggerPercHit(float pitch, float amp) {
+        auto* voice = percSynth.getVoice<PercVoice>();
+        voice->setInternalParameterValue("pitch", pitch);
+        voice->setInternalParameterValue("amplitude", amp);
+        percSynth.triggerOn(voice);
+    }
+
+    void onDraw(Graphics& g) override {
+        // Clear with sky color
+        g.clear(skyColor);
+
+        g.depthTesting(true);
+        g.blending(true);
+        g.blendAdd();
+
+        float t = (float)time;
+        int act = (t < 60) ? 1 : (t < 120) ? 2 : 3;
+
+        // Draw particles
+        for (const auto& p : particles) {
+            g.pushMatrix();
+            g.translate(p.pos);
+
+            // Size based on act and audio
+            float size = 1.0f;
+            if (act == 3) size = 0.8f + smoothedAudio * 0.5f;
+
+            g.scale(size);
+
+            // Color based on hue and brightness
+            HSV hsv(p.hue, 0.7f, p.brightness * ambientIntensity);
+            Color c = hsv;
+            g.color(c.r, c.g, c.b, 0.8f);
+
+            g.draw(particleMesh);
+            g.popMatrix();
+        }
+
+        // Draw crystal core in Act 3
+        if (act == 3) {
+            float coreAlpha = smoothstep(120.0f, 130.0f, t);
+            if (coreAlpha > 0.01f) {
+                g.pushMatrix();
+                g.rotate(crystalAngle, 0, 1, 0);
+                g.rotate(crystalAngle * 0.3f, 1, 0, 0);
+
+                // Glowing core
+                float pulse = 1.0f + smoothedAudio * 2.0f;
+                g.color(0.6f * pulse, 0.5f * pulse, 0.8f * pulse, coreAlpha * 0.7f);
+                g.draw(crystalCoreMesh);
+                g.popMatrix();
+            }
+        }
+
+        // Draw fog effect as full-screen overlay
+        if (fogDensity > 0.001f) {
+            g.lighting(false);
+            g.pushMatrix();
+            g.loadIdentity();
+            g.blending(true);
+            g.blendTrans();
+            g.color(skyColor.r, skyColor.g, skyColor.b, fogDensity);
+            Mesh fogQuad;
+            fogQuad.primitive(Mesh::TRIANGLE_STRIP);
+            fogQuad.vertex(-1, -1, 0);
+            fogQuad.vertex(-1, 1, 0);
+            fogQuad.vertex(1, -1, 0);
+            fogQuad.vertex(1, 1, 0);
+            g.draw(fogQuad);
+            g.popMatrix();
+        }
+
+        // Fade to white in finale
+        if (t > 170.0f) {
+            float fadeAlpha = (t - 170.0f) / 10.0f;
+            fadeAlpha = std::min(fadeAlpha, 1.0f);
+            g.lighting(false);
+            g.pushMatrix();
+            g.loadIdentity();
+            g.blending(true);
+            g.blendTrans();
+            g.color(1, 1, 1, fadeAlpha);
+            Mesh fadeQuad;
+            fadeQuad.primitive(Mesh::TRIANGLE_STRIP);
+            fadeQuad.vertex(-1, -1, 0);
+            fadeQuad.vertex(-1, 1, 0);
+            fadeQuad.vertex(1, -1, 0);
+            fadeQuad.vertex(1, 1, 0);
+            g.draw(fadeQuad);
+            g.popMatrix();
+        }
+
+        // Progress bar
+        g.lighting(false);
+        g.blending(true);
+        g.blendTrans();
+        g.pushMatrix();
+        g.loadIdentity();
+        g.translate(-0.95f, -0.95f, 0);
+        float progress = t / DURATION;
+        g.color(0.5f, 0.6f, 0.9f, 0.5f);
+        Mesh bar;
+        bar.primitive(Mesh::TRIANGLE_STRIP);
+        bar.vertex(0, 0, 0);
+        bar.vertex(0, 0.02f, 0);
+        bar.vertex(1.9f * progress, 0, 0);
+        bar.vertex(1.9f * progress, 0.02f, 0);
+        g.draw(bar);
+        g.popMatrix();
+
+        // Act indicator
+        g.color(1, 1, 1, 0.5f);
+        // (Text would go here if we had text rendering)
+    }
+
+    void onSound(AudioIOData& io) override {
+        // Render all synths
+        noiseSynth.render(io);
+        melodySynth.render(io);
+        padSynth.render(io);
+        percSynth.render(io);
+
+        // Calculate audio level for visual feedback
+        float sum = 0;
+        float* outL = io.outBuffer(0);
+        for (unsigned int i = 0; i < io.framesPerBuffer(); i++) {
+            sum += outL[i] * outL[i];
+        }
+        audioLevel = sqrt(sum / io.framesPerBuffer());
+
+        // Master fade out in finale
+        if (time > 175.0) {
+            float fade = 1.0f - (time - 175.0f) / 5.0f;
+            fade = std::max(0.0f, fade);
+            float* out0 = io.outBuffer(0);
+            float* out1 = io.outBuffer(1);
+            for (unsigned int i = 0; i < io.framesPerBuffer(); i++) {
+                out0[i] *= fade;
+                out1[i] *= fade;
+            }
+        }
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case ' ':
+                playing = !playing;
+                std::cout << (playing ? "Playing" : "Paused") << std::endl;
+                break;
+            case 'r': case 'R':
+                time = 0;
+                playing = true;
+                lastNoiseTime = -10;
+                lastPercTime = -10;
+                lastMelodyTime = -10;
+                lastPadTime = -10;
+                crystalAngle = 0;
+                for (int i = 0; i < NUM_PARTICLES; i++) {
+                    resetParticle(particles[i], i);
+                }
+                triggerNoiseTexture();
+                std::cout << "Reset to beginning" << std::endl;
+                break;
+            case '1':
+                time = 0;
+                std::cout << "Jump to Act 1" << std::endl;
+                break;
+            case '2':
+                time = 60;
+                std::cout << "Jump to Act 2" << std::endl;
+                break;
+            case '3':
+                time = 120;
+                std::cout << "Jump to Act 3" << std::endl;
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    Emergence app;
+    app.configureAudio(48000, 512, 2, 0);
     app.start();
     return 0;
 }
