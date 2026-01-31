@@ -2,17 +2,42 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useSequencerStore, type ClipInstance, type ParameterLaneConfig, type SequencerClip, type SequencerNote } from '@/stores/sequencer'
 
+// Props for embedded mode (inside Timeline)
+const props = withDefaults(defineProps<{
+  embedded?: boolean        // When true, hide ruler and use external viewport
+  zoom?: number            // External zoom (pixels per second)
+  scrollX?: number         // External horizontal scroll
+  headerWidth?: number     // External header width to match
+}>(), {
+  embedded: false,
+  zoom: undefined,
+  scrollX: undefined,
+  headerWidth: undefined,
+})
+
 const sequencer = useSequencerStore()
 const canvasRef = ref<HTMLCanvasElement>()
 const containerRef = ref<HTMLDivElement>()
 let animFrameId: number | null = null
 
-// Layout constants
-const RULER_H = 24
+// Emits
+const emit = defineEmits<{
+  (e: 'open-lattice'): void
+}>()
+
+// Context menu state
+const contextMenu = ref<{ x: number; y: number; clip: SequencerClip | null; instance: ClipInstance | null } | null>(null)
+
+// Layout constants - ruler height is 0 when embedded (uses main timeline ruler)
+const RULER_H = computed(() => props.embedded ? 0 : 24)
 const BASE_TRACK_H = 48       // main clip lane height per track
 const AUTO_LANE_H = 40        // expanded automation lane height
 const AUTO_COLLAPSED_H = 16   // collapsed automation lane header
-const HEADER_W = 80
+const HEADER_W = computed(() => props.headerWidth ?? 80)
+
+// Viewport - use props when embedded, otherwise use sequencer viewport
+const viewZoom = computed(() => props.zoom ?? sequencer.viewport.zoomX)
+const viewScrollX = computed(() => props.scrollX ?? sequencer.viewport.scrollX)
 
 // Interaction state
 const isDragging = ref(false)
@@ -39,12 +64,12 @@ const dropTargetTime = ref<number>(0)
 // ── Dynamic track height helpers ─────────────────────────────────────
 
 function getTrackY(trackIndex: number): number {
-  return sequencer.getTrackYOffset(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H, RULER_H) - sequencer.viewport.scrollY
+  return sequencer.getTrackYOffset(trackIndex, BASE_TRACK_H, AUTO_LANE_H, AUTO_COLLAPSED_H, RULER_H.value) - sequencer.viewport.scrollY
 }
 
 function getTotalContentHeight(): number {
   const trackCount = Math.max(sequencer.arrangementTracks.length, 4)
-  let h = RULER_H
+  let h = RULER_H.value
   for (let i = 0; i < trackCount; i++) {
     h += getTrackHeight(i)
   }
@@ -56,7 +81,7 @@ function getTrackHeight(trackIndex: number): number {
 }
 
 function trackIndexFromY(y: number): number {
-  if (y < RULER_H) return -1
+  if (y < RULER_H.value) return -1
   const trackCount = Math.max(sequencer.arrangementTracks.length, 4)
   for (let i = 0; i < trackCount; i++) {
     const ty = getTrackY(i)
@@ -91,11 +116,11 @@ function getAutomationLaneAtY(y: number, trackIndex: number):
 // ── Coordinate transforms ───────────────────────────────────────────
 
 function timeToX(t: number): number {
-  return HEADER_W + (t - sequencer.viewport.scrollX) * sequencer.viewport.zoomX
+  return HEADER_W.value + (t - viewScrollX.value) * viewZoom.value
 }
 
 function xToTime(x: number): number {
-  return (x - HEADER_W) / sequencer.viewport.zoomX + sequencer.viewport.scrollX
+  return (x - HEADER_W.value) / viewZoom.value + viewScrollX.value
 }
 
 // ── Hit testing ─────────────────────────────────────────────────────
@@ -111,7 +136,7 @@ function getInstanceAtPoint(x: number, y: number): { instance: ClipInstance; edg
     if (!clip) continue
 
     const instX = timeToX(inst.startTime)
-    const instW = clip.duration * sequencer.viewport.zoomX
+    const instW = clip.duration * viewZoom.value
     const instY = getTrackY(inst.trackIndex)
 
     if (x >= instX && x <= instX + instW && y >= instY && y <= instY + BASE_TRACK_H) {
@@ -143,7 +168,7 @@ function getNoteBarAtPoint(
       const normalized = Math.max(0, Math.min(1, (paramValue - lane.min) / range))
 
       const barX = timeToX(inst.startTime + note.startTime)
-      const barW = Math.max(note.duration * sequencer.viewport.zoomX, 4)
+      const barW = Math.max(note.duration * viewZoom.value, 4)
       const barCenterY = laneTop + laneH * (1 - normalized)
 
       if (x >= barX && x <= barX + barW && Math.abs(y - barCenterY) <= HIT_TOLERANCE) {
@@ -164,7 +189,8 @@ function draw() {
 
   const w = canvas.width
   const h = canvas.height
-  const vp = sequencer.viewport
+  const zoomX = viewZoom.value
+  const scrollX = viewScrollX.value
   const trackCount = Math.max(sequencer.arrangementTracks.length, 4)
 
   // Clear
@@ -174,13 +200,13 @@ function draw() {
   // ── Beat/bar grid calculation ─────────────────────────────────
   const beatDur = 60 / sequencer.bpm
   const barDur = beatDur * 4
-  const visibleStart = vp.scrollX
-  const visibleEnd = vp.scrollX + (w - HEADER_W) / vp.zoomX
+  const visibleStart = scrollX
+  const visibleEnd = scrollX + (w - HEADER_W.value) / zoomX
 
   let gridInterval = beatDur
-  if (vp.zoomX * beatDur < 8) {
+  if (zoomX * beatDur < 8) {
     gridInterval = barDur
-  } else if (vp.zoomX * beatDur > 60) {
+  } else if (zoomX * beatDur > 60) {
     gridInterval = beatDur / 4
   }
 
@@ -192,13 +218,13 @@ function draw() {
 
     // Main clip lane background
     ctx.fillStyle = i % 2 === 0 ? '#111827' : '#0f172a'
-    ctx.fillRect(HEADER_W, ty, w - HEADER_W, BASE_TRACK_H)
+    ctx.fillRect(HEADER_W.value, ty, w - HEADER_W.value, BASE_TRACK_H)
 
     // Main lane border
     ctx.strokeStyle = '#1e293b'
     ctx.lineWidth = 0.5
     ctx.beginPath()
-    ctx.moveTo(HEADER_W, ty + BASE_TRACK_H + 0.5)
+    ctx.moveTo(HEADER_W.value, ty + BASE_TRACK_H + 0.5)
     ctx.lineTo(w, ty + BASE_TRACK_H + 0.5)
     ctx.stroke()
 
@@ -213,25 +239,25 @@ function draw() {
         if (lane.collapsed) {
           // Collapsed lane: just a thin header
           ctx.fillStyle = '#0a0f18'
-          ctx.fillRect(HEADER_W, laneY, w - HEADER_W, AUTO_COLLAPSED_H)
+          ctx.fillRect(HEADER_W.value, laneY, w - HEADER_W.value, AUTO_COLLAPSED_H)
 
           // Border
           ctx.strokeStyle = '#1e293b'
           ctx.lineWidth = 0.5
           ctx.beginPath()
-          ctx.moveTo(HEADER_W, laneY + AUTO_COLLAPSED_H + 0.5)
+          ctx.moveTo(HEADER_W.value, laneY + AUTO_COLLAPSED_H + 0.5)
           ctx.lineTo(w, laneY + AUTO_COLLAPSED_H + 0.5)
           ctx.stroke()
         } else {
           // Expanded lane background
           ctx.fillStyle = li % 2 === 0 ? '#0c1322' : '#0a101c'
-          ctx.fillRect(HEADER_W, laneY, w - HEADER_W, AUTO_LANE_H)
+          ctx.fillRect(HEADER_W.value, laneY, w - HEADER_W.value, AUTO_LANE_H)
 
           // Grid lines within lane
           const gridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
           for (let t = gridStart; t <= visibleEnd; t += gridInterval) {
             const gx = Math.round(timeToX(t)) + 0.5
-            if (gx < HEADER_W) continue
+            if (gx < HEADER_W.value) continue
             const isBar = Math.abs(t % barDur) < 0.001
             ctx.strokeStyle = isBar ? '#1e293b' : '#141c2b'
             ctx.lineWidth = isBar ? 0.5 : 0.25
@@ -249,7 +275,7 @@ function draw() {
             ctx.lineWidth = 0.5
             ctx.setLineDash([2, 2])
             ctx.beginPath()
-            ctx.moveTo(HEADER_W, zeroY)
+            ctx.moveTo(HEADER_W.value, zeroY)
             ctx.lineTo(w, zeroY)
             ctx.stroke()
             ctx.setLineDash([])
@@ -267,7 +293,7 @@ function draw() {
           ctx.strokeStyle = '#1e293b'
           ctx.lineWidth = 0.5
           ctx.beginPath()
-          ctx.moveTo(HEADER_W, laneY + AUTO_LANE_H + 0.5)
+          ctx.moveTo(HEADER_W.value, laneY + AUTO_LANE_H + 0.5)
           ctx.lineTo(w, laneY + AUTO_LANE_H + 0.5)
           ctx.stroke()
         }
@@ -281,14 +307,14 @@ function draw() {
   const gridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
   for (let t = gridStart; t <= visibleEnd; t += gridInterval) {
     const x = Math.round(timeToX(t)) + 0.5
-    if (x < HEADER_W) continue
+    if (x < HEADER_W.value) continue
 
     const isBar = Math.abs(t % barDur) < 0.001
     ctx.strokeStyle = isBar ? '#334155' : '#1e293b'
     ctx.lineWidth = isBar ? 1 : 0.5
     ctx.beginPath()
-    ctx.moveTo(x, RULER_H)
-    ctx.lineTo(x, RULER_H + BASE_TRACK_H * trackCount) // only through clip lanes
+    ctx.moveTo(x, RULER_H.value)
+    ctx.lineTo(x, RULER_H.value + BASE_TRACK_H * trackCount) // only through clip lanes
     ctx.stroke()
   }
 
@@ -298,17 +324,17 @@ function draw() {
     const lx2 = timeToX(sequencer.loopEnd)
     ctx.fillStyle = 'rgba(59, 130, 246, 0.08)'
     ctx.fillRect(
-      Math.max(lx1, HEADER_W), RULER_H,
-      Math.min(lx2, w) - Math.max(lx1, HEADER_W), h - RULER_H
+      Math.max(lx1, HEADER_W.value), RULER_H.value,
+      Math.min(lx2, w) - Math.max(lx1, HEADER_W.value), h - RULER_H.value
     )
 
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 2
     ctx.setLineDash([4, 4])
     for (const lx of [lx1, lx2]) {
-      if (lx >= HEADER_W && lx <= w) {
+      if (lx >= HEADER_W.value && lx <= w) {
         ctx.beginPath()
-        ctx.moveTo(lx, RULER_H)
+        ctx.moveTo(lx, RULER_H.value)
         ctx.lineTo(lx, h)
         ctx.stroke()
       }
@@ -322,19 +348,19 @@ function draw() {
     if (!clip) continue
 
     const x = timeToX(inst.startTime)
-    const clipW = clip.duration * vp.zoomX
+    const clipW = clip.duration * zoomX
     const y = getTrackY(inst.trackIndex) + 2
     const clipH = BASE_TRACK_H - 4
 
     // Skip if offscreen
-    if (x + clipW < HEADER_W || x > w) continue
+    if (x + clipW < HEADER_W.value || x > w) continue
 
     const isSelected = sequencer.selectedClipInstanceIds.has(inst.id)
     const isHovered = hoveredInstance.value?.id === inst.id
     const isActive = sequencer.activeClipId === clip.id
 
     // Clip body
-    const clampedX = Math.max(x, HEADER_W)
+    const clampedX = Math.max(x, HEADER_W.value)
     const clampedW = Math.min(x + clipW, w) - clampedX
 
     ctx.fillStyle = isSelected
@@ -382,7 +408,7 @@ function draw() {
 
   // ── Track headers (left sidebar) ────────────────────────────────
   ctx.fillStyle = '#0d1117'
-  ctx.fillRect(0, RULER_H, HEADER_W, h - RULER_H)
+  ctx.fillRect(0, RULER_H.value, HEADER_W.value, h - RULER_H.value)
 
   for (let i = 0; i < trackCount; i++) {
     const ty = getTrackY(i)
@@ -392,14 +418,14 @@ function draw() {
 
     // Track header background (spans full track height)
     ctx.fillStyle = i % 2 === 0 ? '#111827' : '#0f172a'
-    ctx.fillRect(0, ty, HEADER_W, totalH)
+    ctx.fillRect(0, ty, HEADER_W.value, totalH)
 
     // Bottom border
     ctx.strokeStyle = '#1e293b'
     ctx.lineWidth = 0.5
     ctx.beginPath()
     ctx.moveTo(0, ty + totalH + 0.5)
-    ctx.lineTo(HEADER_W, ty + totalH + 0.5)
+    ctx.lineTo(HEADER_W.value, ty + totalH + 0.5)
     ctx.stroke()
 
     if (track) {
@@ -407,11 +433,11 @@ function draw() {
       ctx.fillStyle = '#d1d5db'
       ctx.font = '10px sans-serif'
       ctx.textBaseline = 'middle'
-      ctx.fillText(track.name, 4, ty + BASE_TRACK_H / 2 - 6, HEADER_W - 36)
+      ctx.fillText(track.name, 4, ty + BASE_TRACK_H / 2 - 6, HEADER_W.value - 36)
 
       // Delete button (X) - shown on hover
-      if (hoveredTrackHeaderIndex.value === i && ty >= RULER_H) {
-        const delX = HEADER_W - 18
+      if (hoveredTrackHeaderIndex.value === i && ty >= RULER_H.value) {
+        const delX = HEADER_W.value - 18
         const delY = ty + 4
         const delSize = 12
 
@@ -446,7 +472,7 @@ function draw() {
       // Expand toggle triangle (bottom-right area of clip lane header)
       const hasClips = sequencer.clipInstances.some(ci => ci.trackIndex === i)
       if (hasClips) {
-        const triX = HEADER_W - 14
+        const triX = HEADER_W.value - 14
         const triY = ty + BASE_TRACK_H - 14
         ctx.fillStyle = track.expanded ? '#60a5fa' : '#6b7280'
         ctx.beginPath()
@@ -467,7 +493,7 @@ function draw() {
 
       // Color stripe (spans full height)
       ctx.fillStyle = track.color
-      ctx.fillRect(HEADER_W - 3, ty, 3, totalH)
+      ctx.fillRect(HEADER_W.value - 3, ty, 3, totalH)
 
       // Automation lane headers in gutter
       if (track.expanded && track.automationLanes.length > 0) {
@@ -480,12 +506,12 @@ function draw() {
           ctx.lineWidth = 0.5
           ctx.beginPath()
           ctx.moveTo(0, laneY + 0.5)
-          ctx.lineTo(HEADER_W, laneY + 0.5)
+          ctx.lineTo(HEADER_W.value, laneY + 0.5)
           ctx.stroke()
 
           // Lane background in gutter
           ctx.fillStyle = '#0a0f18'
-          ctx.fillRect(0, laneY, HEADER_W - 3, laneH)
+          ctx.fillRect(0, laneY, HEADER_W.value - 3, laneH)
 
           if (lane.collapsed) {
             // Collapsed: right-pointing triangle + name
@@ -500,7 +526,7 @@ function draw() {
             ctx.fillStyle = '#6b7280'
             ctx.font = '8px sans-serif'
             ctx.textBaseline = 'middle'
-            ctx.fillText(lane.paramName, 14, laneY + AUTO_COLLAPSED_H / 2, HEADER_W - 20)
+            ctx.fillText(lane.paramName, 14, laneY + AUTO_COLLAPSED_H / 2, HEADER_W.value - 20)
           } else {
             // Expanded: down-pointing triangle + name + range
             ctx.fillStyle = '#60a5fa'
@@ -514,7 +540,7 @@ function draw() {
             ctx.fillStyle = '#9ca3af'
             ctx.font = '9px sans-serif'
             ctx.textBaseline = 'top'
-            ctx.fillText(lane.paramName, 14, laneY + 3, HEADER_W - 20)
+            ctx.fillText(lane.paramName, 14, laneY + 3, HEADER_W.value - 20)
 
             // Min/max range
             ctx.fillStyle = '#4b5563'
@@ -535,51 +561,53 @@ function draw() {
   ctx.strokeStyle = '#1e293b'
   ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.moveTo(HEADER_W + 0.5, RULER_H)
-  ctx.lineTo(HEADER_W + 0.5, h)
+  ctx.moveTo(HEADER_W.value + 0.5, RULER_H.value)
+  ctx.lineTo(HEADER_W.value + 0.5, h)
   ctx.stroke()
 
-  // ── Time ruler ──────────────────────────────────────────────────
-  ctx.fillStyle = '#111827'
-  ctx.fillRect(0, 0, w, RULER_H)
+  // ── Time ruler (only when not embedded - parent timeline has its own ruler) ──
+  if (!props.embedded) {
+    ctx.fillStyle = '#111827'
+    ctx.fillRect(0, 0, w, RULER_H.value)
 
-  ctx.strokeStyle = '#1e293b'
-  ctx.beginPath()
-  ctx.moveTo(0, RULER_H + 0.5)
-  ctx.lineTo(w, RULER_H + 0.5)
-  ctx.stroke()
-
-  // Time labels
-  ctx.fillStyle = '#9ca3af'
-  ctx.font = '10px monospace'
-  ctx.textBaseline = 'top'
-
-  const rulerGridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
-  for (let t = rulerGridStart; t <= visibleEnd; t += gridInterval) {
-    const x = timeToX(t)
-    if (x < HEADER_W) continue
-
-    const isBar = Math.abs(t % barDur) < 0.001
-    if (isBar || vp.zoomX * gridInterval > 30) {
-      let label: string
-      if (sequencer.timeDisplay === 'beats') {
-        const beat = t / beatDur
-        const bar = Math.floor(beat / 4) + 1
-        const beatInBar = Math.floor(beat % 4) + 1
-        label = `${bar}.${beatInBar}`
-      } else {
-        label = t.toFixed(1) + 's'
-      }
-      ctx.fillStyle = isBar ? '#d1d5db' : '#6b7280'
-      ctx.fillText(label, x + 3, 4)
-    }
-
-    ctx.strokeStyle = isBar ? '#4b5563' : '#374151'
-    ctx.lineWidth = 1
+    ctx.strokeStyle = '#1e293b'
     ctx.beginPath()
-    ctx.moveTo(Math.round(x) + 0.5, RULER_H - 6)
-    ctx.lineTo(Math.round(x) + 0.5, RULER_H)
+    ctx.moveTo(0, RULER_H.value + 0.5)
+    ctx.lineTo(w, RULER_H.value + 0.5)
     ctx.stroke()
+
+    // Time labels
+    ctx.fillStyle = '#9ca3af'
+    ctx.font = '10px monospace'
+    ctx.textBaseline = 'top'
+
+    const rulerGridStart = Math.max(0, Math.floor(visibleStart / gridInterval) * gridInterval)
+    for (let t = rulerGridStart; t <= visibleEnd; t += gridInterval) {
+      const x = timeToX(t)
+      if (x < HEADER_W.value) continue
+
+      const isBar = Math.abs(t % barDur) < 0.001
+      if (isBar || zoomX * gridInterval > 30) {
+        let label: string
+        if (sequencer.timeDisplay === 'beats') {
+          const beat = t / beatDur
+          const bar = Math.floor(beat / 4) + 1
+          const beatInBar = Math.floor(beat % 4) + 1
+          label = `${bar}.${beatInBar}`
+        } else {
+          label = t.toFixed(1) + 's'
+        }
+        ctx.fillStyle = isBar ? '#d1d5db' : '#6b7280'
+        ctx.fillText(label, x + 3, 4)
+      }
+
+      ctx.strokeStyle = isBar ? '#4b5563' : '#374151'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(Math.round(x) + 0.5, RULER_H.value - 6)
+      ctx.lineTo(Math.round(x) + 0.5, RULER_H.value)
+      ctx.stroke()
+    }
   }
 
   // ── Drop indicator ──────────────────────────────────────────────
@@ -589,7 +617,7 @@ function draw() {
 
     // Highlight target track lane
     ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'
-    ctx.fillRect(HEADER_W, dropY, w - HEADER_W, BASE_TRACK_H)
+    ctx.fillRect(HEADER_W.value, dropY, w - HEADER_W.value, BASE_TRACK_H)
 
     // Drop position line
     ctx.strokeStyle = '#3b82f6'
@@ -604,7 +632,7 @@ function draw() {
 
   // ── Playback cursor ─────────────────────────────────────────────
   const cursorX = timeToX(sequencer.playheadPosition)
-  if (cursorX >= HEADER_W && cursorX <= w) {
+  if (cursorX >= HEADER_W.value && cursorX <= w) {
     ctx.strokeStyle = sequencer.transport === 'playing' ? '#22c55e' : '#ef4444'
     ctx.lineWidth = 1.5
     ctx.beginPath()
@@ -622,17 +650,19 @@ function draw() {
     ctx.fill()
   }
 
-  // Corner block
-  ctx.fillStyle = '#111827'
-  ctx.fillRect(0, 0, HEADER_W, RULER_H)
-  ctx.strokeStyle = '#1e293b'
-  ctx.strokeRect(0, 0, HEADER_W, RULER_H)
+  // Corner block (only when not embedded)
+  if (!props.embedded) {
+    ctx.fillStyle = '#111827'
+    ctx.fillRect(0, 0, HEADER_W.value, RULER_H.value)
+    ctx.strokeStyle = '#1e293b'
+    ctx.strokeRect(0, 0, HEADER_W.value, RULER_H.value)
 
-  // BPM in corner
-  ctx.fillStyle = '#6b7280'
-  ctx.font = '9px monospace'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(`${sequencer.bpm} BPM`, 4, RULER_H / 2)
+    // BPM in corner
+    ctx.fillStyle = '#6b7280'
+    ctx.font = '9px monospace'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(`${sequencer.bpm} BPM`, 4, RULER_H.value / 2)
+  }
 }
 
 function drawNoteParamBars(
@@ -649,7 +679,7 @@ function drawNoteParamBars(
 
   const clipStartX = timeToX(inst.startTime)
   const clipEndX = timeToX(inst.startTime + clip.duration)
-  const leftBound = Math.max(clipStartX, HEADER_W)
+  const leftBound = Math.max(clipStartX, HEADER_W.value)
   const rightBound = Math.min(clipEndX, canvasW)
   if (leftBound >= rightBound) return
 
@@ -666,7 +696,7 @@ function drawNoteParamBars(
     const normalized = Math.max(0, Math.min(1, (paramValue - lane.min) / range))
 
     const barX = timeToX(inst.startTime + note.startTime)
-    const barW = Math.max(note.duration * sequencer.viewport.zoomX, 4)
+    const barW = Math.max(note.duration * viewZoom.value, 4)
     const barCenterY = laneTop + laneH * (1 - normalized)
     const barY = barCenterY - BAR_H / 2
 
@@ -752,7 +782,7 @@ function handleMouseDown(e: MouseEvent) {
   const y = (e.clientY - rect.top) * (canvas.height / rect.height)
 
   // Click on time ruler → set playhead
-  if (y < RULER_H) {
+  if (y < RULER_H.value) {
     const t = xToTime(x)
     sequencer.setPosition(Math.max(0, t))
     return
@@ -762,14 +792,14 @@ function handleMouseDown(e: MouseEvent) {
   if (trackIdx < 0) return
 
   // Click in header area
-  if (x < HEADER_W) {
+  if (x < HEADER_W.value) {
     const track = sequencer.arrangementTracks[trackIdx]
     if (!track) return
 
     const ty = getTrackY(trackIdx)
 
     // Check if click is on delete button
-    const delX = HEADER_W - 18
+    const delX = HEADER_W.value - 18
     const delY = ty + 4
     const delSize = 12
     if (x >= delX && x <= delX + delSize + 4 && y >= delY && y <= delY + delSize + 4 && isYInClipArea(y, trackIdx)) {
@@ -780,7 +810,7 @@ function handleMouseDown(e: MouseEvent) {
     }
 
     // Check if click is on expand toggle triangle
-    const triX = HEADER_W - 14
+    const triX = HEADER_W.value - 14
     const triY = ty + BASE_TRACK_H - 14
     if (x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10) {
       sequencer.toggleTrackExpanded(trackIdx)
@@ -881,24 +911,24 @@ function handleMouseMove(e: MouseEvent) {
     // Update cursor and hover state
     const trackIdx = trackIndexFromY(y)
 
-    if (y < RULER_H) {
+    if (y < RULER_H.value) {
       canvas.style.cursor = 'pointer'
       hoveredInstance.value = null
       hoveredTrackHeaderIndex.value = -1
-    } else if (x < HEADER_W) {
+    } else if (x < HEADER_W.value) {
       // Check for expand toggle or automation lane collapse
       const track = trackIdx >= 0 ? sequencer.arrangementTracks[trackIdx] : null
       if (track) {
         const ty = getTrackY(trackIdx)
 
         // Check if hovering over delete button area
-        const delX = HEADER_W - 18
+        const delX = HEADER_W.value - 18
         const delY = ty + 4
         const delSize = 12
         const isOverDelete = x >= delX && x <= delX + delSize + 4 && y >= delY && y <= delY + delSize + 4
 
         // Check expand toggle
-        const triX = HEADER_W - 14
+        const triX = HEADER_W.value - 14
         const triY = ty + BASE_TRACK_H - 14
         const isOverExpand = x >= triX && x <= triX + 10 && y >= triY && y <= triY + 10
 
@@ -969,7 +999,7 @@ function handleMouseMove(e: MouseEvent) {
   }
 
   if (dragMode.value === 'move' && dragTarget.value) {
-    const dt = (x - dragStartX.value) / sequencer.viewport.zoomX
+    const dt = (x - dragStartX.value) / viewZoom.value
     const newTime = Math.max(0, sequencer.snapTime(dragOriginalStartTime.value + dt))
     const newTrackIdx = trackIndexFromY(y)
 
@@ -1012,7 +1042,7 @@ function handleDblClick(e: MouseEvent) {
   const x = (e.clientX - rect.left) * (canvas.width / rect.width)
   const y = (e.clientY - rect.top) * (canvas.height / rect.height)
 
-  if (y < RULER_H || x < HEADER_W) return
+  if (y < RULER_H.value || x < HEADER_W.value) return
 
   const hit = getInstanceAtPoint(x, y)
   if (hit) {
@@ -1025,10 +1055,111 @@ function handleDblClick(e: MouseEvent) {
   }
 }
 
+// ── Context Menu ─────────────────────────────────────────────────────
+function handleContextMenu(e: MouseEvent) {
+  const canvas = canvasRef.value
+  if (!canvas) return
+
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+
+  // Check if right-clicked on a clip instance
+  const hit = getInstanceAtPoint(x, y)
+  if (hit) {
+    const clip = sequencer.clips.find(c => c.id === hit.instance.clipId)
+    contextMenu.value = {
+      x: e.clientX,
+      y: e.clientY,
+      clip: clip || null,
+      instance: hit.instance,
+    }
+    // Select the clip
+    if (clip) {
+      sequencer.setActiveClip(clip.id)
+    }
+  } else {
+    // Right-click on empty area - show general menu
+    contextMenu.value = {
+      x: e.clientX,
+      y: e.clientY,
+      clip: null,
+      instance: null,
+    }
+  }
+}
+
+function closeContextMenu() {
+  contextMenu.value = null
+}
+
+function openLatticeEditor() {
+  closeContextMenu()
+  emit('open-lattice')
+}
+
+function editClipInRoll() {
+  closeContextMenu()
+  if (contextMenu.value?.clip) {
+    sequencer.setActiveClip(contextMenu.value.clip.id)
+    sequencer.viewMode = 'frequencyRoll'
+  }
+}
+
+function deleteSelectedClip() {
+  closeContextMenu()
+  if (contextMenu.value?.instance) {
+    sequencer.removeClipInstance(contextMenu.value.instance.id)
+    requestDraw()
+  }
+}
+
+function duplicateClip() {
+  closeContextMenu()
+  if (contextMenu.value?.instance) {
+    const inst = contextMenu.value.instance
+    // Add a new instance of the same clip, offset by the clip duration
+    const clip = sequencer.clips.find(c => c.id === inst.clipId)
+    if (clip) {
+      const duration = clip.duration || 4
+      sequencer.addClipInstance(clip.id, inst.trackIndex, inst.startTime + duration)
+      requestDraw()
+    }
+  }
+}
+
+// Close context menu on click outside
+function handleGlobalClick() {
+  if (contextMenu.value) {
+    closeContextMenu()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleGlobalClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleGlobalClick)
+})
+
 function handleWheel(e: WheelEvent) {
   e.preventDefault()
   const canvas = canvasRef.value
   if (!canvas) return
+
+  // When embedded, only handle vertical scroll (let parent handle zoom/horizontal)
+  if (props.embedded) {
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      sequencer.viewport.scrollY += e.deltaY
+      const totalHeight = getTotalContentHeight()
+      const visibleHeight = canvas.height
+      const maxScrollY = Math.max(0, totalHeight - visibleHeight + 50)
+      sequencer.viewport.scrollY = Math.max(0, Math.min(maxScrollY, sequencer.viewport.scrollY))
+      requestDraw()
+    }
+    return
+  }
 
   const rect = canvas.getBoundingClientRect()
   const x = (e.clientX - rect.left) * (canvas.width / rect.width)
@@ -1038,7 +1169,7 @@ function handleWheel(e: WheelEvent) {
     const factor = e.deltaY > 0 ? 0.9 : 1.1
     const timeAtCursor = xToTime(x)
     sequencer.viewport.zoomX = Math.max(10, Math.min(500, sequencer.viewport.zoomX * factor))
-    sequencer.viewport.scrollX = timeAtCursor - (x - HEADER_W) / sequencer.viewport.zoomX
+    sequencer.viewport.scrollX = timeAtCursor - (x - HEADER_W.value) / sequencer.viewport.zoomX
   } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
     // Horizontal scroll (shift+wheel or trackpad horizontal swipe)
     const delta = e.shiftKey ? e.deltaY : e.deltaX
@@ -1142,22 +1273,15 @@ function handleExternalDrop(e: DragEvent) {
   const clip = sequencer.loadClipFromFile(filePath)
   if (!clip) return
 
-  // Validate synth name matches track if track has a synthName set
+  // Use the track the user dropped on - assign the track's synth to match the clip if needed
   const track = sequencer.arrangementTracks[trackIdx]
-  if (track && track.synthName && clip.synthName !== track.synthName) {
-    // Find the correct track for this clip's synth
-    const correctTrack = sequencer.arrangementTracks.findIndex(t => t.synthName === clip.synthName)
-    if (correctTrack >= 0) {
-      sequencer.addClipInstance(clip.id, correctTrack, dropTime)
-    } else {
-      // Create a track for this synth
-      const newTrack = sequencer.ensureSynthTrack(clip.synthName)
-      const newTrackIdx = sequencer.arrangementTracks.indexOf(newTrack)
-      sequencer.addClipInstance(clip.id, newTrackIdx, dropTime)
-    }
-  } else {
-    sequencer.addClipInstance(clip.id, trackIdx, dropTime)
+  if (track && !track.synthName) {
+    // Track has no synth assigned yet, assign the clip's synth to it
+    track.synthName = clip.synthName
   }
+
+  // Add the clip instance to the dropped track
+  sequencer.addClipInstance(clip.id, trackIdx, dropTime)
 
   sequencer.setActiveClip(clip.id)
   requestDraw()
@@ -1232,7 +1356,105 @@ watch(() => [sequencer.clipInstances, sequencer.clips, sequencer.arrangementTrac
       @dragover.prevent="handleExternalDragOver"
       @dragleave="handleExternalDragLeave"
       @drop.prevent="handleExternalDrop"
-      @contextmenu.prevent
+      @contextmenu.prevent="handleContextMenu"
     />
+
+    <!-- Context Menu -->
+    <div
+      v-if="contextMenu"
+      class="context-menu"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      @mousedown.stop
+    >
+      <template v-if="contextMenu.clip">
+        <div class="context-header">{{ contextMenu.clip.name }}</div>
+        <button class="context-item" @click="editClipInRoll">
+          <span class="context-icon">♪</span>
+          Edit in Frequency Roll
+        </button>
+        <button class="context-item" @click="openLatticeEditor">
+          <span class="context-icon">◇</span>
+          Edit in Lattice
+        </button>
+        <div class="context-divider" />
+        <button class="context-item" @click="duplicateClip">
+          <span class="context-icon">⧉</span>
+          Duplicate Clip
+        </button>
+        <button class="context-item context-danger" @click="deleteSelectedClip">
+          <span class="context-icon">✕</span>
+          Delete Instance
+        </button>
+      </template>
+      <template v-else>
+        <div class="context-header">Timeline</div>
+        <button class="context-item" @click="openLatticeEditor">
+          <span class="context-icon">◇</span>
+          Open Lattice Editor
+        </button>
+      </template>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #252538;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.context-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 4px;
+}
+
+.context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.context-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.context-item.context-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.context-icon {
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.context-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 8px;
+}
+</style>

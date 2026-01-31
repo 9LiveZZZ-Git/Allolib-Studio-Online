@@ -7,6 +7,7 @@
 
 import { parameterSystem } from '@/utils/parameter-system'
 import { useSettingsStore } from '@/stores/settings'
+import { objectManagerBridge } from '@/services/objectManager'
 
 export interface RuntimeConfig {
   canvas: HTMLCanvasElement
@@ -435,6 +436,9 @@ export class AllolibRuntime {
       // This enables the Vue ParameterPanel to show and control parameters
       if (this.module) {
         parameterSystem.connectWasm(this.module)
+
+        // Connect the object manager bridge for timeline object sync
+        objectManagerBridge.connect(this.module)
       }
 
       // Apply initial settings from the settings store
@@ -473,8 +477,9 @@ export class AllolibRuntime {
 
     this.isRunning = false
 
-    // Disconnect parameter system
+    // Disconnect parameter system and object manager
     parameterSystem.disconnectWasm()
+    objectManagerBridge.disconnect()
 
     // Stop the AlloLib app
     if (this.module?._allolib_stop) {
@@ -606,14 +611,33 @@ export class AllolibRuntime {
   }
 
   destroy(): void {
+    // Save module reference before nulling
+    const moduleRef = this.module
+
+    // Call stop first while module is still valid
     this.stop()
-    this.cleanup()
+
+    // Now null out window.Module to stop Emscripten event handlers
+    // from calling into WASM (they typically check Module before proceeding)
+    this.module = null
+    window.Module = null as any
+
+    // Call destroy on the saved module reference
+    if (moduleRef?._allolib_destroy) {
+      try {
+        moduleRef._allolib_destroy()
+      } catch (error) {
+        console.warn('Destroy error:', error)
+      }
+    }
 
     // Close audio context
     if (window.alloAudioContext) {
       window.alloAudioContext.close()
       window.alloAudioContext = null
     }
+
+    this.onPrint('[INFO] Runtime destroyed')
   }
 
   get running(): boolean {

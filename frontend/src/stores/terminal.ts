@@ -976,8 +976,8 @@ export const useTerminalStore = defineStore('terminal', () => {
         stop: () => { executeScriptLine('stop') },
       },
 
-      // Sequencer operations
-      seq: {
+      // Timeline operations (tl is the canonical name, seq is alias)
+      tl: {
         get bpm() { return sequencer.bpm },
         set bpm(v: number) { sequencer.bpm = v },
         get currentTime() { return sequencer.currentTime },
@@ -989,6 +989,10 @@ export const useTerminalStore = defineStore('terminal', () => {
         get tracks() { return sequencer.tracks },
         get clips() { return sequencer.clips },
         get synths() { return sequencer.availableSynths },
+        get viewMode() { return sequencer.viewMode },
+        set viewMode(v: string) { sequencer.viewMode = v as any },
+        get editMode() { return sequencer.editMode },
+        set editMode(v: string) { sequencer.editMode = v as any },
         addNote: (clipId: string, freq: number, time: number, dur: number, amp = 0.5) => {
           const clip = sequencer.clips.find(c => c.id === clipId)
           if (clip) {
@@ -1003,6 +1007,8 @@ export const useTerminalStore = defineStore('terminal', () => {
           }
         },
       },
+      // seq is alias for tl (backwards compatibility)
+      get seq() { return this.tl },
 
       // Environment
       env: { ...env.value },
@@ -1745,17 +1751,19 @@ export const useTerminalStore = defineStore('terminal', () => {
           ['version', 'Show version info'],
           ['help [command]', 'Show help'],
         ]],
-        ['Sequencer', [
-          ['seq play', 'Start playback'],
-          ['seq stop', 'Stop and reset'],
-          ['seq pause', 'Pause playback'],
-          ['seq seek <time>', 'Jump to time (sec or beats)'],
-          ['seq bpm [value]', 'Get/set tempo'],
-          ['seq loop [on|off]', 'Toggle loop mode'],
-          ['seq tracks', 'List arrangement tracks'],
-          ['seq clips', 'List all clips'],
-          ['seq status', 'Show sequencer state'],
-          ['seq synths', 'List detected synths'],
+        ['Timeline (Audio)', [
+          ['tl play', 'Start playback'],
+          ['tl stop', 'Stop and reset'],
+          ['tl pause', 'Pause playback'],
+          ['tl seek <time>', 'Jump to time (sec or beats)'],
+          ['tl bpm [value]', 'Get/set tempo'],
+          ['tl loop [on|off]', 'Toggle loop mode'],
+          ['tl tracks', 'List audio tracks'],
+          ['tl clips', 'List all clips'],
+          ['tl status', 'Show timeline state'],
+          ['tl synths', 'List detected synths'],
+          ['tl view <mode>', 'Set view (arrangement|roll|lattice)'],
+          ['tl mode <mode>', 'Set edit mode (select|draw|erase)'],
         ]],
         ['Scripting', [
           ['fn <name> <cmd>', 'Define custom function'],
@@ -3172,46 +3180,50 @@ ${s.body.join('\n')}
 
       if (!sub) {
         // Show usage
-        writeln(`${C.bold}seq${C.reset} - Sequencer control`)
+        writeln(`${C.bold}tl${C.reset} / ${C.bold}seq${C.reset} - Unified Timeline control`)
         writeln('')
         writeln(`${C.cyan}Transport:${C.reset}`)
-        writeln(`  ${C.green}seq play${C.reset}              Start playback`)
-        writeln(`  ${C.green}seq stop${C.reset}              Stop and reset to start`)
-        writeln(`  ${C.green}seq pause${C.reset}             Pause playback`)
-        writeln(`  ${C.green}seq seek <time>${C.reset}       Seek to time (seconds or beats)`)
+        writeln(`  ${C.green}tl play${C.reset}               Start playback`)
+        writeln(`  ${C.green}tl stop${C.reset}               Stop and reset to start`)
+        writeln(`  ${C.green}tl pause${C.reset}              Pause playback`)
+        writeln(`  ${C.green}tl seek <time>${C.reset}        Seek to time (e.g. "10", "4b", "2:30")`)
         writeln('')
         writeln(`${C.cyan}Settings:${C.reset}`)
-        writeln(`  ${C.green}seq bpm [value]${C.reset}       Get/set tempo (BPM)`)
-        writeln(`  ${C.green}seq loop [on|off]${C.reset}     Toggle or set loop mode`)
-        writeln(`  ${C.green}seq loop-range <s> <e>${C.reset} Set loop start/end (seconds)`)
-        writeln(`  ${C.green}seq snap [mode]${C.reset}       Get/set snap (none|beat|bar|1/4|1/8|1/16)`)
+        writeln(`  ${C.green}tl bpm [value]${C.reset}        Get/set tempo (BPM)`)
+        writeln(`  ${C.green}tl loop [on|off]${C.reset}      Toggle or set loop mode`)
+        writeln(`  ${C.green}tl loop-range <s> <e>${C.reset}  Set loop start/end (seconds)`)
+        writeln(`  ${C.green}tl snap [mode]${C.reset}        Get/set snap (none|beat|bar|1/4|1/8|1/16)`)
         writeln('')
-        writeln(`${C.cyan}Tracks:${C.reset}`)
-        writeln(`  ${C.green}seq tracks${C.reset}            List arrangement tracks`)
-        writeln(`  ${C.green}seq track add <synth>${C.reset} Add track for synth`)
-        writeln(`  ${C.green}seq track del <n>${C.reset}     Delete track by index`)
-        writeln(`  ${C.green}seq track mute <n>${C.reset}    Toggle track mute`)
-        writeln(`  ${C.green}seq track solo <n>${C.reset}    Toggle track solo`)
+        writeln(`${C.cyan}Views:${C.reset}`)
+        writeln(`  ${C.green}tl view [mode]${C.reset}        Get/set view (arrangement|roll|lattice)`)
+        writeln(`  ${C.green}tl mode [mode]${C.reset}        Get/set edit mode (select|draw|erase)`)
+        writeln('')
+        writeln(`${C.cyan}Audio Tracks:${C.reset}`)
+        writeln(`  ${C.green}tl tracks${C.reset}             List audio tracks`)
+        writeln(`  ${C.green}tl track add <synth>${C.reset}  Add track for synth`)
+        writeln(`  ${C.green}tl track del <n>${C.reset}      Delete track by index`)
+        writeln(`  ${C.green}tl track mute <n>${C.reset}     Toggle track mute`)
+        writeln(`  ${C.green}tl track solo <n>${C.reset}     Toggle track solo`)
         writeln('')
         writeln(`${C.cyan}Clips:${C.reset}`)
-        writeln(`  ${C.green}seq clips${C.reset}             List all clips`)
-        writeln(`  ${C.green}seq clip new <name>${C.reset}   Create new clip`)
-        writeln(`  ${C.green}seq clip sel <id>${C.reset}     Select clip by ID`)
-        writeln(`  ${C.green}seq clip del <id>${C.reset}     Delete clip by ID`)
-        writeln(`  ${C.green}seq clip info${C.reset}         Show active clip details`)
+        writeln(`  ${C.green}tl clips${C.reset}              List all clips`)
+        writeln(`  ${C.green}tl clip new <name>${C.reset}    Create new clip`)
+        writeln(`  ${C.green}tl clip sel <id>${C.reset}      Select clip by ID`)
+        writeln(`  ${C.green}tl clip del <id>${C.reset}      Delete clip by ID`)
+        writeln(`  ${C.green}tl clip info${C.reset}          Show active clip details`)
         writeln('')
         writeln(`${C.cyan}Notes:${C.reset}`)
-        writeln(`  ${C.green}seq notes${C.reset}             List notes in active clip`)
-        writeln(`  ${C.green}seq note add <f> <a> <d>${C.reset} Add note (freq, amp, dur)`)
-        writeln(`  ${C.green}seq note del <id>${C.reset}     Delete note by ID`)
+        writeln(`  ${C.green}tl notes${C.reset}              List notes in active clip`)
+        writeln(`  ${C.green}tl note add <f> <a> <d>${C.reset}  Add note (freq, amp, dur)`)
+        writeln(`  ${C.green}tl note del <id>${C.reset}      Delete note by ID`)
         writeln('')
         writeln(`${C.cyan}Files:${C.reset}`)
-        writeln(`  ${C.green}seq save [path]${C.reset}       Save clip to .synthSequence`)
-        writeln(`  ${C.green}seq load <path>${C.reset}       Load .synthSequence file`)
+        writeln(`  ${C.green}tl save [path]${C.reset}        Save clip to .synthSequence`)
+        writeln(`  ${C.green}tl load <path>${C.reset}        Load .synthSequence file`)
         writeln('')
         writeln(`${C.cyan}Info:${C.reset}`)
-        writeln(`  ${C.green}seq status${C.reset}            Show sequencer status`)
-        writeln(`  ${C.green}seq synths${C.reset}            List detected synths`)
+        writeln(`  ${C.green}tl status${C.reset}             Show timeline status`)
+        writeln(`  ${C.green}tl synths${C.reset}             List detected synths`)
         return
       }
 
@@ -3643,6 +3655,55 @@ ${s.body.join('\n')}
           break
         }
 
+        // ── Views ────────────────────────────────────
+        case 'view': {
+          const mode = subArgs[0]?.toLowerCase()
+          if (!mode) {
+            writeln(`Current view: ${C.cyan}${sequencer.viewMode}${C.reset}`)
+            writeln(`${C.dim}Options: arrangement, roll, lattice${C.reset}`)
+            break
+          }
+
+          if (mode === 'arrangement' || mode === 'arr' || mode === 'clips') {
+            sequencer.viewMode = 'clipTimeline'
+            writeln(`View: ${C.cyan}Arrangement${C.reset} (clip timeline)`)
+          } else if (mode === 'roll' || mode === 'freq' || mode === 'frequency') {
+            sequencer.viewMode = 'frequencyRoll'
+            writeln(`View: ${C.cyan}Frequency Roll${C.reset} (note editor)`)
+          } else if (mode === 'lattice' || mode === 'tone') {
+            sequencer.viewMode = 'toneLattice'
+            writeln(`View: ${C.cyan}Tone Lattice${C.reset} (harmonic entry)`)
+          } else {
+            writeError(`Unknown view mode: ${mode}`)
+            writeln(`${C.dim}Options: arrangement, roll, lattice${C.reset}`)
+          }
+          break
+        }
+
+        case 'mode': {
+          const mode = subArgs[0]?.toLowerCase()
+          if (!mode) {
+            writeln(`Current edit mode: ${C.cyan}${sequencer.editMode}${C.reset}`)
+            writeln(`${C.dim}Options: select, draw, erase${C.reset}`)
+            break
+          }
+
+          if (mode === 'select' || mode === 'sel' || mode === 's') {
+            sequencer.editMode = 'select'
+            writeln(`Edit mode: ${C.cyan}Select${C.reset}`)
+          } else if (mode === 'draw' || mode === 'd') {
+            sequencer.editMode = 'draw'
+            writeln(`Edit mode: ${C.cyan}Draw${C.reset}`)
+          } else if (mode === 'erase' || mode === 'e' || mode === 'delete') {
+            sequencer.editMode = 'erase'
+            writeln(`Edit mode: ${C.cyan}Erase${C.reset}`)
+          } else {
+            writeError(`Unknown edit mode: ${mode}`)
+            writeln(`${C.dim}Options: select, draw, erase${C.reset}`)
+          }
+          break
+        }
+
         // ── Info ─────────────────────────────────────
         case 'status': {
           const transportIcon = sequencer.transport === 'playing'
@@ -3651,7 +3712,7 @@ ${s.body.join('\n')}
               ? `${C.yellow}❚❚${C.reset}`
               : `${C.dim}■${C.reset}`
 
-          writeln(`${C.bold}Sequencer Status${C.reset}`)
+          writeln(`${C.bold}Timeline Status${C.reset}`)
           writeln('')
           writeln(`  Transport: ${transportIcon} ${sequencer.transport}`)
           writeln(`  Position: ${formatTime(sequencer.playheadPosition)} (${formatBeats(sequencer.playheadPosition)})`)
@@ -3659,9 +3720,9 @@ ${s.body.join('\n')}
           writeln(`  Loop: ${sequencer.loopEnabled ? `${C.green}ON${C.reset} (${formatTime(sequencer.loopStart)}-${formatTime(sequencer.loopEnd)})` : `${C.dim}OFF${C.reset}`}`)
           writeln(`  Snap: ${sequencer.snapMode}`)
           writeln(`  View: ${sequencer.viewMode}`)
-          writeln(`  Edit: ${sequencer.editMode}`)
+          writeln(`  Edit mode: ${sequencer.editMode}`)
           writeln('')
-          writeln(`  Tracks: ${sequencer.arrangementTracks.length}`)
+          writeln(`  Audio tracks: ${sequencer.arrangementTracks.length}`)
           writeln(`  Clips: ${sequencer.clips.length}`)
           writeln(`  Active clip: ${sequencer.activeClip ? sequencer.activeClip.name : `${C.dim}none${C.reset}`}`)
           break
@@ -3687,9 +3748,14 @@ ${s.body.join('\n')}
         }
 
         default:
-          writeError(`seq: unknown subcommand '${sub}'`)
-          writeln(`Run ${C.green}seq${C.reset} for usage`)
+          writeError(`tl: unknown subcommand '${sub}'`)
+          writeln(`Run ${C.green}tl${C.reset} for usage`)
       }
+    },
+
+    // tl is an alias for seq (timeline)
+    tl(ctx) {
+      return commands.seq(ctx)
     },
 
     // ──────────────────────────────────────────────── assets (asset library)
@@ -4003,29 +4069,36 @@ ${s.body.join('\n')}
   Show command history.
   ${C.dim}-c${C.reset}  Clear history
   ${C.dim}N${C.reset}   Show last N entries`,
-    seq: `${C.bold}seq${C.reset} <subcommand> [args]
-  Control the sequencer. Run ${C.dim}seq${C.reset} for full usage.
+    tl: `${C.bold}tl${C.reset} <subcommand> [args]  (alias: ${C.dim}seq${C.reset})
+  Control the unified timeline. Run ${C.dim}tl${C.reset} for full usage.
 
   ${C.cyan}Transport:${C.reset}
     ${C.dim}play, stop, pause${C.reset}  Control playback
-    ${C.dim}seek <time>${C.reset}        Jump to position
+    ${C.dim}seek <time>${C.reset}        Jump to position (supports beats: "4b")
 
   ${C.cyan}Settings:${C.reset}
     ${C.dim}bpm [val]${C.reset}          Get/set tempo
-    ${C.dim}loop [on|off]${C.reset}      Toggle loop
-    ${C.dim}snap [mode]${C.reset}        Set snap grid
+    ${C.dim}loop [on|off|set]${C.reset}  Toggle loop or set range
+    ${C.dim}snap [mode]${C.reset}        Set snap grid (beat|bar|none)
 
-  ${C.cyan}Tracks:${C.reset}
-    ${C.dim}tracks${C.reset}             List all tracks
+  ${C.cyan}Audio Tracks:${C.reset}
+    ${C.dim}tracks${C.reset}             List audio tracks
     ${C.dim}track add|del|mute|solo${C.reset}
 
   ${C.cyan}Clips:${C.reset}
     ${C.dim}clips${C.reset}              List all clips
     ${C.dim}clip new|sel|del|info${C.reset}
 
+  ${C.cyan}Views:${C.reset}
+    ${C.dim}view arrangement${C.reset}   Show clip arrangement
+    ${C.dim}view roll${C.reset}          Show frequency roll editor
+    ${C.dim}view lattice${C.reset}       Open lattice editor popup
+    ${C.dim}mode select|draw|erase${C.reset}  Set edit mode
+
   ${C.cyan}Info:${C.reset}
-    ${C.dim}status${C.reset}             Show sequencer state
+    ${C.dim}status${C.reset}             Show timeline state
     ${C.dim}synths${C.reset}             List detected synths`,
+    seq: `${C.bold}seq${C.reset} - Alias for ${C.yellow}tl${C.reset} (timeline). See ${C.green}help tl${C.reset}.`,
     fn: `${C.bold}fn${C.reset} <name> <command>
   Define a custom function/script (shell or JavaScript).
 
@@ -4079,14 +4152,14 @@ ${s.body.join('\n')}
     ${C.dim}project.run()${C.reset}         Run project
     ${C.dim}project.stop()${C.reset}        Stop execution
 
-  ${C.cyan}Sequencer:${C.reset}
-    ${C.dim}seq.bpm${C.reset}               Tempo (r/w)
-    ${C.dim}seq.currentTime${C.reset}       Playhead position
-    ${C.dim}seq.isPlaying${C.reset}         Playback state
-    ${C.dim}seq.play(), pause(), stop()${C.reset}
-    ${C.dim}seq.seek(time)${C.reset}        Jump to time
-    ${C.dim}seq.tracks, seq.clips${C.reset}
-    ${C.dim}seq.addNote(clipId, freq, time, dur, amp)${C.reset}
+  ${C.cyan}Timeline (tl/seq):${C.reset}
+    ${C.dim}tl.bpm${C.reset}                Tempo (r/w)
+    ${C.dim}tl.currentTime${C.reset}        Playhead position
+    ${C.dim}tl.isPlaying${C.reset}          Playback state
+    ${C.dim}tl.play(), pause(), stop()${C.reset}
+    ${C.dim}tl.seek(time)${C.reset}         Jump to time
+    ${C.dim}tl.tracks, tl.clips${C.reset}
+    ${C.dim}tl.addNote(clipId, freq, time, dur, amp)${C.reset}
 
   ${C.cyan}Music:${C.reset}
     ${C.dim}mtof(midi)${C.reset}            MIDI to frequency

@@ -100,7 +100,12 @@ watch(() => props.jsUrl, async (newUrl) => {
   if (newUrl && canvasRef.value) {
     try {
       // Cleanup previous runtime
-      runtime?.destroy()
+      if (runtime) {
+        console.log('[ViewerPane] Destroying previous runtime')
+        runtime.destroy()
+        runtime = null
+        runtimeRef.value = null
+      }
 
       // Create new runtime
       runtime = new AllolibRuntime({
@@ -130,10 +135,28 @@ watch(() => props.jsUrl, async (newUrl) => {
   }
 })
 
-// Watch for stop
-watch(() => props.status, (newStatus) => {
-  if (newStatus === 'idle' && runtime) {
-    runtime.stop()
+// Helper to destroy runtime safely (prevents double-destroy)
+function destroyRuntime(reason: string) {
+  if (runtime) {
+    console.log(`[ViewerPane] ${reason}, destroying runtime`)
+    runtime.destroy()
+    runtime = null
+    runtimeRef.value = null
+  }
+}
+
+// Watch for stop - trigger on status change to idle OR jsUrl becoming null
+// Use destroy() for full runtime termination (stops WASM rendering loop completely)
+watch(() => props.status, (newStatus, oldStatus) => {
+  if (newStatus === 'idle' && oldStatus === 'running') {
+    destroyRuntime('Status changed from running to idle')
+  }
+})
+
+// Also watch jsUrl - when it becomes null, stop the runtime
+watch(() => props.jsUrl, (newUrl, oldUrl) => {
+  if (newUrl === null && oldUrl !== null) {
+    destroyRuntime('jsUrl cleared')
   }
 })
 

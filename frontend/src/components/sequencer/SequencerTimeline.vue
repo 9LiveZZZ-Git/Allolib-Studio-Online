@@ -7,9 +7,17 @@ const canvasRef = ref<HTMLCanvasElement>()
 const containerRef = ref<HTMLDivElement>()
 let animFrameId: number | null = null
 
+// Emits
+const emit = defineEmits<{
+  (e: 'open-lattice'): void
+}>()
+
 // Layout constants
 const RULER_H = 24
 const GUTTER_W = 56
+
+// Context menu state
+const contextMenu = ref<{ x: number; y: number } | null>(null)
 
 // Interaction state
 const isDragging = ref(false)
@@ -784,6 +792,46 @@ onBeforeUnmount(() => {
 watch(() => [sequencer.allEvents, sequencer.editMode, sequencer.viewMode, sequencer.activeClip], () => {
   requestDraw()
 }, { deep: true })
+
+// Right-click context menu
+function handleContextMenu(e: MouseEvent) {
+  contextMenu.value = { x: e.clientX, y: e.clientY }
+}
+
+function closeContextMenu() {
+  contextMenu.value = null
+}
+
+function openLatticePopup() {
+  closeContextMenu()
+  emit('open-lattice')
+}
+
+function selectAllNotes() {
+  closeContextMenu()
+  const events = sequencer.allEvents
+  sequencer.selectedEventIds = new Set(events.map(ev => ev.id))
+}
+
+function deleteSelectedNotes() {
+  closeContextMenu()
+  sequencer.deleteSelectedEvents()
+}
+
+// Close context menu on click outside
+function handleGlobalClick(e: MouseEvent) {
+  if (contextMenu.value) {
+    closeContextMenu()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleGlobalClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleGlobalClick)
+})
 </script>
 
 <template>
@@ -798,7 +846,80 @@ watch(() => [sequencer.allEvents, sequencer.editMode, sequencer.viewMode, sequen
       @mouseleave="handleMouseUp"
       @dblclick="handleDblClick"
       @wheel.prevent="handleWheel"
-      @contextmenu.prevent
+      @contextmenu.prevent="handleContextMenu"
     />
+
+    <!-- Context Menu -->
+    <div
+      v-if="contextMenu"
+      class="context-menu"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      @mousedown.stop
+    >
+      <button class="context-item" @click="openLatticePopup">
+        <span class="context-icon">◇</span>
+        Open Lattice Editor
+      </button>
+      <div class="context-divider" />
+      <button class="context-item" @click="selectAllNotes">
+        <span class="context-icon">☐</span>
+        Select All Notes
+      </button>
+      <button class="context-item" @click="deleteSelectedNotes" :disabled="sequencer.selectedEventIds.size === 0">
+        <span class="context-icon">✕</span>
+        Delete Selected
+      </button>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #252538;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 180px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.context-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.context-item:disabled {
+  color: rgba(255, 255, 255, 0.3);
+  cursor: not-allowed;
+}
+
+.context-icon {
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.context-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 8px;
+}
+</style>
