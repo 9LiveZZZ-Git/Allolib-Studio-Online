@@ -5,6 +5,7 @@ import './styles/main.css'
 import { registerAssetStoreForTerminal } from './stores/assetLibrary'
 import { registerObjectsStoreForTerminal } from './stores/objects'
 import { registerEnvironmentStoreForTerminal } from './stores/environment'
+import { registerTimelineStoreForTerminal } from './stores/timeline'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -16,3 +17,4 @@ app.mount('#app')
 registerAssetStoreForTerminal()
 registerObjectsStoreForTerminal()
 registerEnvironmentStoreForTerminal()
+registerTimelineStoreForTerminal()

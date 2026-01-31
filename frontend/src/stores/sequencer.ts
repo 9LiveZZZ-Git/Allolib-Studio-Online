@@ -1080,6 +1080,36 @@ export const useSequencerStore = defineStore('sequencer', () => {
     loopEnabled.value = !loopEnabled.value
   }
 
+  function setBPM(value: number) {
+    bpm.value = Math.max(20, Math.min(300, value))
+  }
+
+  function toggleTrackMute(trackId: string) {
+    const track = arrangementTracks.value.find(t => t.id === trackId)
+    if (track) {
+      track.muted = !track.muted
+    }
+  }
+
+  function toggleTrackSolo(trackId: string) {
+    const track = arrangementTracks.value.find(t => t.id === trackId)
+    if (track) {
+      track.solo = !track.solo
+    }
+  }
+
+  /** Get clip instances for a specific track */
+  function getClipInstancesForTrack(trackId: string): ClipInstance[] {
+    const trackIndex = arrangementTracks.value.findIndex(t => t.id === trackId)
+    if (trackIndex < 0) return []
+    return clipInstances.value.filter(ci => ci.trackIndex === trackIndex)
+  }
+
+  /** Get a clip by ID */
+  function getClip(clipId: string): SequencerClip | undefined {
+    return clips.value.find(c => c.id === clipId)
+  }
+
   function releaseAllVoices() {
     if (runtime) {
       for (const noteKey of triggeredNotes) {
@@ -2295,6 +2325,13 @@ export const useSequencerStore = defineStore('sequencer', () => {
     stop,
     setPosition,
     toggleLoop,
+    setBPM,
+
+    // Track controls
+    toggleTrackMute,
+    toggleTrackSolo,
+    getClipInstancesForTrack,
+    getClip,
 
     // Clip file I/O
     loadClipFromFile,
