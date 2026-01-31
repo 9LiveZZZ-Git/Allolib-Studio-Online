@@ -614,7 +614,6 @@ out vec3 vViewPos;
 out vec3 vViewNormal;
 out vec3 vLocalPos;
 out vec2 vTexCoord;
-out mat3 vTBN;  // Tangent-Bitangent-Normal matrix for normal mapping
 
 void main() {
     vec4 viewPos = al_ModelViewMatrix * vec4(position, 1.0);
@@ -627,14 +626,6 @@ void main() {
 
     // Apply texture transform
     vTexCoord = texcoord * textureScale + textureOffset;
-
-    // Compute tangent and bitangent for normal mapping
-    // Using dFdx/dFdy in fragment shader is more accurate, but this is simpler
-    vec3 T = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
-    vec3 N = vViewNormal;
-    T = normalize(T - dot(T, N) * N);  // Gram-Schmidt orthogonalize
-    vec3 B = cross(N, T);
-    vTBN = mat3(T, B, N);
 
     gl_Position = al_ProjectionMatrix * viewPos;
 }
@@ -654,7 +645,6 @@ in vec3 vViewPos;
 in vec3 vViewNormal;
 in vec3 vLocalPos;
 in vec2 vTexCoord;
-in mat3 vTBN;
 
 // Base material properties (used when texture not present)
 uniform vec3 albedo;
@@ -698,6 +688,22 @@ out vec4 frag_color;
 
 const float PI = 3.14159265359;
 
+// Compute TBN matrix from screen-space derivatives (works for any surface orientation)
+mat3 computeTBN(vec3 N, vec3 pos, vec2 uv) {
+    vec3 dp1 = dFdx(pos);
+    vec3 dp2 = dFdy(pos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
 vec2 directionToUV(vec3 dir) {
     float phi = atan(dir.z, dir.x);
     float theta = acos(clamp(dir.y, -1.0, 1.0));
@@ -736,12 +742,13 @@ void main() {
         ? texture(emissiveMap, vTexCoord).rgb * emissiveIntensity
         : emission;
 
-    // Normal mapping
+    // Normal mapping using screen-space derivatives for correct TBN
     vec3 N;
     if (useNormalMap) {
         vec3 normalSample = texture(normalMap, vTexCoord).rgb * 2.0 - 1.0;
         normalSample.xy *= normalStrength;
-        N = normalize(vTBN * normalSample);
+        mat3 TBN = computeTBN(normalize(vViewNormal), vViewPos, vTexCoord);
+        N = normalize(TBN * normalSample);
     } else {
         N = normalize(vViewNormal);
     }
@@ -818,7 +825,6 @@ in vec3 vViewPos;
 in vec3 vViewNormal;
 in vec3 vLocalPos;
 in vec2 vTexCoord;
-in mat3 vTBN;
 
 uniform vec3 albedo;
 uniform float metallic;
@@ -849,6 +855,22 @@ uniform float gamma;
 out vec4 frag_color;
 
 const float PI = 3.14159265359;
+
+// Compute TBN matrix from screen-space derivatives
+mat3 computeTBN(vec3 N, vec3 pos, vec2 uv) {
+    vec3 dp1 = dFdx(pos);
+    vec3 dp2 = dFdy(pos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
@@ -888,7 +910,8 @@ void main() {
     if (useNormalMap) {
         vec3 normalSample = texture(normalMap, vTexCoord).rgb * 2.0 - 1.0;
         normalSample.xy *= normalStrength;
-        N = normalize(vTBN * normalSample);
+        mat3 TBN = computeTBN(normalize(vViewNormal), vViewPos, vTexCoord);
+        N = normalize(TBN * normalSample);
     } else {
         N = normalize(vViewNormal);
     }
@@ -957,7 +980,6 @@ in vec3 vViewPos;
 in vec3 vViewNormal;
 in vec3 vLocalPos;
 in vec2 vTexCoord;
-in mat3 vTBN;
 
 // Base material properties
 uniform vec3 albedo;
@@ -1005,6 +1027,22 @@ out vec4 frag_color;
 
 const float PI = 3.14159265359;
 
+// Compute TBN matrix from screen-space derivatives
+mat3 computeTBN(vec3 N, vec3 pos, vec2 uv) {
+    vec3 dp1 = dFdx(pos);
+    vec3 dp2 = dFdy(pos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
 // Sample texture with explicit LOD or hardware auto
 vec4 sampleWithLOD(sampler2D tex, vec2 uv) {
     if (u_useExplicitLOD) {
@@ -1051,14 +1089,15 @@ void main() {
         ? sampleWithLOD(emissiveMap, vTexCoord).rgb * emissiveIntensity
         : emission;
 
-    // Normal mapping with LOD
+    // Normal mapping with LOD and proper TBN
     vec3 N;
     if (useNormalMap) {
         vec3 normalSample = sampleWithLOD(normalMap, vTexCoord).rgb * 2.0 - 1.0;
         // Reduce normal strength at higher LOD (farther = less detail)
         float lodNormalStrength = normalStrength / (1.0 + u_textureLOD * 0.5);
         normalSample.xy *= lodNormalStrength;
-        N = normalize(vTBN * normalSample);
+        mat3 TBN = computeTBN(normalize(vViewNormal), vViewPos, vTexCoord);
+        N = normalize(TBN * normalSample);
     } else {
         N = normalize(vViewNormal);
     }
@@ -1135,7 +1174,6 @@ in vec3 vViewPos;
 in vec3 vViewNormal;
 in vec3 vLocalPos;
 in vec2 vTexCoord;
-in mat3 vTBN;
 
 uniform vec3 albedo;
 uniform float metallic;
@@ -1203,6 +1241,22 @@ float geometrySmith(vec3 N, vec3 V, vec3 L, float rough) {
     return geometrySchlickGGX(NdotV, rough) * geometrySchlickGGX(NdotL, rough);
 }
 
+// Compute TBN matrix from screen-space derivatives (works for any surface orientation)
+mat3 computeTBN(vec3 N, vec3 pos, vec2 uv) {
+    vec3 dp1 = dFdx(pos);
+    vec3 dp2 = dFdy(pos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
 void main() {
     vec3 finalAlbedo = useAlbedoMap ? sampleWithLOD(albedoMap, vTexCoord).rgb : albedo;
     float finalRoughness = useRoughnessMap ? sampleWithLOD(roughnessMap, vTexCoord).r : roughness;
@@ -1217,7 +1271,8 @@ void main() {
         vec3 normalSample = sampleWithLOD(normalMap, vTexCoord).rgb * 2.0 - 1.0;
         float lodNormalStrength = normalStrength / (1.0 + u_textureLOD * 0.5);
         normalSample.xy *= lodNormalStrength;
-        N = normalize(vTBN * normalSample);
+        mat3 TBN = computeTBN(normalize(vViewNormal), vViewPos, vTexCoord);
+        N = normalize(TBN * normalSample);
     } else {
         N = normalize(vViewNormal);
     }

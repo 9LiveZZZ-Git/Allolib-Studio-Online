@@ -22,6 +22,8 @@ export const studioCategories: ExampleCategory[] = [
     subcategories: [
       { id: 'procedural', title: 'Procedural Textures' },
       { id: 'pbr-materials', title: 'PBR Materials' },
+      { id: '3d-textures', title: '3D Textures' },
+      { id: 'hdr-textures', title: 'HDR Textures' },
       { id: 'texture-lod', title: 'Texture LOD' },
     ],
   },
@@ -3152,16 +3154,24 @@ int main() {
     code: `/**
  * Procedural Noise Textures
  *
- * Demonstrates generating noise textures at runtime
- * using Perlin and Worley (cellular) noise algorithms.
+ * Demonstrates generating procedural textures at runtime
+ * and the auto-UV system for texture coordinate generation.
  *
  * Controls:
- *   1-4: Switch noise type
+ *   1: Checkerboard (test pattern)
+ *   2: Perlin noise
+ *   3: Worley/Cellular noise
+ *   4: Worley edges (cell boundaries)
+ *   5: Brick pattern
  *   +/-: Adjust noise scale
+ *   W/S: Zoom in/out
+ *   A/D: Rotate left/right
+ *   Arrow Up/Down: Look up/down
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebProcedural.hpp"
+#include "al_WebAutoUV.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
@@ -3170,78 +3180,137 @@ class ProceduralNoiseDemo : public WebApp {
 public:
     Mesh sphere;
     Mesh plane;
+    Mesh cube;
     Texture noiseTex;
     ProceduralTexture noise;
 
     int noiseType = 0;
     float noiseScale = 4.0f;
     bool needsUpdate = true;
+    float angle = 0;
+
+    // Camera controls
+    float camDist = 6.0f;
+    float camAngleH = 0.0f;
+    float camAngleV = 0.3f;
 
     void onCreate() override {
-        // Create meshes
+        // Create plane and auto-generate UVs
+        addSurface(plane, 4, 4);
+        plane.generateNormals();
+        autoGenerateUVs(plane);  // Auto UV generation!
+
+        // Create sphere and auto-generate UVs
         addSphere(sphere, 1.0, 48, 48);
         sphere.generateNormals();
+        generateSphericalUVs(sphere);  // Spherical projection for sphere
 
-        addSurface(plane, 4, 4, 32, 32);
-        plane.generateNormals();
+        // Create cube and auto-generate UVs
+        addCube(cube, 1.2);
+        cube.generateNormals();
+        generateBoxUVs(cube);  // Box projection for cube
 
-        // Create texture
-        noiseTex.create2D(512, 512, Texture::R8, Texture::RED, Texture::UBYTE);
+        // Create RGBA texture
+        noiseTex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
         noiseTex.filter(Texture::LINEAR);
         noiseTex.wrap(Texture::REPEAT);
 
-        // Generate initial noise
+        // Generate initial pattern
         updateNoise();
+        updateCamera();
+    }
 
-        nav().pos(0, 2, 5);
-        nav().faceToward(Vec3f(0, 0, 0));
+    void updateCamera() {
+        float x = camDist * cos(camAngleV) * sin(camAngleH);
+        float y = camDist * sin(camAngleV) + 0.5f;
+        float z = camDist * cos(camAngleV) * cos(camAngleH);
+        nav().pos(x, y, z);
+        nav().faceToward(Vec3f(0, 0.5f, 0));
     }
 
     void updateNoise() {
         switch (noiseType) {
             case 0:
-                noise.perlinNoise(512, 512, noiseScale, 4, 0.5f);
+                // Checkerboard test pattern - should show clear squares
+                noise.checkerboard(512, 512, 64, 0xFFFFFFFF, 0xFF000000);
                 break;
             case 1:
-                noise.worleyNoise(512, 512, (int)(noiseScale * 8), WorleyMode::F1);
+                // High contrast Perlin noise
+                noise.perlinNoise(512, 512, noiseScale * 2, 4, 0.5f);
                 break;
             case 2:
-                noise.worleyNoise(512, 512, (int)(noiseScale * 8), WorleyMode::F2_MINUS_F1);
+                // Worley cellular noise
+                noise.worleyNoise(512, 512, 32, WorleyMode::F1);
                 break;
             case 3:
-                // FBM (multiple octaves of Perlin)
-                noise.perlinNoise(512, 512, noiseScale, 6, 0.5f);
+                // Worley edges (cell boundaries)
+                noise.worleyNoise(512, 512, 24, WorleyMode::F2_MINUS_F1);
+                break;
+            case 4:
+                // Brick pattern
+                noise.brickPattern(512, 512, 64, 32, 4);
                 break;
         }
-        noise.uploadToTexture(noiseTex.id());
+        // Use Texture's submit() to upload noise data
+        noiseTex.submit(noise.pixels());
         needsUpdate = false;
     }
 
     void onAnimate(double dt) override {
         if (needsUpdate) updateNoise();
+        angle += dt * 20;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.1, 0.1, 0.12);
+        g.clear(0.2, 0.2, 0.25);
         g.depthTesting(true);
-        g.lighting(true);
 
-        // Draw with noise as brightness
+        // Bind texture for all textured objects
+        noiseTex.bind(0);
+        g.texture();
+
+        // Draw textured plane (floor)
         g.pushMatrix();
-        g.translate(0, 0.5, 0);
-        g.color(1, 1, 1);
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.draw(plane);
+        g.popMatrix();
+
+        // Draw textured sphere (auto UV)
+        g.pushMatrix();
+        g.translate(-1.5, 1, 0);
+        g.rotate(angle, 0, 1, 0);
         g.draw(sphere);
         g.popMatrix();
+
+        // Draw textured cube (box UV)
+        g.pushMatrix();
+        g.translate(1.5, 1, 0);
+        g.rotate(angle * 0.7f, 1, 1, 0);
+        g.draw(cube);
+        g.popMatrix();
+
+        noiseTex.unbind(0);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         switch (k.key()) {
-            case '1': noiseType = 0; needsUpdate = true; break;
-            case '2': noiseType = 1; needsUpdate = true; break;
-            case '3': noiseType = 2; needsUpdate = true; break;
-            case '4': noiseType = 3; needsUpdate = true; break;
+            // Texture patterns
+            case '1': noiseType = 0; needsUpdate = true; break;  // Checkerboard
+            case '2': noiseType = 1; needsUpdate = true; break;  // Perlin
+            case '3': noiseType = 2; needsUpdate = true; break;  // Worley F1
+            case '4': noiseType = 3; needsUpdate = true; break;  // Worley edges
+            case '5': noiseType = 4; needsUpdate = true; break;  // Brick
             case '+': case '=': noiseScale += 0.5f; needsUpdate = true; break;
             case '-': noiseScale = std::max(0.5f, noiseScale - 0.5f); needsUpdate = true; break;
+
+            // Camera controls
+            case 'w': case 'W': camDist = std::max(2.0f, camDist - 0.5f); updateCamera(); break;
+            case 's': case 'S': camDist = std::min(20.0f, camDist + 0.5f); updateCamera(); break;
+            case 'a': case 'A': camAngleH += 0.1f; updateCamera(); break;
+            case 'd': case 'D': camAngleH -= 0.1f; updateCamera(); break;
+            case Keyboard::UP: camAngleV = std::min(1.4f, camAngleV + 0.1f); updateCamera(); break;
+            case Keyboard::DOWN: camAngleV = std::max(-0.5f, camAngleV - 0.1f); updateCamera(); break;
         }
         return true;
     }
@@ -3267,80 +3336,131 @@ int main() {
  * including bricks, wood grain, marble, and checkerboard.
  *
  * Controls:
- *   1-4: Switch pattern type
- *   Arrow keys: Orbit camera
+ *   1: Checkerboard
+ *   2: Brick pattern
+ *   3: Wood grain
+ *   4: Marble
+ *   W/S: Zoom in/out
+ *   A/D: Rotate camera
  */
 
 #include "al_WebApp.hpp"
 #include "al_WebProcedural.hpp"
-#include "al_WebPBR.hpp"
+#include "al_WebAutoUV.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
 class ProceduralPatternsDemo : public WebApp {
 public:
-    WebPBR pbr;
     Mesh cube;
     Mesh sphere;
+    Mesh floor;
+    Texture patternTex;
+    ProceduralTexture procTex;
+
     int patternType = 0;
-    float camAngle = 0;
+    float angle = 0;
+    float camDist = 6.0f;
+    float camAngleH = 0.5f;
 
     void onCreate() override {
-        // Load environment for PBR
-        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
-
-        // Create meshes
-        addCube(cube, 1.5);
+        // Create cube with auto UVs
+        addCube(cube, 1.2);
         cube.generateNormals();
+        generateBoxUVs(cube);
 
-        addSphere(sphere, 1.0, 48, 48);
+        // Create sphere with auto UVs
+        addSphere(sphere, 0.8, 48, 48);
         sphere.generateNormals();
+        generateSphericalUVs(sphere);
 
-        nav().pos(0, 2, 6);
-        nav().faceToward(Vec3f(0, 0.5, 0));
+        // Create floor with auto UVs
+        addSurface(floor, 8, 8);
+        floor.generateNormals();
+        autoGenerateUVs(floor, 2.0f);  // Tile 2x
+
+        // Create texture
+        patternTex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        patternTex.filter(Texture::LINEAR);
+        patternTex.wrap(Texture::REPEAT);
+
+        updatePattern();
+        updateCamera();
+    }
+
+    void updatePattern() {
+        switch (patternType) {
+            case 0:
+                procTex.checkerboard(512, 512, 64, 0xFFE0E0E0, 0xFF303030);
+                break;
+            case 1:
+                procTex.brickPattern(512, 512, 64, 32, 4,
+                    0xFFC25A3C, 0xFF808080);
+                break;
+            case 2:
+                procTex.woodGrain(512, 512, 8.0f, 15.0f);
+                break;
+            case 3:
+                procTex.marble(512, 512, 3.0f, 5.0f);
+                break;
+        }
+        patternTex.submit(procTex.pixels());
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleH);
+        float z = camDist * cos(camAngleH);
+        nav().pos(x, 2.5f, z);
+        nav().faceToward(Vec3f(0, 0.5f, 0));
     }
 
     void onAnimate(double dt) override {
-        camAngle += dt * 10.0;
+        angle += dt * 20;
     }
 
     void onDraw(Graphics& g) override {
-        g.clear(0.02, 0.02, 0.03);
-
-        pbr.drawSkybox(g);
+        g.clear(0.15, 0.15, 0.2);
         g.depthTesting(true);
 
-        pbr.begin(g, nav().pos());
+        // Bind pattern texture
+        patternTex.bind(0);
+        g.texture();
 
-        // Draw objects with different PBR materials
-        // simulating different procedural materials
-
-        // Draw cube (brick-like)
+        // Draw textured floor
         g.pushMatrix();
-        g.translate(-1.5, 0.75, 0);
-        g.rotate(camAngle, 0, 1, 0);
-        pbr.material(PBRMaterial(Vec3f(0.6, 0.4, 0.3), 0.0, 0.8));
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.draw(floor);
+        g.popMatrix();
+
+        // Draw textured cube
+        g.pushMatrix();
+        g.translate(-1.5, 0.6, 0);
+        g.rotate(angle, 0, 1, 0);
         g.draw(cube);
         g.popMatrix();
 
-        // Draw sphere (marble-like)
+        // Draw textured sphere
         g.pushMatrix();
-        g.translate(1.5, 1.0, 0);
-        g.rotate(camAngle * 0.5, 0, 1, 0);
-        pbr.material(PBRMaterial::Ceramic());
+        g.translate(1.5, 0.8, 0);
+        g.rotate(angle * 0.7f, 0, 1, 0);
         g.draw(sphere);
         g.popMatrix();
 
-        pbr.end(g);
+        patternTex.unbind(0);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         switch (k.key()) {
-            case '1': patternType = 0; break;
-            case '2': patternType = 1; break;
-            case '3': patternType = 2; break;
-            case '4': patternType = 3; break;
+            case '1': patternType = 0; updatePattern(); break;
+            case '2': patternType = 1; updatePattern(); break;
+            case '3': patternType = 2; updatePattern(); break;
+            case '4': patternType = 3; updatePattern(); break;
+            case 'w': case 'W': camDist = std::max(2.0f, camDist - 0.5f); updateCamera(); break;
+            case 's': case 'S': camDist = std::min(15.0f, camDist + 0.5f); updateCamera(); break;
+            case 'a': case 'A': camAngleH += 0.15f; updateCamera(); break;
+            case 'd': case 'D': camAngleH -= 0.15f; updateCamera(); break;
         }
         return true;
     }
@@ -3348,6 +3468,155 @@ public:
 
 int main() {
     ProceduralPatternsDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-tex-bunny-uv',
+    title: 'Auto UV - Stanford Bunny',
+    description: 'Test automatic UV generation on complex loaded mesh',
+    category: 'studio-textures',
+    subcategory: 'procedural',
+    code: `/**
+ * Auto UV - Stanford Bunny
+ *
+ * Tests automatic UV coordinate generation on the
+ * Stanford Bunny mesh loaded from OBJ file.
+ *
+ * Controls:
+ *   1-5: Switch texture pattern
+ *   W/S: Zoom in/out
+ *   A/D: Rotate view
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebProcedural.hpp"
+#include "al_WebAutoUV.hpp"
+#include "al_WebOBJ.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class BunnyTextureDemo : public WebApp {
+public:
+    Mesh bunny;
+    Mesh floor;
+    Texture tex;
+    ProceduralTexture procTex;
+    WebOBJ objLoader;
+
+    int texType = 0;
+    bool meshLoaded = false;
+    float angle = 0;
+    float camDist = 4.0f;
+    float camAngleH = 0.5f;
+
+    void onCreate() override {
+        // Load Stanford Bunny
+        objLoader.load("/assets/meshes/bunny.obj", [this](bool success) {
+            if (success) {
+                bunny = objLoader.mesh();
+                bunny.generateNormals();
+
+                // Auto-generate UV coordinates for the bunny!
+                autoGenerateUVs(bunny);
+
+                meshLoaded = true;
+            }
+        });
+
+        // Create floor
+        addSurface(floor, 6, 6);
+        floor.generateNormals();
+        autoGenerateUVs(floor);
+
+        // Create texture
+        tex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        tex.filter(Texture::LINEAR);
+        tex.wrap(Texture::REPEAT);
+
+        updateTexture();
+        updateCamera();
+    }
+
+    void updateTexture() {
+        switch (texType) {
+            case 0: procTex.checkerboard(512, 512, 32); break;
+            case 1: procTex.perlinNoise(512, 512, 8.0f, 4); break;
+            case 2: procTex.worleyNoise(512, 512, 48, WorleyMode::F1); break;
+            case 3: procTex.brickPattern(512, 512, 64, 32, 4); break;
+            case 4: procTex.marble(512, 512, 4.0f, 6.0f); break;
+        }
+        tex.submit(procTex.pixels());
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngleH);
+        float z = camDist * cos(camAngleH);
+        nav().pos(x, 1.5f, z);
+        nav().faceToward(Vec3f(0, 0.5f, 0));
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 30;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.15, 0.15, 0.18);
+        g.depthTesting(true);
+
+        tex.bind(0);
+        g.texture();
+
+        // Draw textured floor
+        g.pushMatrix();
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.draw(floor);
+        g.popMatrix();
+
+        // Draw textured bunny
+        if (meshLoaded) {
+            g.pushMatrix();
+            g.translate(0, 0, 0);
+            g.rotate(angle, 0, 1, 0);
+            g.scale(4.0);  // Bunny is small, scale it up
+            g.draw(bunny);
+            g.popMatrix();
+        }
+
+        tex.unbind(0);
+
+        // Draw loading indicator if not loaded
+        if (!meshLoaded) {
+            g.lighting(true);
+            g.color(0.5, 0.5, 0.5);
+            Mesh loadingSphere;
+            addSphere(loadingSphere, 0.3, 16, 16);
+            g.draw(loadingSphere);
+        }
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case '1': texType = 0; updateTexture(); break;
+            case '2': texType = 1; updateTexture(); break;
+            case '3': texType = 2; updateTexture(); break;
+            case '4': texType = 3; updateTexture(); break;
+            case '5': texType = 4; updateTexture(); break;
+            case 'w': case 'W': camDist = std::max(1.5f, camDist - 0.3f); updateCamera(); break;
+            case 's': case 'S': camDist = std::min(10.0f, camDist + 0.3f); updateCamera(); break;
+            case 'a': case 'A': camAngleH += 0.15f; updateCamera(); break;
+            case 'd': case 'D': camAngleH -= 0.15f; updateCamera(); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    BunnyTextureDemo app;
     app.start();
     return 0;
 }
@@ -3756,6 +4025,1005 @@ public:
 
 int main() {
     PBRMipmapDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TEXTURES - PBR MATERIALS
+  // ==========================================================================
+  {
+    id: 'studio-tex-pbr-procedural',
+    title: 'Procedural PBR Materials',
+    description: 'Generate complete PBR texture sets (albedo, normal, roughness, metallic, AO) procedurally',
+    category: 'studio-textures',
+    subcategory: 'pbr-materials',
+    code: `/**
+ * Procedural PBR Materials
+ *
+ * Generates complete PBR texture sets procedurally including:
+ * - Albedo (color)
+ * - Normal map (surface detail)
+ * - Roughness map
+ * - Metallic map
+ * - Ambient Occlusion
+ *
+ * Controls:
+ *   1-4: Switch material type
+ *   W/S: Zoom in/out
+ *   A/D: Rotate view
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al_WebProcedural.hpp"
+#include "al_WebAutoUV.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class ProceduralPBRDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh sphere;
+    Mesh cube;
+    Mesh floor;
+
+    // PBR texture maps
+    Texture albedoTex, normalTex, roughnessTex, metallicTex, aoTex;
+    ProceduralTexture procTex;
+
+    int materialType = 0;
+    float angle = 0;
+    float camDist = 5.0f;
+    float camAngle = 0.5f;
+
+    void onCreate() override {
+        // Create meshes with UVs
+        addSphere(sphere, 1.0, 64, 64);
+        sphere.generateNormals();
+        generateSphericalUVs(sphere);
+
+        addCube(cube, 1.5);
+        cube.generateNormals();
+        generateBoxUVs(cube);
+
+        addSurface(floor, 10, 10, 10, 10);
+        floor.generateNormals();
+        autoGenerateUVs(floor, 3.0f);
+
+        // Create textures
+        createTexture(albedoTex);
+        createTexture(normalTex);
+        createTexture(roughnessTex);
+        createTexture(metallicTex);
+        createTexture(aoTex);
+
+        // Load environment
+        pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
+        pbr.exposure(1.5f);
+
+        generateMaterial();
+        updateCamera();
+    }
+
+    void createTexture(Texture& tex) {
+        tex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        tex.filter(Texture::LINEAR);
+        tex.wrap(Texture::REPEAT);
+    }
+
+    void generateMaterial() {
+        switch (materialType) {
+            case 0: generateBrickMaterial(); break;
+            case 1: generateWoodMaterial(); break;
+            case 2: generateMetalMaterial(); break;
+            case 3: generateStoneMaterial(); break;
+        }
+    }
+
+    void generateBrickMaterial() {
+        // Brick albedo
+        procTex.brickPattern(512, 512, 64, 32, 4, 0xFFC25A3C, 0xFF808080);
+        albedoTex.submit(procTex.pixels());
+
+        // Brick normal - derive from height
+        procTex.brickPattern(512, 512, 64, 32, 4, 0xFF606060, 0xFFFFFFFF);
+        procTex.normalMapFromHeight(512, 512, 2.0f);
+        normalTex.submit(procTex.pixels());
+
+        // Roughness - bricks rough, mortar rougher
+        procTex.brickPattern(512, 512, 64, 32, 4, 0xFF707070, 0xFF909090);
+        roughnessTex.submit(procTex.pixels());
+
+        // Metallic - non-metallic
+        procTex.fill(512, 512, 0xFF000000);
+        metallicTex.submit(procTex.pixels());
+
+        // AO - VERY dark in mortar grooves for visibility
+        // White (0xFF) = full light, Dark (0x20) = heavily occluded
+        procTex.brickPattern(512, 512, 64, 32, 4, 0xFFFFFFFF, 0xFF202020);
+        procTex.applyBlur(2);  // Soften edges
+        aoTex.submit(procTex.pixels());
+    }
+
+    void generateWoodMaterial() {
+        procTex.woodGrain(512, 512, 10.0f, 20.0f);
+        albedoTex.submit(procTex.pixels());
+
+        procTex.woodGrain(512, 512, 10.0f, 20.0f);
+        procTex.normalMapFromHeight(512, 512, 0.5f);
+        normalTex.submit(procTex.pixels());
+
+        // Wood is moderately rough
+        procTex.perlinNoise(512, 512, 8.0f, 3);
+        for (auto& p : procTex.pixelData()) p = 128 + p / 4;
+        roughnessTex.submit(procTex.pixels());
+
+        procTex.fill(512, 512, 0xFF000000);
+        metallicTex.submit(procTex.pixels());
+
+        // AO - darken wood grain grooves
+        procTex.woodGrain(512, 512, 10.0f, 20.0f);
+        // Invert and enhance: dark rings become AO
+        for (auto& p : procTex.pixelData()) {
+            int ao = 255 - (255 - p) / 2;  // Subtle darkening in grain
+            p = (uint8_t)std::max(60, ao);  // Floor at 60 for visible effect
+        }
+        aoTex.submit(procTex.pixels());
+    }
+
+    void generateMetalMaterial() {
+        // Brushed metal pattern
+        procTex.perlinNoise(512, 512, 2.0f, 2);
+        for (int y = 0; y < 512; y++) {
+            for (int x = 0; x < 512; x++) {
+                int idx = (y * 512 + x) * 4;
+                uint8_t v = 180 + procTex.pixelData()[idx] / 8;
+                procTex.pixelData()[idx] = v;
+                procTex.pixelData()[idx+1] = v;
+                procTex.pixelData()[idx+2] = v;
+            }
+        }
+        albedoTex.submit(procTex.pixels());
+
+        // Subtle scratches normal
+        procTex.perlinNoise(512, 512, 64.0f, 2);
+        procTex.normalMapFromHeight(512, 512, 0.3f);
+        normalTex.submit(procTex.pixels());
+
+        // Low roughness with scratches
+        procTex.perlinNoise(512, 512, 32.0f, 2);
+        for (auto& p : procTex.pixelData()) p = 30 + p / 8;
+        roughnessTex.submit(procTex.pixels());
+
+        // Fully metallic
+        procTex.fill(512, 512, 0xFFFFFFFF);
+        metallicTex.submit(procTex.pixels());
+
+        // AO - wear and edge darkening from scratches
+        procTex.perlinNoise(512, 512, 16.0f, 4);
+        for (auto& p : procTex.pixelData()) {
+            // Create pitting/wear pattern: mostly bright with dark spots
+            p = (p > 100) ? 255 : (uint8_t)(p * 2);  // Dark pits where noise is low
+        }
+        aoTex.submit(procTex.pixels());
+    }
+
+    void generateStoneMaterial() {
+        // Stone/marble
+        procTex.marble(512, 512, 4.0f, 8.0f);
+        albedoTex.submit(procTex.pixels());
+
+        procTex.worleyNoise(512, 512, 32, WorleyMode::F2_MINUS_F1);
+        procTex.normalMapFromHeight(512, 512, 1.0f);
+        normalTex.submit(procTex.pixels());
+
+        // Polished stone - low roughness
+        procTex.fill(512, 512, 0xFF404040);
+        roughnessTex.submit(procTex.pixels());
+
+        procTex.fill(512, 512, 0xFF000000);
+        metallicTex.submit(procTex.pixels());
+
+        // AO - dark crevices between cells (very pronounced)
+        procTex.worleyNoise(512, 512, 32, WorleyMode::F1);
+        for (auto& p : procTex.pixelData()) {
+            // F1 gives distance to nearest cell center
+            // Near center = bright, edges = dark
+            int ao = 80 + (p * 175) / 255;  // Range: 80-255 (darker crevices)
+            p = (uint8_t)ao;
+        }
+        aoTex.submit(procTex.pixels());
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngle);
+        float z = camDist * cos(camAngle);
+        nav().pos(x, 2.0f, z);
+        nav().faceToward(Vec3f(0, 0.5f, 0));
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 15;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+
+        // Bind all PBR textures BEFORE starting the shader
+        albedoTex.bind(3);
+        normalTex.bind(4);
+        roughnessTex.bind(5);
+        metallicTex.bind(6);
+        aoTex.bind(7);
+
+        // Use beginTextured for textured PBR materials
+        pbr.beginTextured(g, nav().pos());
+
+        // Create material with all maps
+        PBRMaterialEx mat;
+        mat.withAlbedoMap(3)
+           .withNormalMap(1.0f, 4)
+           .withRoughnessMap(5)
+           .withMetallicMap(6)
+           .withAOMap(7);
+
+        pbr.materialEx(mat);
+
+        // Draw sphere
+        g.pushMatrix();
+        g.translate(-2, 1, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Draw cube
+        g.pushMatrix();
+        g.translate(2, 0.75, 0);
+        g.rotate(angle * 0.7f, 0, 1, 0);
+        g.draw(cube);
+        g.popMatrix();
+
+        // Draw floor
+        g.pushMatrix();
+        g.translate(0, -0.5, 0);
+        g.rotate(-90, 1, 0, 0);
+        g.draw(floor);
+        g.popMatrix();
+
+        pbr.end(g);
+
+        // Unbind textures
+        albedoTex.unbind(3);
+        normalTex.unbind(4);
+        roughnessTex.unbind(5);
+        metallicTex.unbind(6);
+        aoTex.unbind(7);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        const char* names[] = {"Brick", "Wood", "Metal", "Stone"};
+        switch (k.key()) {
+            case '1': materialType = 0; generateMaterial(); printf("Material: %s\\n", names[0]); break;
+            case '2': materialType = 1; generateMaterial(); printf("Material: %s\\n", names[1]); break;
+            case '3': materialType = 2; generateMaterial(); printf("Material: %s\\n", names[2]); break;
+            case '4': materialType = 3; generateMaterial(); printf("Material: %s\\n", names[3]); break;
+            case 'w': case 'W': camDist = std::max(2.0f, camDist - 0.5f); updateCamera(); break;
+            case 's': case 'S': camDist = std::min(15.0f, camDist + 0.5f); updateCamera(); break;
+            case 'a': case 'A': camAngle += 0.15f; updateCamera(); break;
+            case 'd': case 'D': camAngle -= 0.15f; updateCamera(); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    ProceduralPBRDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+  {
+    id: 'studio-tex-pbr-normal-mapping',
+    title: 'Normal Mapping Deep Dive',
+    description: 'Understand normal maps with interactive strength control on sphere, cube, and Stanford bunny',
+    category: 'studio-textures',
+    subcategory: 'pbr-materials',
+    code: `/**
+ * Normal Mapping Deep Dive
+ *
+ * Demonstrates how normal maps add surface detail
+ * without adding geometry. Shows sphere, cube, and
+ * Stanford bunny with/without normal mapping.
+ *
+ * Controls:
+ *   1-4: Different normal map patterns
+ *   +/-: Adjust normal strength
+ *   W/S: Zoom
+ *   A/D: Rotate
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al_WebProcedural.hpp"
+#include "al_WebAutoUV.hpp"
+#include "al_WebOBJ.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class NormalMapDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh sphere, cube, bunny;
+    WebOBJ bunnyLoader;
+    bool bunnyLoaded = false;
+
+    Texture albedoTex, normalTex;
+    ProceduralTexture procTex;
+
+    int patternType = 0;
+    float normalStrength = 1.0f;
+    float angle = 0;
+    float camDist = 8.0f;
+    float camAngle = 0.5f;
+
+    // Create a proper cube with separate faces (no shared vertices)
+    void createSolidCube(Mesh& m, float size) {
+        m.reset();
+        m.primitive(Mesh::TRIANGLES);
+        float s = size * 0.5f;
+
+        // Each face has its own vertices to avoid Z-fighting
+        // Front face (+Z)
+        m.vertex(-s, -s, s); m.normal(0, 0, 1); m.texCoord(0, 0);
+        m.vertex( s, -s, s); m.normal(0, 0, 1); m.texCoord(1, 0);
+        m.vertex( s,  s, s); m.normal(0, 0, 1); m.texCoord(1, 1);
+        m.vertex(-s, -s, s); m.normal(0, 0, 1); m.texCoord(0, 0);
+        m.vertex( s,  s, s); m.normal(0, 0, 1); m.texCoord(1, 1);
+        m.vertex(-s,  s, s); m.normal(0, 0, 1); m.texCoord(0, 1);
+
+        // Back face (-Z)
+        m.vertex( s, -s, -s); m.normal(0, 0, -1); m.texCoord(0, 0);
+        m.vertex(-s, -s, -s); m.normal(0, 0, -1); m.texCoord(1, 0);
+        m.vertex(-s,  s, -s); m.normal(0, 0, -1); m.texCoord(1, 1);
+        m.vertex( s, -s, -s); m.normal(0, 0, -1); m.texCoord(0, 0);
+        m.vertex(-s,  s, -s); m.normal(0, 0, -1); m.texCoord(1, 1);
+        m.vertex( s,  s, -s); m.normal(0, 0, -1); m.texCoord(0, 1);
+
+        // Right face (+X)
+        m.vertex(s, -s,  s); m.normal(1, 0, 0); m.texCoord(0, 0);
+        m.vertex(s, -s, -s); m.normal(1, 0, 0); m.texCoord(1, 0);
+        m.vertex(s,  s, -s); m.normal(1, 0, 0); m.texCoord(1, 1);
+        m.vertex(s, -s,  s); m.normal(1, 0, 0); m.texCoord(0, 0);
+        m.vertex(s,  s, -s); m.normal(1, 0, 0); m.texCoord(1, 1);
+        m.vertex(s,  s,  s); m.normal(1, 0, 0); m.texCoord(0, 1);
+
+        // Left face (-X)
+        m.vertex(-s, -s, -s); m.normal(-1, 0, 0); m.texCoord(0, 0);
+        m.vertex(-s, -s,  s); m.normal(-1, 0, 0); m.texCoord(1, 0);
+        m.vertex(-s,  s,  s); m.normal(-1, 0, 0); m.texCoord(1, 1);
+        m.vertex(-s, -s, -s); m.normal(-1, 0, 0); m.texCoord(0, 0);
+        m.vertex(-s,  s,  s); m.normal(-1, 0, 0); m.texCoord(1, 1);
+        m.vertex(-s,  s, -s); m.normal(-1, 0, 0); m.texCoord(0, 1);
+
+        // Top face (+Y)
+        m.vertex(-s, s,  s); m.normal(0, 1, 0); m.texCoord(0, 0);
+        m.vertex( s, s,  s); m.normal(0, 1, 0); m.texCoord(1, 0);
+        m.vertex( s, s, -s); m.normal(0, 1, 0); m.texCoord(1, 1);
+        m.vertex(-s, s,  s); m.normal(0, 1, 0); m.texCoord(0, 0);
+        m.vertex( s, s, -s); m.normal(0, 1, 0); m.texCoord(1, 1);
+        m.vertex(-s, s, -s); m.normal(0, 1, 0); m.texCoord(0, 1);
+
+        // Bottom face (-Y)
+        m.vertex(-s, -s, -s); m.normal(0, -1, 0); m.texCoord(0, 0);
+        m.vertex( s, -s, -s); m.normal(0, -1, 0); m.texCoord(1, 0);
+        m.vertex( s, -s,  s); m.normal(0, -1, 0); m.texCoord(1, 1);
+        m.vertex(-s, -s, -s); m.normal(0, -1, 0); m.texCoord(0, 0);
+        m.vertex( s, -s,  s); m.normal(0, -1, 0); m.texCoord(1, 1);
+        m.vertex(-s, -s,  s); m.normal(0, -1, 0); m.texCoord(0, 1);
+    }
+
+    void onCreate() override {
+        // Create sphere
+        addSphere(sphere, 0.8, 48, 48);
+        sphere.generateNormals();
+        generateSphericalUVs(sphere);
+
+        // Create cube with proper separate faces
+        createSolidCube(cube, 1.3);
+
+        // Load Stanford bunny
+        bunnyLoader.load("/assets/meshes/bunny.obj", [this](bool success) {
+            if (success) {
+                bunny = bunnyLoader.mesh();
+                bunny.generateNormals();
+                autoGenerateUVs(bunny, 2.0f);
+                bunnyLoaded = true;
+                printf("Bunny loaded: %d vertices\\n", (int)bunny.vertices().size());
+            }
+        });
+
+        // Create textures
+        albedoTex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        albedoTex.filter(Texture::LINEAR);
+        normalTex.create2D(512, 512, Texture::RGBA8, Texture::RGBA, Texture::UBYTE);
+        normalTex.filter(Texture::LINEAR);
+
+        pbr.loadEnvironment("/assets/environments/museum_of_ethnography_1k.hdr");
+        pbr.exposure(1.3f);
+
+        generatePattern();
+        updateCamera();
+    }
+
+    void generatePattern() {
+        // Create albedo (neutral gray to show normal effect)
+        procTex.fill(512, 512, 0xFF909090);
+        albedoTex.submit(procTex.pixels());
+
+        // Generate height map then convert to normal
+        switch (patternType) {
+            case 0: procTex.brickPattern(512, 512, 64, 32, 4, 0xFF606060, 0xFFFFFFFF); break;
+            case 1: procTex.worleyNoise(512, 512, 24, WorleyMode::F1); break;
+            case 2: procTex.perlinNoise(512, 512, 4.0f, 4); break;
+            case 3: procTex.fbmNoise(512, 512, 16.0f, 6, 0.5f); break;
+        }
+        procTex.normalMapFromHeight(512, 512, normalStrength * 2.0f);
+        normalTex.submit(procTex.pixels());
+    }
+
+    void updateCamera() {
+        float x = camDist * sin(camAngle);
+        float z = camDist * cos(camAngle);
+        nav().pos(x, 1, z);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 10;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05, 0.05, 0.08);
+        pbr.drawSkybox(g);
+        g.depthTesting(true);
+        g.cullFace(true);  // Enable backface culling to prevent Z-fighting
+
+        // Bind textures BEFORE starting textured PBR
+        albedoTex.bind(3);
+        normalTex.bind(4);
+
+        pbr.beginTextured(g, nav().pos());
+
+        // === TOP ROW: Without normal map (flat surfaces) ===
+        PBRMaterialEx matFlat;
+        matFlat.albedo = Vec3f(0.6f);
+        matFlat.roughness = 0.4f;
+        matFlat.metallic = 0.0f;
+        pbr.materialEx(matFlat);
+
+        // Sphere - flat
+        g.pushMatrix();
+        g.translate(-2.5, 1.2, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Cube - flat
+        g.pushMatrix();
+        g.translate(0, 1.2, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(cube);
+        g.popMatrix();
+
+        // Bunny - flat
+        if (bunnyLoaded) {
+            g.pushMatrix();
+            g.translate(2.5, 0.5, 0);
+            g.rotate(angle, 0, 1, 0);
+            g.scale(8.0);  // Bunny is small
+            g.draw(bunny);
+            g.popMatrix();
+        }
+
+        // === BOTTOM ROW: With normal map (surface detail) ===
+        PBRMaterialEx matNormal;
+        matNormal.albedo = Vec3f(0.6f);
+        matNormal.roughness = 0.4f;
+        matNormal.metallic = 0.0f;
+        matNormal.withAlbedoMap(3).withNormalMap(normalStrength, 4);
+        pbr.materialEx(matNormal);
+
+        // Sphere - normal mapped
+        g.pushMatrix();
+        g.translate(-2.5, -1.2, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Cube - normal mapped
+        g.pushMatrix();
+        g.translate(0, -1.2, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(cube);
+        g.popMatrix();
+
+        // Bunny - normal mapped
+        if (bunnyLoaded) {
+            g.pushMatrix();
+            g.translate(2.5, -1.9, 0);
+            g.rotate(angle, 0, 1, 0);
+            g.scale(8.0);
+            g.draw(bunny);
+            g.popMatrix();
+        }
+
+        pbr.end(g);
+
+        albedoTex.unbind(3);
+        normalTex.unbind(4);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        const char* names[] = {"Brick", "Cells", "Perlin", "FBM"};
+        switch (k.key()) {
+            case '1': patternType = 0; generatePattern(); printf("Pattern: %s\\n", names[0]); break;
+            case '2': patternType = 1; generatePattern(); printf("Pattern: %s\\n", names[1]); break;
+            case '3': patternType = 2; generatePattern(); printf("Pattern: %s\\n", names[2]); break;
+            case '4': patternType = 3; generatePattern(); printf("Pattern: %s\\n", names[3]); break;
+            case '+': case '=':
+                normalStrength = std::min(3.0f, normalStrength + 0.2f);
+                generatePattern();
+                printf("Normal strength: %.1f\\n", normalStrength);
+                break;
+            case '-':
+                normalStrength = std::max(0.0f, normalStrength - 0.2f);
+                generatePattern();
+                printf("Normal strength: %.1f\\n", normalStrength);
+                break;
+            case 'w': case 'W': camDist = std::max(3.0f, camDist - 0.5f); updateCamera(); break;
+            case 's': case 'S': camDist = std::min(15.0f, camDist + 0.5f); updateCamera(); break;
+            case 'a': case 'A': camAngle += 0.15f; updateCamera(); break;
+            case 'd': case 'D': camAngle -= 0.15f; updateCamera(); break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    NormalMapDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TEXTURES - 3D TEXTURES
+  // ==========================================================================
+  {
+    id: 'studio-tex-3d-noise',
+    title: '3D Noise Volume',
+    description: 'Volumetric 3D Perlin noise texture for clouds, fog, and procedural effects',
+    category: 'studio-textures',
+    subcategory: '3d-textures',
+    code: `/**
+ * 3D Noise Volume
+ *
+ * Demonstrates 3D texture generation with Perlin noise
+ * for volumetric effects like clouds and fog.
+ *
+ * The 3D texture is sliced and animated to show
+ * the volumetric nature of the data.
+ *
+ * Controls:
+ *   Space: Toggle animation
+ *   1-3: Change slice axis (X/Y/Z)
+ *   W/S: Zoom
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class Volume3DDemo : public WebApp {
+public:
+    ShaderProgram shader;
+    GLuint volumeTexId = 0;
+    GLuint quadVAO = 0, quadVBO = 0;
+
+    std::vector<uint8_t> volumeData;
+    int volumeSize = 64;
+    float slicePos = 0.5f;
+    int sliceAxis = 2;  // 0=X, 1=Y, 2=Z
+    bool animate = true;
+    float time = 0;
+    float camDist = 3.0f;
+
+    void onCreate() override {
+        // Create display quad with VAO/VBO (avoid g.draw uniform conflicts)
+        float quadVerts[] = {
+            // pos x,y,z, uv u,v
+            -1, -1, 0, 0, 0,
+             1, -1, 0, 1, 0,
+            -1,  1, 0, 0, 1,
+             1,  1, 0, 1, 1
+        };
+        glGenVertexArrays(1, &quadVAO);
+        glGenBuffers(1, &quadVBO);
+        glBindVertexArray(quadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+
+        // Generate 3D noise volume
+        generateVolume();
+        createVolumeTexture();
+
+        // Create slice shader
+        createShader();
+
+        nav().pos(0, 0, camDist);
+    }
+
+    // Hash function for noise
+    float hash3D(float x, float y, float z) {
+        float n = sin(x * 127.1f + y * 311.7f + z * 74.7f) * 43758.5453f;
+        return n - floor(n);  // fract
+    }
+
+    // Smooth interpolation
+    float smoothstep(float t) {
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    // 3D value noise
+    float noise3D(float x, float y, float z) {
+        float ix = floor(x), iy = floor(y), iz = floor(z);
+        float fx = x - ix, fy = y - iy, fz = z - iz;
+        fx = smoothstep(fx); fy = smoothstep(fy); fz = smoothstep(fz);
+
+        // 8 corners of the cube
+        float n000 = hash3D(ix, iy, iz);
+        float n100 = hash3D(ix+1, iy, iz);
+        float n010 = hash3D(ix, iy+1, iz);
+        float n110 = hash3D(ix+1, iy+1, iz);
+        float n001 = hash3D(ix, iy, iz+1);
+        float n101 = hash3D(ix+1, iy, iz+1);
+        float n011 = hash3D(ix, iy+1, iz+1);
+        float n111 = hash3D(ix+1, iy+1, iz+1);
+
+        // Trilinear interpolation
+        float nx00 = n000 + fx * (n100 - n000);
+        float nx10 = n010 + fx * (n110 - n010);
+        float nx01 = n001 + fx * (n101 - n001);
+        float nx11 = n011 + fx * (n111 - n011);
+        float nxy0 = nx00 + fy * (nx10 - nx00);
+        float nxy1 = nx01 + fy * (nx11 - nx01);
+        return nxy0 + fz * (nxy1 - nxy0);
+    }
+
+    // Fractal Brownian Motion for cloud-like noise
+    float fbm3D(float x, float y, float z, int octaves = 5) {
+        float value = 0.0f, amplitude = 0.5f;
+        for (int i = 0; i < octaves; i++) {
+            value += amplitude * noise3D(x, y, z);
+            x *= 2.0f; y *= 2.0f; z *= 2.0f;
+            amplitude *= 0.5f;
+        }
+        return value;
+    }
+
+    void generateVolume() {
+        volumeData.resize(volumeSize * volumeSize * volumeSize * 4);
+
+        for (int z = 0; z < volumeSize; z++) {
+            for (int y = 0; y < volumeSize; y++) {
+                for (int x = 0; x < volumeSize; x++) {
+                    // Scale to create good noise frequency
+                    float fx = (float)x / volumeSize * 4.0f;
+                    float fy = (float)y / volumeSize * 4.0f;
+                    float fz = (float)z / volumeSize * 4.0f;
+
+                    // Use FBM for cloud-like appearance
+                    float n = fbm3D(fx, fy, fz, 5);
+
+                    int idx = (z * volumeSize * volumeSize + y * volumeSize + x) * 4;
+                    uint8_t v = (uint8_t)(n * 255);
+                    volumeData[idx] = v;
+                    volumeData[idx + 1] = v;
+                    volumeData[idx + 2] = v;
+                    volumeData[idx + 3] = 255;
+                }
+            }
+        }
+        printf("Generated %dx%dx%d volume\\n", volumeSize, volumeSize, volumeSize);
+    }
+
+    void createVolumeTexture() {
+        glGenTextures(1, &volumeTexId);
+        glBindTexture(GL_TEXTURE_3D, volumeTexId);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, volumeSize, volumeSize, volumeSize,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, volumeData.data());
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    }
+
+    void createShader() {
+        const char* vert = R"(#version 300 es
+            layout(location = 0) in vec3 position;
+            layout(location = 1) in vec2 texCoord;
+            out vec2 vUV;
+            uniform mat4 MVP;
+            void main() {
+                vUV = texCoord;
+                gl_Position = MVP * vec4(position, 1.0);
+            }
+        )";
+
+        const char* frag = R"(#version 300 es
+            precision highp float;
+            precision highp sampler3D;
+            in vec2 vUV;
+            out vec4 fragColor;
+            uniform sampler3D volumeTex;
+            uniform float slicePos;
+            uniform int sliceAxis;
+
+            void main() {
+                vec3 uvw;
+                if (sliceAxis == 0) uvw = vec3(slicePos, vUV.x, vUV.y);
+                else if (sliceAxis == 1) uvw = vec3(vUV.x, slicePos, vUV.y);
+                else uvw = vec3(vUV.x, vUV.y, slicePos);
+
+                vec4 color = texture(volumeTex, uvw);
+
+                // Color mapping - blue to white
+                float v = color.r;
+                vec3 finalColor = mix(vec3(0.1, 0.2, 0.4), vec3(1.0), v);
+                fragColor = vec4(finalColor, 1.0);
+            }
+        )";
+
+        shader.compile(vert, frag);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        if (animate) {
+            slicePos = (sin(time * 0.5f) + 1.0f) * 0.5f;
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1, 0.1, 0.15);
+
+        shader.use();
+
+        // Set uniforms
+        Mat4f mvp = g.projMatrix() * g.viewMatrix() * g.modelMatrix();
+        shader.uniform("MVP", mvp);
+        shader.uniform("slicePos", slicePos);
+        shader.uniform("sliceAxis", sliceAxis);
+
+        // Bind 3D texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_3D, volumeTexId);
+        shader.uniform("volumeTex", 0);
+
+        // Draw quad directly (avoid g.draw which sets extra uniforms)
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        const char* axisNames[] = {"X", "Y", "Z"};
+        switch (k.key()) {
+            case ' ':
+                animate = !animate;
+                printf("Animation: %s\\n", animate ? "ON" : "OFF");
+                break;
+            case '1': sliceAxis = 0; printf("Slice axis: %s\\n", axisNames[0]); break;
+            case '2': sliceAxis = 1; printf("Slice axis: %s\\n", axisNames[1]); break;
+            case '3': sliceAxis = 2; printf("Slice axis: %s\\n", axisNames[2]); break;
+            case 'w': case 'W':
+                camDist = std::max(1.5f, camDist - 0.3f);
+                nav().pos(0, 0, camDist);
+                break;
+            case 's': case 'S':
+                camDist = std::min(8.0f, camDist + 0.3f);
+                nav().pos(0, 0, camDist);
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    Volume3DDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TEXTURES - HDR TEXTURES
+  // ==========================================================================
+  {
+    id: 'studio-tex-hdr-exposure',
+    title: 'HDR Exposure Control',
+    description: 'Load HDR environment maps and control exposure/tonemapping',
+    category: 'studio-textures',
+    subcategory: 'hdr-textures',
+    code: `/**
+ * HDR Exposure Control
+ *
+ * Demonstrates HDR (High Dynamic Range) environment maps
+ * with interactive exposure and tonemapping controls.
+ *
+ * HDR textures store values beyond 0-1 range, allowing
+ * realistic lighting and bloom effects.
+ *
+ * Controls:
+ *   1-4: Switch HDR environment
+ *   +/-: Adjust exposure
+ *   W/S: Zoom
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al_WebAutoUV.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class HDRExposureDemo : public WebApp {
+public:
+    WebPBR pbr;
+    Mesh sphere;
+    Mesh mirrorBall;
+
+    int envIndex = 0;
+    float exposure = 1.0f;
+    float angle = 0;
+    float camDist = 4.0f;
+
+    const char* envPaths[4] = {
+        "/assets/environments/studio_small_09_1k.hdr",
+        "/assets/environments/museum_of_ethnography_1k.hdr",
+        "/assets/environments/forest_slope_1k.hdr",
+        "/assets/environments/urban_street_04_1k.hdr"
+    };
+    const char* envNames[4] = {
+        "Studio", "Museum", "Forest", "Urban Street"
+    };
+
+    void onCreate() override {
+        addSphere(sphere, 0.8, 64, 64);
+        sphere.generateNormals();
+        generateSphericalUVs(sphere);
+
+        addSphere(mirrorBall, 0.3, 32, 32);
+        mirrorBall.generateNormals();
+
+        loadEnvironment(0);
+        nav().pos(0, 0, camDist);
+    }
+
+    void loadEnvironment(int idx) {
+        envIndex = idx;
+        pbr.loadEnvironment(envPaths[idx]);
+        pbr.exposure(exposure);
+        printf("Loaded: %s\\n", envNames[idx]);
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 15;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+
+        // Apply exposure
+        pbr.exposure(exposure);
+
+        // Draw HDR skybox
+        pbr.drawSkybox(g);
+
+        g.depthTesting(true);
+        pbr.begin(g, nav().pos());
+
+        // Reflective sphere to show HDR environment
+        PBRMaterial mirror;
+        mirror.albedo = Vec3f(0.95f);
+        mirror.metallic = 1.0f;
+        mirror.roughness = 0.0f;
+        pbr.material(mirror);
+
+        g.pushMatrix();
+        g.translate(0, 0, 0);
+        g.rotate(angle * 0.5f, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Rough sphere for comparison
+        PBRMaterial rough;
+        rough.albedo = Vec3f(0.8f);
+        rough.metallic = 0.0f;
+        rough.roughness = 0.8f;
+        pbr.material(rough);
+
+        g.pushMatrix();
+        g.translate(-2, 0, 0);
+        g.rotate(angle, 0, 1, 0);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Various roughness levels
+        for (int i = 0; i < 5; i++) {
+            PBRMaterial mat;
+            mat.albedo = Vec3f(0.9f);
+            mat.metallic = 1.0f;
+            mat.roughness = i * 0.25f;
+            pbr.material(mat);
+
+            g.pushMatrix();
+            g.translate(-2.0f + i * 1.0f, -1.5f, 0);
+            g.draw(mirrorBall);
+            g.popMatrix();
+        }
+
+        pbr.end(g);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        switch (k.key()) {
+            case '1': loadEnvironment(0); break;
+            case '2': loadEnvironment(1); break;
+            case '3': loadEnvironment(2); break;
+            case '4': loadEnvironment(3); break;
+            case '+': case '=':
+                exposure = std::min(5.0f, exposure + 0.2f);
+                printf("Exposure: %.1f\\n", exposure);
+                break;
+            case '-':
+                exposure = std::max(0.1f, exposure - 0.2f);
+                printf("Exposure: %.1f\\n", exposure);
+                break;
+            case 'w': case 'W':
+                camDist = std::max(2.0f, camDist - 0.5f);
+                nav().pos(0, 0, camDist);
+                break;
+            case 's': case 'S':
+                camDist = std::min(10.0f, camDist + 0.5f);
+                nav().pos(0, 0, camDist);
+                break;
+        }
+        return true;
+    }
+};
+
+int main() {
+    HDRExposureDemo app;
     app.start();
     return 0;
 }
