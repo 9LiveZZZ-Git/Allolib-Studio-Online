@@ -39,6 +39,7 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 
 ### Advanced Graphics
 - **PBR Materials** - Physically-based rendering with metallic-roughness workflow and IBL
+- **Normal Mapping** - Screen-space TBN calculation for correct normal maps on any surface
 - **HDR Environment Maps** - Load `.hdr` files for skyboxes and image-based lighting
 - **Environment Reflections** - Real-time reflective surfaces using equirectangular maps
 - **Procedural Skybox** - Dynamic day/night cycle with sun, moon, and atmospheric colors
@@ -46,6 +47,14 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Adaptive Quality** - Auto-adjusts settings (resolution, shadows, effects) based on FPS
 - **Quality Presets** - Low, Medium, High, Ultra with configurable target FPS
 - **OBJ Mesh Loading** - Import 3D models from `.obj` files with normals and UVs
+
+### Textures & Assets
+- **Asset Library** - Browse and use built-in textures, meshes, and HDR environments
+- **Procedural Textures** - Generate brick, noise, Worley, marble patterns at runtime
+- **3D Noise Volumes** - Volumetric 3D textures with FBM noise for clouds and fog
+- **Automatic UV Generation** - Spherical, cylindrical, box, and planar projection modes
+- **PBR Texture Sets** - Albedo, normal, roughness, metallic, AO maps
+- **Local Assets** - Textures served locally for reliable offline use
 
 ### Recording & Export
 - **Video Recording** - Record WebGL canvas with synchronized audio to WebM
@@ -221,7 +230,7 @@ Core framework examples demonstrating fundamental concepts:
 | **Scene System** | SynthVoice, PolySynth, DynamicScene |
 | **Simulation** | Particle Systems, Physics, Agent-Based (Flocking, Wave Equation, Spring Mesh) |
 | **Advanced** | Particles, Generative, Multi-File Projects |
-| **Studio** | OBJ Loading, HDR Skybox, Procedural Skybox, Environment Picker, PBR Materials, Reflective Spheres, LOD, Quality System |
+| **Studio** | OBJ Loading, HDR Skybox, Procedural Skybox, Environment Picker, PBR Materials, Normal Mapping, Procedural Textures, 3D Noise Volumes, Reflective Spheres, LOD, Quality System |
 
 ### AlloLib Playground Examples
 
@@ -273,11 +282,16 @@ Browser                                Server
 ```
 allolib-studio-online/
 ├── frontend/                # Vue 3 web application
+│   ├── public/
+│   │   └── assets/          # Static assets served to WASM
+│   │       ├── textures/    # Downloaded PBR textures (brick, wood, metal, etc.)
+│   │       ├── meshes/      # OBJ models (bunny, teapot, suzanne, spot)
+│   │       └── environments/# HDR environment maps (8 Polyhaven HDRIs)
 │   └── src/
 │       ├── components/      # UI components
 │       │   └── sequencer/   # Sequencer panel, timeline, lattice, toolbar, sidebar
 │       ├── services/        # Compiler, Runtime, WebSocket
-│       ├── stores/          # Pinia state (project, sequencer, settings, terminal)
+│       ├── stores/          # Pinia state (project, sequencer, settings, terminal, assetLibrary)
 │       └── utils/           # Tone lattice math, synth detection, .synthSequence parser
 ├── backend/                 # Node.js compilation server
 │   └── docker/              # Emscripten container
@@ -358,6 +372,8 @@ AlloLib Studio Online code can be exported for native AlloLib builds using the i
 | `al_WebEnvironment.hpp` | `native_compat/al_NativeEnvironment.hpp` | Same API |
 | `al_WebLOD.hpp` | `native_compat/al_NativeLOD.hpp` | Same API |
 | `al_WebQuality.hpp` | `native_compat/al_NativeQuality.hpp` | Same API |
+| `al_WebAutoUV.hpp` | N/A | Header-only, works on both |
+| `al_WebProcedural.hpp` | N/A | Header-only, works on both |
 
 ### Using Native Compat
 
