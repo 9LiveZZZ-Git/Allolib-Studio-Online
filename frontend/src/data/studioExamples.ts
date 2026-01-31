@@ -3908,7 +3908,7 @@ public:
     }
 };
 
-ALLOLIB_WEB_MAIN(ProceduralPBRDemo)
+ALLOLIB_WEB_MAIN(MipmapLODDemo)
 `,
   },
   {
