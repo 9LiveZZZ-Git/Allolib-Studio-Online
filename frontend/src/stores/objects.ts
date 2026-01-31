@@ -64,12 +64,25 @@ export interface SceneObject {
 
 // ─── Keyframe Types ──────────────────────────────────────────────────────────
 
-export type EasingType = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'step'
+export type EasingType =
+  | 'linear'
+  | 'easeIn'
+  | 'easeOut'
+  | 'easeInOut'
+  | 'easeOutBack'
+  | 'bounce'
+  | 'elastic'
+  | 'step'
+  | 'bezier'  // Custom bezier curve
+
+// Bezier control points: [x1, y1, x2, y2] where x is time (0-1) and y is value (0-1, can overshoot)
+export type BezierPoints = [number, number, number, number]
 
 export interface Keyframe<T> {
   time: number
   value: T
   easing: EasingType
+  bezierPoints?: BezierPoints  // Only used when easing === 'bezier'
 }
 
 export interface KeyframeCurve<T> {
@@ -377,7 +390,7 @@ export const useObjectsStore = defineStore('objects', () => {
     const kf2 = keyframes[i + 1]
     const t = (time - kf1.time) / (kf2.time - kf1.time)
 
-    return interpolate(kf1.value, kf2.value, applyEasing(t, kf1.easing))
+    return interpolate(kf1.value, kf2.value, applyEasing(t, kf1.easing, kf1.bezierPoints))
   }
 
   // ─── WASM Sync ───────────────────────────────────────────────────────────
@@ -480,21 +493,61 @@ export const useObjectsStore = defineStore('objects', () => {
 
 // ─── Utility Functions ───────────────────────────────────────────────────────
 
-function applyEasing(t: number, easing: EasingType): number {
+function applyEasing(t: number, easing: EasingType, bezierPoints?: BezierPoints): number {
   switch (easing) {
     case 'linear':
       return t
     case 'easeIn':
-      return t * t
+      return t * t * t  // Cubic ease in
     case 'easeOut':
-      return 1 - (1 - t) * (1 - t)
+      return 1 - Math.pow(1 - t, 3)  // Cubic ease out
     case 'easeInOut':
-      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+    case 'easeOutBack':
+      const c1 = 1.70158
+      const c3 = c1 + 1
+      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+    case 'bounce':
+      // Approximate bounce with overshoot bezier
+      return bezierEase(t, 0.68, -0.55, 0.27, 1.55)
+    case 'elastic':
+      if (t === 0 || t === 1) return t
+      return -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * ((2 * Math.PI) / 3)) + 1
     case 'step':
       return t < 1 ? 0 : 1
+    case 'bezier':
+      if (bezierPoints) {
+        return bezierEase(t, bezierPoints[0], bezierPoints[1], bezierPoints[2], bezierPoints[3])
+      }
+      return t
     default:
       return t
   }
+}
+
+// Cubic bezier easing function
+function bezierEase(t: number, x1: number, y1: number, x2: number, y2: number): number {
+  // Newton-Raphson iteration to find parameter at time t
+  let guess = t
+  for (let i = 0; i < 8; i++) {
+    const x = cubicBezier(guess, 0, x1, x2, 1)
+    const dx = 3 * (1 - guess) * (1 - guess) * x1 +
+               6 * (1 - guess) * guess * (x2 - x1) +
+               3 * guess * guess * (1 - x2)
+    if (Math.abs(dx) < 0.0001) break
+    guess -= (x - t) / dx
+    guess = Math.max(0, Math.min(1, guess))
+  }
+  return cubicBezier(guess, 0, y1, y2, 1)
+}
+
+function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
+  const t2 = t * t
+  const t3 = t2 * t
+  const mt = 1 - t
+  const mt2 = mt * mt
+  const mt3 = mt2 * mt
+  return mt3 * p0 + 3 * mt2 * t * p1 + 3 * mt * t2 * p2 + t3 * p3
 }
 
 function interpolate(a: any, b: any, t: number): any {

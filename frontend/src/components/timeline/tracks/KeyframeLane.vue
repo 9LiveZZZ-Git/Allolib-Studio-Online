@@ -55,12 +55,37 @@
         :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         @click.stop
       >
-        <button @click="deleteKeyframe(contextMenu.keyframe)">Delete Keyframe</button>
-        <button @click="setEasing(contextMenu.keyframe, 'linear')">Linear</button>
-        <button @click="setEasing(contextMenu.keyframe, 'easeIn')">Ease In</button>
-        <button @click="setEasing(contextMenu.keyframe, 'easeOut')">Ease Out</button>
-        <button @click="setEasing(contextMenu.keyframe, 'easeInOut')">Ease In-Out</button>
-        <button @click="closeContextMenu">Cancel</button>
+        <button class="delete-btn" @click="deleteKeyframe(contextMenu.keyframe)">Delete Keyframe</button>
+        <div class="menu-divider" />
+        <div class="menu-label">Easing</div>
+        <button @click="setEasing(contextMenu.keyframe, 'linear')">
+          <span class="easing-icon">╱</span> Linear
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'easeIn')">
+          <span class="easing-icon">╭</span> Ease In
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'easeOut')">
+          <span class="easing-icon">╮</span> Ease Out
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'easeInOut')">
+          <span class="easing-icon">∿</span> Ease In-Out
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'easeOutBack')">
+          <span class="easing-icon">↩</span> Back
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'bounce')">
+          <span class="easing-icon">⌢</span> Bounce
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'elastic')">
+          <span class="easing-icon">〰</span> Elastic
+        </button>
+        <button @click="setEasing(contextMenu.keyframe, 'step')">
+          <span class="easing-icon">⌐</span> Step
+        </button>
+        <div class="menu-divider" />
+        <button class="edit-curve-btn" @click="openCurveEditor(contextMenu.keyframe)">
+          <span class="easing-icon">⚙</span> Edit Curve...
+        </button>
       </div>
     </Teleport>
   </div>
@@ -69,10 +94,24 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 
+export type EasingType =
+  | 'linear'
+  | 'easeIn'
+  | 'easeOut'
+  | 'easeInOut'
+  | 'easeOutBack'
+  | 'bounce'
+  | 'elastic'
+  | 'step'
+  | 'bezier'
+
+export type BezierPoints = [number, number, number, number]
+
 export interface Keyframe {
   time: number
   value: number | number[]
-  easing: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'step'
+  easing: EasingType
+  bezierPoints?: BezierPoints
 }
 
 const props = defineProps<{
@@ -93,7 +132,8 @@ const emit = defineEmits<{
   (e: 'remove', time: number): void
   (e: 'move', oldTime: number, newTime: number): void
   (e: 'select', times: number[]): void
-  (e: 'easing', time: number, easing: Keyframe['easing']): void
+  (e: 'easing', time: number, easing: EasingType, bezierPoints?: BezierPoints): void
+  (e: 'edit-curve', keyframe: Keyframe, nextKeyframe: Keyframe | null): void
 }>()
 
 const laneRef = ref<HTMLElement>()
@@ -222,8 +262,16 @@ function deleteKeyframe(kf: Keyframe) {
   closeContextMenu()
 }
 
-function setEasing(kf: Keyframe, easing: Keyframe['easing']) {
-  emit('easing', kf.time, easing)
+function setEasing(kf: Keyframe, easing: EasingType, bezierPoints?: BezierPoints) {
+  emit('easing', kf.time, easing, bezierPoints)
+  closeContextMenu()
+}
+
+function openCurveEditor(kf: Keyframe) {
+  // Find the next keyframe
+  const idx = props.keyframes.findIndex(k => k.time === kf.time)
+  const nextKf = idx >= 0 && idx < props.keyframes.length - 1 ? props.keyframes[idx + 1] : null
+  emit('edit-curve', kf, nextKf)
   closeContextMenu()
 }
 
@@ -307,7 +355,7 @@ function interpolateValue(time: number, keyframes: Keyframe[]): number | number[
   const kf1 = keyframes[i]
   const kf2 = keyframes[i + 1]
   const t = (time - kf1.time) / (kf2.time - kf1.time)
-  const easedT = applyEasing(t, kf1.easing)
+  const easedT = applyEasing(t, kf1.easing, kf1.bezierPoints)
 
   if (Array.isArray(kf1.value) && Array.isArray(kf2.value)) {
     return kf1.value.map((v, idx) => v + (kf2.value[idx] - v) * easedT)
@@ -318,19 +366,63 @@ function interpolateValue(time: number, keyframes: Keyframe[]): number | number[
   return v1 + (v2 - v1) * easedT
 }
 
-function applyEasing(t: number, easing: Keyframe['easing']): number {
+function applyEasing(t: number, easing: EasingType, bezierPoints?: BezierPoints): number {
   switch (easing) {
     case 'linear': return t
-    case 'easeIn': return t * t
-    case 'easeOut': return 1 - (1 - t) * (1 - t)
-    case 'easeInOut': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+    case 'easeIn': return t * t * t
+    case 'easeOut': return 1 - Math.pow(1 - t, 3)
+    case 'easeInOut': return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+    case 'easeOutBack': {
+      const c1 = 1.70158
+      const c3 = c1 + 1
+      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+    }
+    case 'bounce': return bezierEase(t, 0.68, -0.55, 0.27, 1.55)
+    case 'elastic': {
+      if (t === 0 || t === 1) return t
+      return -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * ((2 * Math.PI) / 3)) + 1
+    }
     case 'step': return t < 1 ? 0 : 1
+    case 'bezier': return bezierPoints ? bezierEase(t, ...bezierPoints) : t
     default: return t
+  }
+}
+
+function bezierEase(t: number, x1: number, y1: number, x2: number, y2: number): number {
+  let guess = t
+  for (let i = 0; i < 8; i++) {
+    const x = cubicBezier(guess, 0, x1, x2, 1)
+    const dx = 3 * (1 - guess) * (1 - guess) * x1 +
+               6 * (1 - guess) * guess * (x2 - x1) +
+               3 * guess * guess * (1 - x2)
+    if (Math.abs(dx) < 0.0001) break
+    guess -= (x - t) / dx
+    guess = Math.max(0, Math.min(1, guess))
+  }
+  return cubicBezier(guess, 0, y1, y2, 1)
+}
+
+function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
+  const mt = 1 - t
+  return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3
+}
+
+// Keyboard shortcuts
+function onKeyDown(e: KeyboardEvent) {
+  // Delete selected keyframes
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTimes.value.size > 0) {
+    e.preventDefault()
+    for (const time of selectedTimes.value) {
+      emit('remove', time)
+    }
+    selectedTimes.value.clear()
+    emit('select', [])
   }
 }
 
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
+  document.addEventListener('keydown', onKeyDown)
   if (props.expanded) {
     nextTick(drawCurve)
   }
@@ -338,6 +430,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside)
+  document.removeEventListener('keydown', onKeyDown)
   stopDragKeyframe({ clientX: 0, clientY: 0 } as MouseEvent)
 })
 
@@ -431,15 +524,17 @@ watch([() => props.keyframes, () => props.zoom, () => props.scrollX, () => props
   position: fixed;
   background: #2a2a3e;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 4px 0;
-  min-width: 140px;
+  min-width: 160px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   z-index: 1000;
 }
 
 .keyframe-context-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 6px 12px;
   background: none;
@@ -453,6 +548,42 @@ watch([() => props.keyframes, () => props.zoom, () => props.scrollX, () => props
 .keyframe-context-menu button:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+.keyframe-context-menu .delete-btn {
+  color: #FC8181;
+}
+
+.keyframe-context-menu .delete-btn:hover {
+  background: rgba(252, 129, 129, 0.2);
+}
+
+.keyframe-context-menu .edit-curve-btn {
+  color: #60A5FA;
+}
+
+.keyframe-context-menu .edit-curve-btn:hover {
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.keyframe-context-menu .menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 0;
+}
+
+.keyframe-context-menu .menu-label {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+}
+
+.keyframe-context-menu .easing-icon {
+  width: 16px;
+  text-align: center;
+  font-family: monospace;
+  opacity: 0.7;
 }
 
 .keyframe-context-menu button:first-child {
