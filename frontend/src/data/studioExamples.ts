@@ -43,6 +43,14 @@ export const studioCategories: ExampleCategory[] = [
       { id: 'showcase', title: 'Showcase' },
     ],
   },
+  {
+    id: 'studio-timeline',
+    title: 'Studio - Timeline',
+    subcategories: [
+      { id: 'objects', title: 'Object Animation' },
+      { id: 'keyframes', title: 'Keyframes' },
+    ],
+  },
 ]
 
 export const studioExamples: Example[] = [
@@ -4512,7 +4520,7 @@ public:
         g.clear(0.05, 0.05, 0.08);
         pbr.drawSkybox(g);
         g.depthTesting(true);
-        g.cullFace(true);  // Enable backface culling to prevent Z-fighting
+        g.culling(true);  // Enable backface culling to prevent Z-fighting
 
         // Bind textures BEFORE starting textured PBR
         albedoTex.bind(3);
@@ -5042,6 +5050,331 @@ public:
 
 int main() {
     HDRExposureDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  // ==========================================================================
+  // STUDIO - TIMELINE - Object Animation
+  // ==========================================================================
+  {
+    id: 'studio-timeline-objects',
+    title: 'Object Animation Demo',
+    description: 'Animated primitives with timeline-driven transforms and materials',
+    category: 'studio-timeline',
+    subcategory: 'objects',
+    code: `/**
+ * Object Animation Demo
+ *
+ * Demonstrates the ObjectManager system for timeline-driven animation.
+ * Objects can be spawned, animated, and destroyed based on timeline time.
+ *
+ * This example shows:
+ * - Multiple primitive objects (sphere, cube, torus)
+ * - Animated positions using sine waves
+ * - Color changes over time
+ * - Basic PBR materials
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebObjectManager.hpp"
+#include "al/graphics/al_Shapes.hpp"
+
+using namespace al;
+
+class ObjectAnimationDemo : public WebApp {
+public:
+    float time = 0;
+    bool useObjectManager = true;
+
+    // Manual fallback meshes (if ObjectManager not available)
+    VAOMesh sphere, cube, torus;
+
+    void onCreate() override {
+        // Initialize ObjectManager meshes
+        objectManager().initMeshes();
+
+        // Create some objects via ObjectManager
+        auto* obj1 = objectManager().createObject("sphere1", "Red Sphere", PrimitiveType::Sphere);
+        if (obj1) {
+            obj1->material.color = Color(1, 0.3, 0.3, 1);
+            obj1->material.type = MaterialType::PBR;
+            obj1->material.metallic = 0.8;
+            obj1->material.roughness = 0.2;
+        }
+
+        auto* obj2 = objectManager().createObject("cube1", "Blue Cube", PrimitiveType::Cube);
+        if (obj2) {
+            obj2->material.color = Color(0.3, 0.5, 1, 1);
+            obj2->material.type = MaterialType::PBR;
+            obj2->material.metallic = 0.3;
+            obj2->material.roughness = 0.6;
+        }
+
+        auto* obj3 = objectManager().createObject("torus1", "Gold Torus", PrimitiveType::Torus);
+        if (obj3) {
+            obj3->material.color = Color(1, 0.8, 0.2, 1);
+            obj3->material.type = MaterialType::PBR;
+            obj3->material.metallic = 0.9;
+            obj3->material.roughness = 0.1;
+        }
+
+        // Create manual meshes as fallback
+        addSphere(sphere, 0.5, 32, 32);
+        sphere.update();
+        addCube(cube, false, 0.8);
+        cube.update();
+        addTorus(torus, 0.2, 0.4, 32, 32);
+        torus.update();
+
+        // Set up camera
+        nav().pos(0, 2, 6);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        // Animate objects via ObjectManager
+        if (useObjectManager) {
+            // Sphere orbits in XZ plane
+            float angle1 = time * 0.8;
+            objectManager().setPosition("sphere1",
+                sin(angle1) * 2.5,
+                sin(time * 2) * 0.3 + 0.5,
+                cos(angle1) * 2.5
+            );
+
+            // Cube bounces up and down
+            objectManager().setPosition("cube1",
+                0,
+                abs(sin(time * 1.5)) * 2 + 0.5,
+                0
+            );
+            // Rotate cube
+            float cubeAngle = time * 0.5;
+            Quatf cubeRot = Quatf::fromEuler(cubeAngle, cubeAngle * 0.7, 0);
+            objectManager().setRotation("cube1", cubeRot.x, cubeRot.y, cubeRot.z, cubeRot.w);
+
+            // Torus spins and moves in figure-8
+            float angle3 = time * 0.6;
+            objectManager().setPosition("torus1",
+                sin(angle3 * 2) * 1.5,
+                0.5,
+                sin(angle3) * cos(angle3) * 3
+            );
+            Quatf torusRot = Quatf::fromEuler(time, time * 1.3, 0);
+            objectManager().setRotation("torus1", torusRot.x, torusRot.y, torusRot.z, torusRot.w);
+
+            // Animate colors
+            float hue = fmod(time * 0.1, 1.0);
+            objectManager().setColor("sphere1", 0.8 + 0.2*sin(time), 0.3, 0.3 + 0.3*cos(time*0.7), 1);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05, 0.05, 0.1);
+
+        g.depthTesting(true);
+        g.lighting(true);
+        g.light().pos(5, 5, 5);
+
+        // Draw ground plane
+        g.pushMatrix();
+        g.translate(0, -0.01, 0);
+        g.scale(10, 1, 10);
+        g.color(0.15, 0.15, 0.2);
+        g.draw(cube);
+        g.popMatrix();
+
+        // Draw objects via ObjectManager
+        if (useObjectManager) {
+            // PBR rendering if available, otherwise basic
+            objectManager().draw(g, pbr());
+        } else {
+            // Manual fallback rendering
+            float angle1 = time * 0.8;
+            g.pushMatrix();
+            g.translate(sin(angle1) * 2.5, sin(time * 2) * 0.3 + 0.5, cos(angle1) * 2.5);
+            g.color(1, 0.3, 0.3);
+            g.draw(sphere);
+            g.popMatrix();
+
+            g.pushMatrix();
+            g.translate(0, abs(sin(time * 1.5)) * 2 + 0.5, 0);
+            g.rotate(time * 0.5, 1, 0.7, 0);
+            g.color(0.3, 0.5, 1);
+            g.draw(cube);
+            g.popMatrix();
+
+            float angle3 = time * 0.6;
+            g.pushMatrix();
+            g.translate(sin(angle3 * 2) * 1.5, 0.5, sin(angle3) * cos(angle3) * 3);
+            g.rotate(time, 1, 1.3, 0);
+            g.color(1, 0.8, 0.2);
+            g.draw(torus);
+            g.popMatrix();
+        }
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+        if (k.key() == ' ') {
+            useObjectManager = !useObjectManager;
+            printf("ObjectManager: %s\\n", useObjectManager ? "ON" : "OFF");
+        }
+        return true;
+    }
+};
+
+int main() {
+    ObjectAnimationDemo app;
+    app.start();
+    return 0;
+}
+`,
+  },
+
+  {
+    id: 'studio-timeline-keyframes',
+    title: 'Keyframe Animation',
+    description: 'Object transforms driven by keyframe interpolation',
+    category: 'studio-timeline',
+    subcategory: 'keyframes',
+    code: `/**
+ * Keyframe Animation Demo
+ *
+ * Demonstrates keyframe-driven animation where transforms
+ * are interpolated between defined keyframes.
+ *
+ * In the full timeline system:
+ * - Keyframes are defined in the UI
+ * - Values interpolate based on easing functions
+ * - Timeline playhead drives the current time
+ *
+ * This example simulates keyframe interpolation manually.
+ */
+
+#include "al_WebApp.hpp"
+#include "al_WebObjectManager.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <vector>
+
+using namespace al;
+
+// Simple keyframe structure
+struct Keyframe {
+    float time;
+    Vec3f value;
+};
+
+// Linear interpolation between keyframes
+Vec3f interpolateKeyframes(const std::vector<Keyframe>& keyframes, float time) {
+    if (keyframes.empty()) return Vec3f(0);
+    if (time <= keyframes.front().time) return keyframes.front().value;
+    if (time >= keyframes.back().time) return keyframes.back().value;
+
+    // Find surrounding keyframes
+    for (size_t i = 0; i < keyframes.size() - 1; i++) {
+        if (time >= keyframes[i].time && time < keyframes[i+1].time) {
+            float t = (time - keyframes[i].time) / (keyframes[i+1].time - keyframes[i].time);
+            // Ease in-out
+            t = t < 0.5 ? 2*t*t : 1 - pow(-2*t + 2, 2) / 2;
+            return keyframes[i].value + (keyframes[i+1].value - keyframes[i].value) * t;
+        }
+    }
+    return keyframes.back().value;
+}
+
+class KeyframeDemo : public WebApp {
+public:
+    float time = 0;
+    float duration = 10.0f; // 10 second loop
+
+    VAOMesh sphere;
+
+    // Position keyframes
+    std::vector<Keyframe> positionKeyframes = {
+        {0.0f, Vec3f(-3, 0.5, 0)},
+        {2.5f, Vec3f(0, 2.5, -2)},
+        {5.0f, Vec3f(3, 0.5, 0)},
+        {7.5f, Vec3f(0, 1.5, 2)},
+        {10.0f, Vec3f(-3, 0.5, 0)},
+    };
+
+    // Scale keyframes
+    std::vector<Keyframe> scaleKeyframes = {
+        {0.0f, Vec3f(0.5, 0.5, 0.5)},
+        {2.5f, Vec3f(1.0, 1.5, 1.0)},
+        {5.0f, Vec3f(0.8, 0.8, 0.8)},
+        {7.5f, Vec3f(1.2, 0.6, 1.2)},
+        {10.0f, Vec3f(0.5, 0.5, 0.5)},
+    };
+
+    void onCreate() override {
+        addSphere(sphere, 1.0, 32, 32);
+        sphere.update();
+
+        nav().pos(0, 3, 8);
+        nav().faceToward(Vec3f(0, 1, 0));
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        if (time > duration) time -= duration;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08, 0.08, 0.12);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.light().pos(5, 8, 5);
+
+        // Interpolate position and scale from keyframes
+        Vec3f pos = interpolateKeyframes(positionKeyframes, time);
+        Vec3f scale = interpolateKeyframes(scaleKeyframes, time);
+
+        // Draw animated sphere
+        g.pushMatrix();
+        g.translate(pos);
+        g.scale(scale);
+        g.color(0.9, 0.5, 0.2);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Draw keyframe markers
+        g.lighting(false);
+        for (const auto& kf : positionKeyframes) {
+            g.pushMatrix();
+            g.translate(kf.value);
+            g.scale(0.08);
+            g.color(0.2, 0.8, 0.4, 0.7);
+            g.draw(sphere);
+            g.popMatrix();
+        }
+
+        // Draw current time indicator on ground
+        float progress = time / duration;
+        g.pushMatrix();
+        g.translate(-3 + progress * 6, 0.02, 3);
+        g.scale(0.15, 0.02, 0.15);
+        g.color(1, 1, 1);
+        g.draw(sphere);
+        g.popMatrix();
+
+        // Draw timeline bar
+        g.pushMatrix();
+        g.translate(0, 0.01, 3);
+        g.scale(3, 0.01, 0.05);
+        g.color(0.3, 0.3, 0.4);
+        g.draw(sphere);
+        g.popMatrix();
+    }
+};
+
+int main() {
+    KeyframeDemo app;
     app.start();
     return 0;
 }

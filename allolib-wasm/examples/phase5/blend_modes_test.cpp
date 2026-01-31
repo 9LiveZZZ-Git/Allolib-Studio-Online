@@ -88,11 +88,7 @@ public:
 
         // Set render states
         g.depthTesting(depthTestEnabled);
-        if (cullFaceEnabled) {
-            g.cullFace(true);
-        } else {
-            g.cullFace(false);
-        }
+        g.culling(cullFaceEnabled);
 
         // Draw opaque background elements first
         g.blending(false);
