@@ -108,18 +108,6 @@ const filteredGroups = computed(() => {
 // Subscribe to parameter changes
 let unsubscribe: (() => void) | null = null
 
-onMounted(() => {
-  updateGroups()
-  updatePresetList()
-  unsubscribe = parameterSystem.subscribe(() => {
-    updateGroups()
-  })
-})
-
-onBeforeUnmount(() => {
-  if (unsubscribe) unsubscribe()
-})
-
 // Toggle group expansion
 function toggleGroup(groupName: string) {
   if (expandedGroups.value.has(groupName)) {
@@ -129,37 +117,148 @@ function toggleGroup(groupName: string) {
   }
 }
 
-// Handle parameter value change
+// Handle parameter value change - routes to correct store based on source
 function handleSliderChange(param: Parameter, event: Event) {
   const target = event.target as HTMLInputElement
   const value = parseFloat(target.value)
-  parameterSystem.setByIndex(param.index, value)
+
+  if (param.source === 'synth' && param.index >= 0) {
+    // Synth params use WASM index
+    parameterSystem.setByIndex(param.index, value)
+  } else {
+    // Other sources use unified setParameterValue
+    parameterSystem.setParameterValue(param.source, param.name, value, param.sourceId)
+  }
 }
 
 // Handle bool toggle
 function handleBoolToggle(param: Parameter) {
-  parameterSystem.setByIndex(param.index, param.value === 0 ? 1 : 0)
+  const newValue = (param.value as number) === 0 ? 1 : 0
+
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setByIndex(param.index, newValue)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name, newValue, param.sourceId)
+  }
 }
 
 // Handle menu selection
 function handleMenuChange(param: Parameter, event: Event) {
   const target = event.target as HTMLSelectElement
-  parameterSystem.setByIndex(param.index, parseInt(target.value))
+  const value = parseInt(target.value)
+
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setByIndex(param.index, value)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name, value, param.sourceId)
+  }
 }
 
 // Handle trigger button
 function handleTrigger(param: Parameter) {
-  parameterSystem.trigger(param.index)
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.trigger(param.index)
+  }
 }
 
 // Reset parameter to default
 function resetToDefault(param: Parameter) {
-  parameterSystem.resetToDefault(param.index)
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.resetToDefault(param.index)
+  } else {
+    // For non-synth params, set to default value
+    parameterSystem.setParameterValue(param.source, param.name, param.defaultValue, param.sourceId)
+  }
+}
+
+// ─── Keyframe Handling ─────────────────────────────────────────────────────
+
+// Current playhead time (from sequencer store)
+const currentTime = ref(0)
+
+// Track if we're in "timeline mode" (showing keyframeable params)
+const showTimelineInfo = ref(false)
+
+// Update current time from sequencer
+function updateCurrentTime() {
+  const sequencerStore = (window as any).__sequencerStore
+  if (sequencerStore) {
+    currentTime.value = sequencerStore.playheadTime || 0
+  }
+}
+
+// Periodic time update for display
+let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  updateGroups()
+  updatePresetList()
+  unsubscribe = parameterSystem.subscribe(() => {
+    updateGroups()
+  })
+  // Update time display periodically
+  timeUpdateInterval = setInterval(updateCurrentTime, 100)
+})
+
+onBeforeUnmount(() => {
+  if (unsubscribe) unsubscribe()
+  if (timeUpdateInterval) clearInterval(timeUpdateInterval)
+})
+
+// Add keyframe at current playhead time
+function handleAddKeyframe(param: Parameter) {
+  updateCurrentTime()
+
+  const value = param.value
+
+  switch (param.source) {
+    case 'object':
+      const objectsStore = (window as any).__objectsStore
+      if (objectsStore && param.sourceId) {
+        objectsStore.addKeyframe(param.sourceId, param.name, currentTime.value, value)
+        param.hasKeyframes = true
+        console.log(`[ParameterPanel] Added keyframe: ${param.sourceId}.${param.name} @ ${currentTime.value}s`)
+      }
+      break
+
+    case 'environment':
+      const envStore = (window as any).__environmentStore
+      if (envStore) {
+        envStore.addKeyframe(param.name, currentTime.value, value)
+        param.hasKeyframes = true
+        console.log(`[ParameterPanel] Added keyframe: env.${param.name} @ ${currentTime.value}s`)
+      }
+      break
+
+    case 'camera':
+      // Camera keyframes stored in environment or separate camera track
+      const envStore2 = (window as any).__environmentStore
+      if (envStore2) {
+        envStore2.addKeyframe(`camera.${param.name}`, currentTime.value, value)
+        param.hasKeyframes = true
+        console.log(`[ParameterPanel] Added keyframe: camera.${param.name} @ ${currentTime.value}s`)
+      }
+      break
+
+    case 'synth':
+      // Synth params don't support keyframes (they use .synthSequence)
+      console.log(`[ParameterPanel] Synth params use .synthSequence for automation`)
+      break
+  }
+
+  // Also emit for parent component if needed
+  emit('addKeyframe', param)
 }
 
 // Format value for display
 function formatValue(param: Parameter): string {
   const value = param.value
+
+  // Handle array values (vec3, vec4, color)
+  if (Array.isArray(value)) {
+    return value.map(v => v.toFixed(2)).join(', ')
+  }
+
   if (param.type === ParameterType.INT || param.type === ParameterType.MENU) {
     return Math.round(value).toString()
   }
@@ -170,6 +269,13 @@ function formatValue(param: Parameter): string {
   if (Math.abs(value) < 10) return value.toFixed(3)
   if (Math.abs(value) < 100) return value.toFixed(2)
   return value.toFixed(1)
+}
+
+// Format time for keyframe tooltip
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = (seconds % 60).toFixed(2)
+  return mins > 0 ? `${mins}:${secs.padStart(5, '0')}` : `${secs}s`
 }
 
 // Get step value for slider
@@ -242,23 +348,35 @@ function getColorValue(param: Parameter): [number, number, number, number] {
       </svg>
     </div>
 
-    <!-- Source Filter Pills -->
-    <div v-if="!collapsed && showAllSources" class="flex items-center gap-1 px-2 py-1 border-b border-imgui-border bg-imgui-header">
-      <button
-        v-for="filter in sourceFilters"
-        :key="filter.source"
-        @click="activeSourceFilter = filter.source"
-        :class="[
-          'px-2 py-0.5 text-xs rounded transition-colors',
-          activeSourceFilter === filter.source
-            ? 'bg-imgui-accent text-white'
-            : 'bg-imgui-input text-imgui-text-dim hover:text-imgui-text hover:bg-imgui-button'
-        ]"
-        :title="filter.label"
+    <!-- Source Filter Pills + Timeline Info -->
+    <div v-if="!collapsed && showAllSources" class="flex items-center justify-between gap-1 px-2 py-1 border-b border-imgui-border bg-imgui-header">
+      <!-- Source filters -->
+      <div class="flex items-center gap-1">
+        <button
+          v-for="filter in sourceFilters"
+          :key="filter.source"
+          @click="activeSourceFilter = filter.source"
+          :class="[
+            'px-2 py-0.5 text-xs rounded transition-colors',
+            activeSourceFilter === filter.source
+              ? 'bg-imgui-accent text-white'
+              : 'bg-imgui-input text-imgui-text-dim hover:text-imgui-text hover:bg-imgui-button'
+          ]"
+          :title="filter.label"
+        >
+          <span class="mr-1">{{ filter.icon }}</span>
+          <span>{{ filter.label }}</span>
+        </button>
+      </div>
+
+      <!-- Timeline current time indicator -->
+      <div
+        class="flex items-center gap-1 px-2 py-0.5 bg-imgui-input rounded text-xs"
+        title="Current playhead time for keyframes"
       >
-        <span class="mr-1">{{ filter.icon }}</span>
-        <span>{{ filter.label }}</span>
-      </button>
+        <span class="text-imgui-text-dim">◆</span>
+        <span class="text-imgui-value font-mono">{{ formatTime(currentTime) }}</span>
+      </div>
     </div>
 
     <!-- Content -->
@@ -325,12 +443,12 @@ function getColorValue(param: Parameter): [number, number, number, number] {
                 </span>
                 <button
                   v-if="param.isKeyframeable"
-                  @click="emit('addKeyframe', param)"
+                  @click="handleAddKeyframe(param)"
                   :class="[
                     'w-4 h-4 flex items-center justify-center text-xs transition-colors flex-shrink-0',
                     param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
                   ]"
-                  title="Add keyframe"
+                  :title="`Add keyframe @ ${formatTime(currentTime)}`"
                 >
                   ◆
                 </button>
@@ -410,12 +528,12 @@ function getColorValue(param: Parameter): [number, number, number, number] {
                   <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
                   <button
                     v-if="param.isKeyframeable"
-                    @click="emit('addKeyframe', param)"
+                    @click="handleAddKeyframe(param)"
                     :class="[
                       'w-4 h-4 flex items-center justify-center text-xs transition-colors',
                       param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
                     ]"
-                    title="Add keyframe"
+                    :title="`Add keyframe @ ${formatTime(currentTime)}`"
                   >
                     ◆
                   </button>
@@ -437,12 +555,12 @@ function getColorValue(param: Parameter): [number, number, number, number] {
                   <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
                   <button
                     v-if="param.isKeyframeable"
-                    @click="emit('addKeyframe', param)"
+                    @click="handleAddKeyframe(param)"
                     :class="[
                       'w-4 h-4 flex items-center justify-center text-xs transition-colors',
                       param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
                     ]"
-                    title="Add keyframe"
+                    :title="`Add keyframe @ ${formatTime(currentTime)}`"
                   >
                     ◆
                   </button>
@@ -472,11 +590,21 @@ function getColorValue(param: Parameter): [number, number, number, number] {
       </div>
     </div>
 
-    <!-- Footer with preset management -->
+    <!-- Footer with preset management (SYNTH ONLY) and help info -->
     <div v-if="!collapsed && hasParameters" class="px-2 py-1.5 border-t border-imgui-border bg-imgui-header space-y-2">
-      <!-- Preset row -->
+      <!-- Info bar when showing all sources -->
+      <div v-if="showAllSources" class="flex items-center gap-3 text-[10px] text-imgui-text-dim pb-1 border-b border-imgui-border/50">
+        <span title="Synth parameters save to .preset files">
+          <span class="text-purple-300">♫</span> Synth → Presets
+        </span>
+        <span title="Object/Environment/Camera use timeline keyframes">
+          <span class="text-blue-300">◆◐📷</span> → Keyframes
+        </span>
+      </div>
+
+      <!-- Preset row - only for synth params -->
       <div class="flex items-center gap-2">
-        <span class="text-xs text-imgui-text-dim">Presets:</span>
+        <span class="text-xs text-imgui-text-dim" title="Presets only save synth parameters (♫). Object/Env/Camera use keyframes.">♫ Presets:</span>
 
         <!-- Preset dropdown -->
         <div class="relative flex-1">

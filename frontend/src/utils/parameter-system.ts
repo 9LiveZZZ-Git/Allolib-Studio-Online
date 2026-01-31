@@ -1,14 +1,21 @@
 /**
  * Parameter System for AlloLib Studio
  *
- * Provides a bridge between C++ WebControlGUI parameters and the web UI.
- * Parameters registered in C++ via WebControlGUI are automatically
- * exposed to JavaScript and can be controlled from the Vue UI.
+ * Unified parameter management for all sources:
+ * - synth: C++ SynthVoice parameters via WASM (createInternalTriggerParameter)
+ * - object: Scene object transforms and materials (via ObjectsStore)
+ * - environment: Global scene settings (via EnvironmentStore)
+ * - camera: Camera position/rotation/FOV (via WASM nav())
  *
  * C++ Integration:
  * - WebControlGUI registers parameters via << operator
  * - Parameters are exposed via al_webgui_* C exports
  * - JS receives notifications via window.allolib callbacks
+ *
+ * Store Integration:
+ * - Object/Environment stores are the source of truth for non-synth params
+ * - Parameter panel reads from and writes to stores
+ * - Stores sync to WASM when values change
  */
 
 // Parameter type enum matching WebParamType in C++
@@ -691,36 +698,92 @@ class ParameterSystem {
   }
 
   /**
-   * Set a parameter value by source
+   * Set a parameter value by source.
+   * Routes to appropriate store/WASM bridge based on source type.
    */
   setParameterValue(source: ParameterSource, name: string, value: number | number[], sourceId?: string): void {
     let params: Parameter[] | undefined
 
     switch (source) {
       case 'synth':
-        // Use existing setByIndex or set method
+        // Synth params go through WASM bridge - NEVER through stores
         this.set(name, typeof value === 'number' ? value : value[0])
         return
 
       case 'object':
+        // Object params go to ObjectsStore
         params = sourceId ? this.objectParameters.get(sourceId) : undefined
-        break
+        if (params) {
+          const param = params.find(p => p.name === name)
+          if (param) {
+            param.value = value
+            // Sync to store (store handles WASM sync)
+            const objectsStore = (window as any).__objectsStore
+            if (objectsStore && sourceId) {
+              objectsStore.setProperty(sourceId, name, value)
+            }
+            this.notifyChange()
+          }
+        }
+        return
 
       case 'environment':
+        // Environment params go to EnvironmentStore
         params = this.environmentParameters
-        break
+        if (params) {
+          const param = params.find(p => p.name === name)
+          if (param) {
+            param.value = value
+            // Sync to store (store handles WASM sync)
+            const envStore = (window as any).__environmentStore
+            if (envStore) {
+              envStore.setProperty(name, value)
+            }
+            this.notifyChange()
+          }
+        }
+        return
 
       case 'camera':
+        // Camera params sync directly to WASM nav()
         params = this.cameraParameters
-        break
+        if (params) {
+          const param = params.find(p => p.name === name)
+          if (param) {
+            param.value = value
+            // Sync to WASM camera
+            this.syncCameraToWasm(name, value)
+            this.notifyChange()
+          }
+        }
+        return
     }
+  }
 
-    if (params) {
-      const param = params.find(p => p.name === name)
-      if (param) {
-        param.value = value
-        this.notifyChange()
-      }
+  /**
+   * Sync camera parameter to WASM nav()
+   */
+  private syncCameraToWasm(name: string, value: number | number[]): void {
+    if (!this.wasmModule) return
+
+    switch (name) {
+      case 'positionX':
+      case 'positionY':
+      case 'positionZ':
+        // Get all position values and send to WASM
+        const posX = this.cameraParameters.find(p => p.name === 'positionX')?.value as number || 0
+        const posY = this.cameraParameters.find(p => p.name === 'positionY')?.value as number || 0
+        const posZ = this.cameraParameters.find(p => p.name === 'positionZ')?.value as number || 0
+        if (this.wasmModule._al_nav_set_pos) {
+          this.wasmModule._al_nav_set_pos(posX, posY, posZ)
+        }
+        break
+
+      case 'fov':
+        if (this.wasmModule._al_lens_set_fovy) {
+          this.wasmModule._al_lens_set_fovy(value as number)
+        }
+        break
     }
   }
 
