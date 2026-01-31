@@ -3746,23 +3746,24 @@ int main() {
   },
   {
     id: 'studio-tex-mipmap-lod',
-    title: 'Procedural PBR Textures',
-    description: 'Procedural brick, marble, and metal textures with PBR rendering',
+    title: 'Mipmap Texture LOD (Unreal-Style)',
+    description: 'Continuous texture LOD with procedural textures and GPU mipmaps',
     category: 'studio-textures',
     subcategory: 'texture-lod',
     code: `/**
- * Procedural PBR Textures Demo
+ * Mipmap Texture LOD Demo
  *
- * Generates procedural textures (brick, marble, metal) on the CPU
- * and applies them with full PBR materials including:
- * - Albedo (base color)
- * - Normal maps (surface detail)
- * - Roughness maps
- * - Ambient occlusion
+ * Tests GPU mipmap LOD with procedural textures.
+ * Move camera closer/farther to see texture detail change.
+ *
+ * - CLOSE: Sharp texture detail (low mip level)
+ * - FAR: Blurry texture (high mip level, GPU auto-selects)
+ *
+ * The checkerboard pattern (press 3) shows LOD most clearly!
  *
  * Controls:
- *   1/2/3: Switch materials (Brick, Marble, Metal)
- *   W/S: Move camera closer/farther
+ *   W/S: Zoom in/out (watch texture blur!)
+ *   1/2/3: Brick, Marble, Checkerboard
  */
 
 #include "al_WebApp.hpp"
@@ -3772,156 +3773,128 @@ int main() {
 
 using namespace al;
 
-class ProceduralPBRDemo : public WebApp {
+class MipmapLODDemo : public WebApp {
 public:
     WebPBR pbr;
-    Mesh sphere;
+    Mesh cube;
 
-    // Procedural texture generators
-    ProceduralTexture albedoTex, normalTex, roughnessTex, aoTex, metallicTex;
+    ProceduralTexture albedoTex, normalTex, roughnessTex, aoTex;
+    GLuint albedoId = 0, normalId = 0, roughnessId = 0, aoId = 0;
 
-    // GPU texture IDs
-    GLuint albedoId = 0, normalId = 0, roughnessId = 0, aoId = 0, metallicId = 0;
-
-    int currentMaterial = 0;  // 0=brick, 1=marble, 2=metal
-    float camDist = 6.0f;
+    float camDist = 5.0f;
     float rotation = 0;
+    float lastLOD = -1;
+    int currentMaterial = 2;  // Start with checkerboard
     bool texturesReady = false;
 
     void onCreate() override {
         pbr.loadEnvironment("/assets/environments/studio_small_09_1k.hdr");
 
-        // Create sphere with UV coordinates
-        addSphere(sphere, 1.5f, 64, 64);
-        sphere.generateNormals();
+        addCube(cube, true, 2.0f);
+        cube.generateNormals();
 
-        nav().pos(0, 0, camDist);
+        nav().pos(0, 1, camDist);
         nav().faceToward(Vec3f(0, 0, 0));
 
-        printf("\\n=== Procedural PBR Textures ===\\n");
-        printf("Generating textures...\\n");
+        printf("\\n=== Mipmap Texture LOD Test ===\\n");
+        printf("Move W/S to see mipmap LOD in action!\\n");
+        printf("Checkerboard (3) shows it best.\\n\\n");
 
-        // Generate initial material (brick)
-        generateMaterial(0);
-
-        printf("Controls: 1=Brick, 2=Marble, 3=Metal\\n");
-        printf("          W/S = zoom\\n\\n");
+        generateMaterial(currentMaterial);
     }
 
     void generateMaterial(int type) {
         currentMaterial = type;
-        int res = 512;  // Texture resolution
-
-        printf("Generating material %d...\\n", type);
+        int res = 1024;
 
         switch (type) {
-            case 0:  // Brick
+            case 0:
                 ProceduralPresets::generateBrickPBR(albedoTex, normalTex, roughnessTex, aoTex, res);
-                metallicTex.fill(res, res, 0xFF000000);  // Non-metallic
-                printf("Generated: Brick\\n");
+                printf("Texture: Brick\\n");
                 break;
-
-            case 1:  // Marble
+            case 1:
                 ProceduralPresets::generateMarblePBR(albedoTex, normalTex, roughnessTex, res);
-                aoTex.fill(res, res, 0xFFFFFFFF);  // Full AO
-                metallicTex.fill(res, res, 0xFF000000);  // Non-metallic
-                printf("Generated: Marble\\n");
+                aoTex.fill(res, res, 0xFFFFFFFF);
+                printf("Texture: Marble\\n");
                 break;
-
-            case 2:  // Metal
-                ProceduralPresets::generateMetalPBR(albedoTex, normalTex, roughnessTex, metallicTex, res, 0xFFD4AF37);
-                aoTex.fill(res, res, 0xFFFFFFFF);  // Full AO
-                printf("Generated: Metal (Gold)\\n");
+            case 2:
+                // High-frequency checkerboard - best for seeing LOD!
+                albedoTex.checkerboard(res, res, res/32, 0xFFFFFFFF, 0xFF000000);
+                normalTex.fill(res, res, 0xFFFF8080);
+                roughnessTex.fill(res, res, 0xFF606060);
+                aoTex.fill(res, res, 0xFFFFFFFF);
+                printf("Texture: Checkerboard (watch for moire/blur!)\\n");
                 break;
         }
 
-        // Upload to GPU
         uploadTextures();
         texturesReady = true;
     }
 
     void uploadTextures() {
-        // Delete old textures if they exist
         if (albedoId) glDeleteTextures(1, &albedoId);
         if (normalId) glDeleteTextures(1, &normalId);
         if (roughnessId) glDeleteTextures(1, &roughnessId);
         if (aoId) glDeleteTextures(1, &aoId);
-        if (metallicId) glDeleteTextures(1, &metallicId);
 
-        // Create new textures
         albedoId = albedoTex.createTexture();
         normalId = normalTex.createTexture();
         roughnessId = roughnessTex.createTexture();
         aoId = aoTex.createTexture();
-        metallicId = metallicTex.createTexture();
-
-        printf("Textures uploaded to GPU\\n");
     }
 
     void onAnimate(double dt) override {
-        rotation += dt * 20.0f;
+        rotation += dt * 10.0f;
+
+        // Estimate mip level based on distance
+        float lod = log2f(camDist / 2.0f);
+        lod = std::max(0.0f, lod);
+
+        if (fabs(lod - lastLOD) > 0.15f) {
+            printf("Distance: %.1f -> Approx LOD: %.1f\\n", camDist, lod);
+            lastLOD = lod;
+        }
     }
 
     void onDraw(Graphics& g) override {
         g.clear(0.02, 0.02, 0.03);
-
         pbr.drawSkybox(g);
         g.depthTesting(true);
 
         if (!texturesReady) return;
 
-        // Bind textures to texture units 3-7 (0-2 used by PBR for IBL)
         glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, albedoId);
         glActiveTexture(GL_TEXTURE4);
         glBindTexture(GL_TEXTURE_2D, normalId);
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_2D, roughnessId);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, metallicId);
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_2D, aoId);
 
         pbr.begin(g, nav().pos());
 
-        // Set up textured PBR material
         PBRMaterialEx mat;
-        mat.albedo = Vec3f(1, 1, 1);  // White base (texture provides color)
-        mat.metallic = (currentMaterial == 2) ? 1.0f : 0.0f;
+        mat.albedo = Vec3f(1, 1, 1);
+        mat.metallic = 0.0f;
         mat.roughness = 0.5f;
-
-        // Enable texture maps
-        mat.withAlbedoMap(3)
-           .withNormalMap(1.0f, 4)
-           .withRoughnessMap(5)
-           .withMetallicMap(6)
-           .withAOMap(7);
-
+        mat.withAlbedoMap(3).withNormalMap(1.0f, 4).withRoughnessMap(5).withAOMap(7);
         pbr.materialEx(mat);
 
-        // Rotate and draw sphere
         g.pushMatrix();
         g.rotate(rotation, 0, 1, 0);
-        g.draw(sphere);
+        g.draw(cube);
         g.popMatrix();
 
         pbr.end(g);
-
-        // Reset texture units
         glActiveTexture(GL_TEXTURE0);
     }
 
     bool onKeyDown(Keyboard const& k) override {
         switch (k.key()) {
-            case '1':
-                generateMaterial(0);  // Brick
-                break;
-            case '2':
-                generateMaterial(1);  // Marble
-                break;
-            case '3':
-                generateMaterial(2);  // Metal
-                break;
+            case '1': generateMaterial(0); break;
+            case '2': generateMaterial(1); break;
+            case '3': generateMaterial(2); break;
             case 'w': case 'W':
                 camDist = std::max(3.0f, camDist - 1.0f);
                 nav().pos(0, 0, camDist);
