@@ -268,11 +268,12 @@ public:
 
     if (obj.material.type == MaterialType::PBR && pbr) {
       // Use PBR rendering
-      pbr->material(
+      PBRMaterial mat(
         obj.material.color.rgb(),
         obj.material.metallic,
         obj.material.roughness
       );
+      pbr->material(mat);
       g.draw(*obj.mesh);
     } else {
       // Basic rendering
