@@ -3786,3 +3786,9 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     getAssetUrl,
   }
 })
+
+// Expose store to window for terminal access
+export function registerAssetStoreForTerminal() {
+  const store = useAssetLibraryStore()
+  ;(window as any).__assetStore = store
+}

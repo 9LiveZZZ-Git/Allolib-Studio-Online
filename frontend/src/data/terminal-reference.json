@@ -700,6 +700,91 @@
       ]
     },
     {
+      "name": "Assets & Graphics",
+      "icon": "cube",
+      "commands": [
+        {
+          "name": "assets list",
+          "syntax": "assets list",
+          "description": "List all assets in the library"
+        },
+        {
+          "name": "assets textures",
+          "syntax": "assets textures",
+          "description": "List texture assets"
+        },
+        {
+          "name": "assets meshes",
+          "syntax": "assets meshes",
+          "description": "List mesh assets"
+        },
+        {
+          "name": "assets environments",
+          "syntax": "assets environments",
+          "description": "List environment map assets"
+        },
+        {
+          "name": "assets load",
+          "syntax": "assets load <id>",
+          "description": "Load a specific asset by ID",
+          "examples": [
+            "assets load brick-texture",
+            "assets load bunny-mesh"
+          ]
+        },
+        {
+          "name": "assets preload",
+          "syntax": "assets preload",
+          "description": "Preload all assets marked with preload flag"
+        },
+        {
+          "name": "assets tag",
+          "syntax": "assets tag <tag>",
+          "description": "Load all assets with a specific tag",
+          "examples": [
+            "assets tag essential",
+            "assets tag pbr"
+          ]
+        },
+        {
+          "name": "assets status",
+          "syntax": "assets status",
+          "description": "Show loading statistics (total, ready, loading, errors)"
+        },
+        {
+          "name": "assets info",
+          "syntax": "assets info <id>",
+          "description": "Show detailed information about an asset"
+        },
+        {
+          "name": "graphics status",
+          "syntax": "graphics status",
+          "description": "Show current graphics quality settings"
+        },
+        {
+          "name": "graphics preset",
+          "syntax": "graphics preset [auto|low|medium|high|ultra]",
+          "description": "Get or set quality preset",
+          "examples": [
+            "graphics preset",
+            "graphics preset high",
+            "graphics preset auto"
+          ]
+        },
+        {
+          "name": "graphics lod",
+          "syntax": "graphics lod [on|off|bias <n>|scale <n>]",
+          "description": "Control automatic LOD settings",
+          "examples": [
+            "graphics lod on",
+            "graphics lod off",
+            "graphics lod bias 1.5",
+            "graphics lod scale 2.0"
+          ]
+        }
+      ]
+    },
+    {
       "name": "Keyboard Shortcuts",
       "icon": "keyboard",
       "commands": [

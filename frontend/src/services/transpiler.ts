@@ -379,6 +379,21 @@ const webToNativePatterns: Array<{
     replacement: '#include "native_compat/al_NativeQuality.hpp"  // WebQuality -> NativeQuality (same API)',
     description: 'WebQuality include'
   },
+  {
+    pattern: /#include\s*["<]al_WebAutoLOD\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeLOD.hpp"  // WebAutoLOD -> NativeLOD (auto-LOD features)',
+    description: 'WebAutoLOD include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebProcedural\.hpp[">]/g,
+    replacement: '// WebProcedural: procedural texture generation (no native compat yet)\n// Requires manual porting - uses WebGL texture APIs\n// #include "al_WebProcedural.hpp"',
+    description: 'WebProcedural include'
+  },
+  {
+    pattern: /#include\s*["<]al_WebMipmapTexture\.hpp[">]/g,
+    replacement: '// WebMipmapTexture: continuous LOD textures (no native compat yet)\n// Native OpenGL has glGenerateMipmap() and glTexParameterf(GL_TEXTURE_LOD_BIAS)\n// #include "al_WebMipmapTexture.hpp"',
+    description: 'WebMipmapTexture include'
+  },
 
   // Base class transformations
   {
@@ -506,6 +521,10 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
       code.includes('al_WebEnvironment.hpp') ||
       code.includes('al_WebPBR.hpp') ||
       code.includes('al_WebAutoLOD.hpp') ||
+      code.includes('al_WebProcedural.hpp') ||
+      code.includes('al_WebMipmapTexture.hpp') ||
+      code.includes('al_WebLOD.hpp') ||
+      code.includes('al_WebQuality.hpp') ||
       code.includes('ALLOLIB_WEB_MAIN') ||
       code.includes('configureWebAudio') ||
       code.includes('WebSamplePlayer') ||
@@ -520,6 +539,8 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
       code.includes('LODGroup') ||
       code.includes('QualityManager') ||
       code.includes('AutoLODManager') ||
+      code.includes('ProceduralTexture') ||
+      code.includes('MipmapTexture') ||
       code.includes('drawLOD(') ||
       code.includes('WebControlGUI')) {
     return 'web'

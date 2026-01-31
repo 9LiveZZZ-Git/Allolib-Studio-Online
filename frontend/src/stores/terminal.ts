@@ -3691,6 +3691,268 @@ ${s.body.join('\n')}
           writeln(`Run ${C.green}seq${C.reset} for usage`)
       }
     },
+
+    // ──────────────────────────────────────────────── assets (asset library)
+    assets(ctx) {
+      const sub = ctx.args[0]
+      const subArgs = ctx.args.slice(1)
+
+      // Import asset store dynamically to avoid circular deps
+      const assetStore = (window as any).__assetStore
+
+      if (!assetStore) {
+        writeError('Asset library not initialized')
+        return
+      }
+
+      if (!sub) {
+        writeln(`${C.bold}assets${C.reset} - Asset library management`)
+        writeln('')
+        writeln(`${C.cyan}Listing:${C.reset}`)
+        writeln(`  ${C.green}assets list${C.reset}           List all assets`)
+        writeln(`  ${C.green}assets textures${C.reset}       List textures`)
+        writeln(`  ${C.green}assets meshes${C.reset}         List meshes`)
+        writeln(`  ${C.green}assets environments${C.reset}   List environments`)
+        writeln('')
+        writeln(`${C.cyan}Loading:${C.reset}`)
+        writeln(`  ${C.green}assets load <id>${C.reset}      Load specific asset`)
+        writeln(`  ${C.green}assets preload${C.reset}        Preload all flagged assets`)
+        writeln(`  ${C.green}assets tag <tag>${C.reset}      Load by tag (e.g., essential)`)
+        writeln('')
+        writeln(`${C.cyan}Info:${C.reset}`)
+        writeln(`  ${C.green}assets status${C.reset}         Show loading statistics`)
+        writeln(`  ${C.green}assets info <id>${C.reset}      Show asset details`)
+        return
+      }
+
+      switch (sub) {
+        case 'list':
+        case 'ls': {
+          const assets = assetStore.assets
+          writeln(`${C.bold}Assets${C.reset} (${assets.length})`)
+          writeln('')
+          for (const asset of assets.slice(0, 20)) {
+            const state = asset.loadingState || 'idle'
+            const stateColor = state === 'ready' ? C.green : state === 'loading' ? C.yellow : state === 'error' ? C.red : C.dim
+            writeln(`  ${C.cyan}${asset.id}${C.reset} ${C.dim}(${asset.type})${C.reset} [${stateColor}${state}${C.reset}]`)
+          }
+          if (assets.length > 20) {
+            writeln(`  ${C.dim}... and ${assets.length - 20} more${C.reset}`)
+          }
+          break
+        }
+
+        case 'textures': {
+          const textures = assetStore.assets.filter((a: any) => a.type === 'texture')
+          writeln(`${C.bold}Textures${C.reset} (${textures.length})`)
+          for (const t of textures) {
+            const state = t.loadingState || 'idle'
+            writeln(`  ${C.cyan}${t.name}${C.reset} ${C.dim}${t.fileSize || ''}${C.reset}`)
+          }
+          break
+        }
+
+        case 'meshes': {
+          const meshes = assetStore.assets.filter((a: any) => a.type === 'mesh')
+          writeln(`${C.bold}Meshes${C.reset} (${meshes.length})`)
+          for (const m of meshes) {
+            writeln(`  ${C.cyan}${m.name}${C.reset} ${C.dim}${m.fileSize || ''}${C.reset}`)
+          }
+          break
+        }
+
+        case 'environments': {
+          const envs = assetStore.assets.filter((a: any) => a.type === 'environment')
+          writeln(`${C.bold}Environments${C.reset} (${envs.length})`)
+          for (const e of envs) {
+            writeln(`  ${C.cyan}${e.name}${C.reset} ${C.dim}${e.fileSize || ''}${C.reset}`)
+          }
+          break
+        }
+
+        case 'status': {
+          const stats = assetStore.loadingStats
+          writeln(`${C.bold}Asset Loading Status${C.reset}`)
+          writeln('')
+          writeln(`  Total:   ${stats.total}`)
+          writeln(`  Ready:   ${C.green}${stats.ready}${C.reset}`)
+          writeln(`  Loading: ${C.yellow}${stats.loading}${C.reset}`)
+          writeln(`  Errors:  ${C.red}${stats.errors}${C.reset}`)
+          writeln(`  Progress: ${stats.progress}%`)
+          break
+        }
+
+        case 'load': {
+          const id = subArgs[0]
+          if (!id) {
+            writeError('assets load: missing asset ID')
+            return
+          }
+          writeln(`Loading ${C.cyan}${id}${C.reset}...`)
+          assetStore.loadAsset(id).then((success: boolean) => {
+            if (success) {
+              writeln(`${C.green}✓${C.reset} Loaded ${id}`)
+            } else {
+              writeError(`Failed to load ${id}`)
+            }
+          })
+          break
+        }
+
+        case 'preload': {
+          writeln('Preloading assets...')
+          assetStore.preloadAssets().then(() => {
+            writeln(`${C.green}✓${C.reset} Preload complete`)
+          })
+          break
+        }
+
+        case 'tag': {
+          const tag = subArgs[0]
+          if (!tag) {
+            writeError('assets tag: missing tag name')
+            return
+          }
+          writeln(`Loading assets with tag: ${C.cyan}${tag}${C.reset}`)
+          assetStore.loadAssetsByTag(tag).then((results: Map<string, boolean>) => {
+            const loaded = [...results.values()].filter(v => v).length
+            writeln(`${C.green}✓${C.reset} Loaded ${loaded}/${results.size} assets`)
+          })
+          break
+        }
+
+        case 'info': {
+          const id = subArgs[0]
+          if (!id) {
+            writeError('assets info: missing asset ID')
+            return
+          }
+          const asset = assetStore.assets.find((a: any) => a.id === id)
+          if (!asset) {
+            writeError(`Asset not found: ${id}`)
+            return
+          }
+          writeln(`${C.bold}Asset: ${asset.name}${C.reset}`)
+          writeln(`  ID: ${asset.id}`)
+          writeln(`  Type: ${asset.type}`)
+          writeln(`  State: ${asset.loadingState || 'idle'}`)
+          if (asset.fileSize) writeln(`  Size: ${asset.fileSize}`)
+          if (asset.tags) writeln(`  Tags: ${asset.tags.join(', ')}`)
+          if (asset.localPath) writeln(`  Path: ${asset.localPath}`)
+          break
+        }
+
+        default:
+          writeError(`assets: unknown subcommand '${sub}'`)
+      }
+    },
+
+    // ──────────────────────────────────────────────── graphics (quality/LOD settings)
+    graphics(ctx) {
+      const settings = useSettingsStore()
+      const sub = ctx.args[0]
+      const subArgs = ctx.args.slice(1)
+
+      if (!sub) {
+        writeln(`${C.bold}graphics${C.reset} - Graphics quality settings`)
+        writeln('')
+        writeln(`${C.cyan}Presets:${C.reset}`)
+        writeln(`  ${C.green}graphics preset [auto|low|medium|high|ultra]${C.reset}`)
+        writeln('')
+        writeln(`${C.cyan}LOD Settings:${C.reset}`)
+        writeln(`  ${C.green}graphics lod [on|off]${C.reset}     Toggle auto-LOD`)
+        writeln(`  ${C.green}graphics lod bias <n>${C.reset}     Set LOD bias (0.5-2.0)`)
+        writeln(`  ${C.green}graphics lod scale <n>${C.reset}    Set distance scale`)
+        writeln('')
+        writeln(`${C.cyan}Info:${C.reset}`)
+        writeln(`  ${C.green}graphics status${C.reset}           Show current settings`)
+        return
+      }
+
+      switch (sub) {
+        case 'status': {
+          const g = settings.graphics
+          writeln(`${C.bold}Graphics Settings${C.reset}`)
+          writeln('')
+          writeln(`  Preset:     ${C.cyan}${g.qualityPreset}${C.reset}`)
+          writeln(`  Resolution: ${g.resolutionScale}x`)
+          writeln(`  Target FPS: ${g.targetFPS}`)
+          writeln('')
+          writeln(`${C.bold}LOD${C.reset}`)
+          writeln(`  Enabled:    ${g.lodEnabled ? C.green + 'yes' : C.red + 'no'}${C.reset}`)
+          writeln(`  Bias:       ${g.lodBias}`)
+          writeln(`  Scale:      ${g.lodDistanceScale}`)
+          writeln(`  Levels:     ${g.lodLevels}`)
+          writeln('')
+          writeln(`${C.bold}Effects${C.reset}`)
+          writeln(`  Shadows:    ${g.shadowsEnabled ? 'on' : 'off'} (${g.shadowMapSize}px)`)
+          writeln(`  Reflections: ${g.reflectionsEnabled ? 'on' : 'off'}`)
+          writeln(`  Bloom:      ${g.bloomEnabled ? 'on' : 'off'}`)
+          writeln(`  AO:         ${g.ambientOcclusion ? 'on' : 'off'}`)
+          writeln(`  AA:         ${g.antiAliasing}`)
+          break
+        }
+
+        case 'preset': {
+          const preset = subArgs[0]
+          if (!preset) {
+            writeln(`Current preset: ${C.cyan}${settings.graphics.qualityPreset}${C.reset}`)
+            writeln(`Available: auto, low, medium, high, ultra`)
+            return
+          }
+          const valid = ['auto', 'low', 'medium', 'high', 'ultra']
+          if (!valid.includes(preset)) {
+            writeError(`Invalid preset: ${preset}`)
+            return
+          }
+          settings.applyQualityPreset(preset as any)
+          writeln(`${C.green}✓${C.reset} Applied ${C.cyan}${preset}${C.reset} preset`)
+          break
+        }
+
+        case 'lod': {
+          const action = subArgs[0]
+          if (!action) {
+            writeln(`LOD: ${settings.graphics.lodEnabled ? C.green + 'enabled' : C.red + 'disabled'}${C.reset}`)
+            writeln(`Bias: ${settings.graphics.lodBias}`)
+            return
+          }
+          if (action === 'on') {
+            settings.graphics.lodEnabled = true
+            settings.notifyQualityChange()
+            writeln(`${C.green}✓${C.reset} LOD enabled`)
+          } else if (action === 'off') {
+            settings.graphics.lodEnabled = false
+            settings.notifyQualityChange()
+            writeln(`${C.yellow}✓${C.reset} LOD disabled`)
+          } else if (action === 'bias') {
+            const val = parseFloat(subArgs[1])
+            if (isNaN(val)) {
+              writeln(`Current LOD bias: ${settings.graphics.lodBias}`)
+            } else {
+              settings.graphics.lodBias = Math.max(0.1, Math.min(5, val))
+              settings.notifyQualityChange()
+              writeln(`${C.green}✓${C.reset} LOD bias set to ${settings.graphics.lodBias}`)
+            }
+          } else if (action === 'scale') {
+            const val = parseFloat(subArgs[1])
+            if (isNaN(val)) {
+              writeln(`Current distance scale: ${settings.graphics.lodDistanceScale}`)
+            } else {
+              settings.graphics.lodDistanceScale = Math.max(0.1, Math.min(10, val))
+              settings.notifyQualityChange()
+              writeln(`${C.green}✓${C.reset} Distance scale set to ${settings.graphics.lodDistanceScale}`)
+            }
+          } else {
+            writeError(`Unknown LOD action: ${action}`)
+          }
+          break
+        }
+
+        default:
+          writeError(`graphics: unknown subcommand '${sub}'`)
+      }
+    },
   }
 
   // ── Detailed help for individual commands ───────────────────────────────
@@ -3997,6 +4259,36 @@ ${s.body.join('\n')}
     ${C.dim}# Comment${C.reset}
     ${C.dim}echo "Hello $1"${C.reset}
     ${C.dim}compile && run${C.reset}`,
+    assets: `${C.bold}assets${C.reset} <subcommand> [args]
+  Manage the asset library. Run ${C.dim}assets${C.reset} for full usage.
+
+  ${C.cyan}Listing:${C.reset}
+    ${C.dim}list${C.reset}              List all assets
+    ${C.dim}textures${C.reset}          List textures
+    ${C.dim}meshes${C.reset}            List meshes
+    ${C.dim}environments${C.reset}      List environments
+
+  ${C.cyan}Loading:${C.reset}
+    ${C.dim}load <id>${C.reset}         Load specific asset
+    ${C.dim}preload${C.reset}           Preload all flagged assets
+    ${C.dim}tag <tag>${C.reset}         Load by tag (e.g., essential)
+
+  ${C.cyan}Info:${C.reset}
+    ${C.dim}status${C.reset}            Show loading statistics
+    ${C.dim}info <id>${C.reset}         Show asset details`,
+    graphics: `${C.bold}graphics${C.reset} <subcommand> [args]
+  Graphics quality and LOD settings. Run ${C.dim}graphics${C.reset} for full usage.
+
+  ${C.cyan}Presets:${C.reset}
+    ${C.dim}preset [auto|low|medium|high|ultra]${C.reset}
+
+  ${C.cyan}LOD Settings:${C.reset}
+    ${C.dim}lod [on|off]${C.reset}      Toggle auto-LOD
+    ${C.dim}lod bias <n>${C.reset}      Set LOD bias (0.5-2.0)
+    ${C.dim}lod scale <n>${C.reset}     Set distance scale
+
+  ${C.cyan}Info:${C.reset}
+    ${C.dim}status${C.reset}            Show current settings`,
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────

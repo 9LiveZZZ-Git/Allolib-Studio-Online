@@ -3662,6 +3662,105 @@ int maxParticles = s.maxParticles;`,
     relatedTerms: ['QualityManager', 'QualityPreset'],
   },
   {
+    term: 'ProceduralTexture',
+    category: 'studio',
+    definition: 'Procedural texture generator with various noise and pattern functions. Creates textures programmatically using noise algorithms, gradients, and mathematical patterns.',
+    syntax: 'ProceduralTexture tex(512, 512);\ntex.fbmNoise(6, 2.0f, 0.5f);',
+    example: `ProceduralTexture tex(512, 512);
+
+void onCreate() override {
+    // Fill with FBM noise
+    tex.fbmNoise(6, 2.0f, 0.5f);  // octaves, lacunarity, persistence
+    tex.upload();
+}
+
+void onDraw(Graphics& g) override {
+    tex.bind(0);
+    g.draw(mesh);
+}`,
+    platforms: ['web'],
+    relatedTerms: ['Texture', 'WebImage', 'MipmapTexture'],
+  },
+  {
+    term: 'MipmapTexture',
+    category: 'studio',
+    definition: 'Texture with automatic mipmap generation for continuous LOD. Uploads a single high-resolution texture and generates mipmaps on the GPU, then uses textureLod() in shaders for smooth continuous LOD.',
+    syntax: 'MipmapTexture tex;\ntex.load("/assets/textures/brick_4k.jpg");',
+    example: `MipmapTexture tex;
+
+void onCreate() override {
+    tex.load("/assets/textures/brick_4k.jpg");
+    tex.setReferenceDistance(5.0f);  // Full quality at 5 units
+}
+
+void onDraw(Graphics& g) override {
+    float dist = (nav().pos() - objectPos).mag();
+    float lod = tex.calculateLOD(dist);  // Continuous 0.0, 0.5, 1.3...
+
+    shader.uniform("u_textureLOD", lod);
+    tex.bind(0);
+    g.draw(mesh);
+}`,
+    platforms: ['web'],
+    relatedTerms: ['TextureLOD', 'ProceduralTexture', 'autoLOD'],
+  },
+  {
+    term: 'Asset',
+    category: 'studio',
+    definition: 'Any loadable resource in the asset library: textures, meshes, environments, fonts, sounds, etc. Assets have loading states (idle, loading, ready, error), priorities, and can be preloaded.',
+    syntax: 'const asset = assetLibrary.getAsset("bunny-mesh");',
+    example: `// Asset library in Vue frontend
+const assetStore = useAssetLibraryStore();
+
+// Load single asset
+await assetStore.loadAsset("brick-texture");
+
+// Load by tag
+await assetStore.loadAssetsByTag("essential");
+
+// Check loading state
+const state = assetStore.getLoadingState("brick-texture");
+if (state === "ready") {
+    // Use asset
+}`,
+    platforms: ['web'],
+    relatedTerms: ['preloadAssets', 'AssetPriority'],
+  },
+  {
+    term: 'preloadAssets',
+    category: 'studio',
+    definition: 'Preloads all assets marked with preload: true. Returns progress events for loading UI. Uses concurrent loading with configurable concurrency limit.',
+    syntax: 'await assetStore.preloadAssets();',
+    example: `// Preload essential assets before app starts
+const assetStore = useAssetLibraryStore();
+
+// Check loading progress
+const stats = assetStore.loadingStats;
+console.log(\`Progress: \${stats.progress}%\`);
+console.log(\`\${stats.ready}/\${stats.total} assets loaded\`);
+
+// Preload with progress
+await assetStore.preloadAssets();`,
+    platforms: ['web'],
+    relatedTerms: ['Asset', 'AssetPriority', 'loadAssetsByTag'],
+  },
+  {
+    term: 'AssetPriority',
+    category: 'studio',
+    definition: 'Loading priority levels for assets: critical (load first), high, normal, low. Critical assets block app start, low priority assets load in background.',
+    syntax: "priority: 'critical' | 'high' | 'normal' | 'low'",
+    example: `// In asset library definition
+{
+    id: 'main-environment',
+    name: 'Studio HDR',
+    type: 'environment',
+    priority: 'critical',  // Load before anything else
+    preload: true,
+}`,
+    platforms: ['web'],
+    relatedTerms: ['Asset', 'preloadAssets'],
+  },
+  {
     term: 'native_compat',
     category: 'studio',
     definition: 'Native compatibility layer providing desktop equivalents of AlloLib Studio web headers. Allows Studio code to run on native AlloLib with identical APIs.',
