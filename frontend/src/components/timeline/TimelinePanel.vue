@@ -147,15 +147,24 @@
         <span class="toggle-icon">{{ cat.icon }}</span>
       </button>
     </div>
+
+    <!-- Create Object Dialog -->
+    <CreateObjectDialog
+      :visible="showCreateObjectDialog"
+      :currentTime="timeline.currentTime"
+      @close="showCreateObjectDialog = false"
+      @created="onObjectCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useTimelineStore, type TrackCategory } from '@/stores/timeline'
 import { useSequencerStore } from '@/stores/sequencer'
-import { useObjectsStore } from '@/stores/objects'
+import { useObjectsStore, type SceneObject } from '@/stores/objects'
 import { useEnvironmentStore } from '@/stores/environment'
+import { parameterSystem } from '@/utils/parameter-system'
 
 import TransportBar from './TransportBar.vue'
 import TimeRuler from './TimeRuler.vue'
@@ -165,6 +174,7 @@ import AudioTrackLane from './tracks/AudioTrackLane.vue'
 import ObjectTrackLane from './tracks/ObjectTrackLane.vue'
 import EnvironmentTrackLane from './tracks/EnvironmentTrackLane.vue'
 import EventTrackLane from './tracks/EventTrackLane.vue'
+import CreateObjectDialog from './CreateObjectDialog.vue'
 
 const HEADER_WIDTH = 120
 
@@ -178,7 +188,21 @@ const trackContainerRef = ref<InstanceType<typeof TrackContainer>>()
 // Event tracks (placeholder until event store is created)
 const eventTracks = ref<Array<{ id: string; name: string; type: string }>>([])
 
+// Dialog state
+const showCreateObjectDialog = ref(false)
+
 const zoomPercent = computed(() => (timeline.viewport.zoomX / 50) * 100)
+
+// Sync object selection with Parameter Panel
+watch(() => objectsStore.selectedObjectId, (objectId) => {
+  if (objectId) {
+    // Notify parameter system that an object is selected
+    parameterSystem.setSelectedObject(objectId)
+    console.log(`[Timeline] Object selected: ${objectId}`)
+  } else {
+    parameterSystem.setSelectedObject(null)
+  }
+})
 
 function getTrackCount(category: TrackCategory): number {
   switch (category) {
@@ -210,9 +234,7 @@ function setBPM(bpm: number) {
 function handleAddTrack(category: TrackCategory) {
   switch (category) {
     case 'objects':
-      objectsStore.createObject({
-        name: `Object ${objectsStore.objectList.length + 1}`,
-      })
+      showCreateObjectDialog.value = true
       break
     case 'events':
       // TODO: Show event type picker (camera, marker, script)
@@ -223,6 +245,12 @@ function handleAddTrack(category: TrackCategory) {
       })
       break
   }
+}
+
+function onObjectCreated(object: SceneObject) {
+  // Select the newly created object
+  objectsStore.selectObject(object.id)
+  console.log(`[Timeline] Created object: ${object.name}`)
 }
 </script>
 

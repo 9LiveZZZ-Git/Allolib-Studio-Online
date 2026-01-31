@@ -112,6 +112,10 @@ class ParameterSystem {
   private pollInterval: number | null = null
   private retryTimeouts: number[] = []
 
+  // Currently selected object for parameter panel
+  private _selectedObjectId: string | null = null
+  private selectionCallbacks: Set<(objectId: string | null) => void> = new Set()
+
   constructor() {
     // Set up global callbacks for C++ notifications
     this.setupAlloLibCallbacks()
@@ -940,6 +944,46 @@ class ParameterSystem {
     if (added > 0) {
       console.log(`[ParameterSystem] Added ${added} parameters from C++ source detection`)
       this.notifyChange()
+    }
+  }
+
+  // ─── Object Selection ─────────────────────────────────────────────────────
+
+  /**
+   * Get the currently selected object ID
+   */
+  get selectedObjectId(): string | null {
+    return this._selectedObjectId
+  }
+
+  /**
+   * Set the selected object (syncs with Parameter Panel)
+   */
+  setSelectedObject(objectId: string | null): void {
+    if (this._selectedObjectId === objectId) return
+
+    this._selectedObjectId = objectId
+
+    // Notify listeners
+    for (const callback of this.selectionCallbacks) {
+      try {
+        callback(objectId)
+      } catch (e) {
+        console.error('[ParameterSystem] Selection callback error:', e)
+      }
+    }
+
+    // Notify parameter change to refresh panel
+    this.notifyChange()
+  }
+
+  /**
+   * Subscribe to object selection changes
+   */
+  onObjectSelectionChange(callback: (objectId: string | null) => void): () => void {
+    this.selectionCallbacks.add(callback)
+    return () => {
+      this.selectionCallbacks.delete(callback)
     }
   }
 }

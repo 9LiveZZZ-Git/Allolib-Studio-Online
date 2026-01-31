@@ -14,9 +14,12 @@ export { default as TimeRuler } from './TimeRuler.vue'
 export { default as TrackSection } from './TrackSection.vue'
 export { default as SectionHeader } from './SectionHeader.vue'
 export { default as TrackContainer } from './TrackContainer.vue'
+export { default as CreateObjectDialog } from './CreateObjectDialog.vue'
 
 // Track lane components
 export { default as AudioTrackLane } from './tracks/AudioTrackLane.vue'
 export { default as ObjectTrackLane } from './tracks/ObjectTrackLane.vue'
 export { default as EnvironmentTrackLane } from './tracks/EnvironmentTrackLane.vue'
 export { default as EventTrackLane } from './tracks/EventTrackLane.vue'
+export { default as LifecycleBar } from './tracks/LifecycleBar.vue'
+export { default as KeyframeLane } from './tracks/KeyframeLane.vue'
