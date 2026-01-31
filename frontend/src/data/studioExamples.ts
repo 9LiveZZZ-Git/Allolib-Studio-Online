@@ -5073,21 +5073,45 @@ int main() {
   // ==========================================================================
   {
     id: 'studio-timeline-objects',
-    title: 'Object Animation Demo',
-    description: 'Animated primitives with timeline-driven transforms and materials',
+    title: 'Timeline Object Animation',
+    description: 'Objects animated via Timeline UI with keyframe interpolation - use the Timeline panel to create objects and add keyframes',
     category: 'studio-timeline',
     subcategory: 'objects',
     code: `/**
- * Object Animation Demo
+ * Timeline Object Animation
  *
- * Demonstrates the ObjectManager system for timeline-driven animation.
- * Objects can be spawned, animated, and destroyed based on timeline time.
+ * This example demonstrates TIMELINE-DRIVEN object animation.
+ * Objects are created in the Timeline UI and animated via keyframes.
  *
- * This example shows:
- * - Multiple primitive objects (sphere, cube, torus)
- * - Animated positions using sine waves
- * - Color changes over time
- * - Basic PBR materials
+ * ════════════════════════════════════════════════════════════════
+ * HOW TO USE THE TIMELINE:
+ * ════════════════════════════════════════════════════════════════
+ *
+ * 1. COMPILE THIS CODE (press Play button or Ctrl+Enter)
+ *
+ * 2. OPEN THE TIMELINE (click "Timeline" tab at bottom of screen)
+ *
+ * 3. ADD AN OBJECT:
+ *    - Click the [+] button next to "Objects" section header
+ *    - Pick a primitive (Cube, Sphere, Torus, etc.)
+ *    - Set name, color, and spawn time
+ *    - Click "Create Object"
+ *
+ * 4. ADD KEYFRAMES:
+ *    - Select the object's track in the timeline
+ *    - Move the playhead to the desired time
+ *    - In the Parameters panel (right side), change position/scale/color
+ *    - Click the keyframe button (diamond icon) to add a keyframe
+ *    - Move playhead to a different time and repeat
+ *
+ * 5. PLAY THE ANIMATION:
+ *    - Press Space or click the Play button in timeline
+ *    - Objects animate based on keyframe interpolation!
+ *
+ * ════════════════════════════════════════════════════════════════
+ *
+ * The C++ code below creates some demo objects procedurally.
+ * But you can also create objects entirely from the Timeline UI!
  */
 
 #include "al_WebApp.hpp"

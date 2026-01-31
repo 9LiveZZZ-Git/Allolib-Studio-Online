@@ -280,15 +280,122 @@ class ObjectManagerBridge {
 
   /**
    * Start the lifecycle update loop
+   * This runs every frame during playback to:
+   * 1. Interpolate keyframes and update object transforms
+   * 2. Update lifecycle visibility (spawn/destroy times)
    */
   private startLifecycleLoop(): void {
     const update = () => {
-      if (this.wasmModule && this.timelineStore && this.timelineStore.playing) {
-        this.wasmModule._al_obj_update_lifecycles(this.timelineStore.currentTime)
+      if (this.wasmModule && this.timelineStore && this.objectsStore) {
+        const currentTime = this.timelineStore.currentTime
+        const isPlaying = this.timelineStore.playing
+
+        // Always interpolate keyframes when playing (or when scrubbing)
+        if (isPlaying || this.lastTime !== currentTime) {
+          this.interpolateAllObjects(currentTime)
+          this.lastTime = currentTime
+        }
+
+        // Update WASM lifecycle (spawn/destroy visibility)
+        if (isPlaying) {
+          this.wasmModule._al_obj_update_lifecycles(currentTime)
+        }
       }
       this.animationFrameId = requestAnimationFrame(update)
     }
     this.animationFrameId = requestAnimationFrame(update)
+  }
+
+  private lastTime: number = -1
+
+  /**
+   * Interpolate all object properties from keyframes at the given time
+   */
+  private interpolateAllObjects(time: number): void {
+    if (!this.objectsStore) return
+
+    for (const obj of this.objectsStore.objectList) {
+      this.interpolateObject(obj.id, time)
+    }
+  }
+
+  /**
+   * Interpolate a single object's properties from keyframes
+   */
+  private interpolateObject(objectId: string, time: number): void {
+    if (!this.objectsStore) return
+
+    const obj = this.objectsStore.getObject(objectId)
+    if (!obj) return
+
+    // List of properties that can be keyframed
+    const transformProps = [
+      { prop: 'positionX', target: 'position', index: 0 },
+      { prop: 'positionY', target: 'position', index: 1 },
+      { prop: 'positionZ', target: 'position', index: 2 },
+      { prop: 'scaleX', target: 'scale', index: 0 },
+      { prop: 'scaleY', target: 'scale', index: 1 },
+      { prop: 'scaleZ', target: 'scale', index: 2 },
+      { prop: 'rotationX', target: 'rotation', index: 0 },
+      { prop: 'rotationY', target: 'rotation', index: 1 },
+      { prop: 'rotationZ', target: 'rotation', index: 2 },
+      { prop: 'rotationW', target: 'rotation', index: 3 },
+    ]
+
+    let transformChanged = false
+
+    for (const { prop, target, index } of transformProps) {
+      if (this.objectsStore.hasKeyframes(objectId, prop)) {
+        const value = this.objectsStore.getValueAtTime(objectId, prop, time)
+        if (value !== undefined) {
+          const arr = obj.transform[target as keyof typeof obj.transform] as number[]
+          if (arr[index] !== value) {
+            arr[index] = value
+            transformChanged = true
+          }
+        }
+      }
+    }
+
+    // Material properties
+    const materialProps = [
+      { prop: 'colorR', target: 'color', index: 0 },
+      { prop: 'colorG', target: 'color', index: 1 },
+      { prop: 'colorB', target: 'color', index: 2 },
+      { prop: 'colorA', target: 'color', index: 3 },
+      { prop: 'metallic', target: 'metallic', index: -1 },
+      { prop: 'roughness', target: 'roughness', index: -1 },
+    ]
+
+    let materialChanged = false
+
+    for (const { prop, target, index } of materialProps) {
+      if (this.objectsStore.hasKeyframes(objectId, prop)) {
+        const value = this.objectsStore.getValueAtTime(objectId, prop, time)
+        if (value !== undefined) {
+          if (index >= 0 && obj.material.color) {
+            if (obj.material.color[index] !== value) {
+              obj.material.color[index] = value
+              materialChanged = true
+            }
+          } else if (index < 0) {
+            const current = obj.material[target as keyof typeof obj.material]
+            if (current !== value) {
+              (obj.material as any)[target] = value
+              materialChanged = true
+            }
+          }
+        }
+      }
+    }
+
+    // Sync to WASM if anything changed
+    if (transformChanged) {
+      this.syncObjectTransform(obj)
+    }
+    if (materialChanged) {
+      this.syncObjectMaterial(obj)
+    }
   }
 
   /**

@@ -32,6 +32,7 @@ export interface DisplaySettings {
   showSequencer: boolean
   showAssetLoadingTest: boolean
   studioFocus: boolean
+  useUnifiedTimeline: boolean  // Use new unified timeline instead of sequencer
   consoleHeight: number
   analysisPanelHeight: number
   sequencerHeight: number
@@ -67,6 +68,7 @@ export interface GraphicsSettings {
   maxTextureSize: 512 | 1024 | 2048 | 4096
   textureLODEnabled: boolean
   textureLODBias: number
+  textureReferenceDistance: number  // Distance where LOD = 0 (full resolution)
   // Shader LOD settings
   shaderLODEnabled: boolean
   shaderComplexity: 'minimal' | 'simple' | 'standard' | 'full'
@@ -108,6 +110,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showSequencer: false,
     showAssetLoadingTest: false,
     studioFocus: false,
+    useUnifiedTimeline: true,  // Use new unified timeline by default
     consoleHeight: 200,
     analysisPanelHeight: 200,
     sequencerHeight: 300,
@@ -142,6 +145,7 @@ export const useSettingsStore = defineStore('settings', () => {
     maxTextureSize: 2048,
     textureLODEnabled: true,
     textureLODBias: 1.0,
+    textureReferenceDistance: 5.0,  // Distance where LOD = 0 (full resolution)
     // Shader LOD
     shaderLODEnabled: true,
     shaderComplexity: 'standard',
@@ -221,6 +225,7 @@ export const useSettingsStore = defineStore('settings', () => {
       showSequencer: false,
       showAssetLoadingTest: false,
       studioFocus: false,
+      useUnifiedTimeline: true,
       consoleHeight: 200,
       analysisPanelHeight: 200,
       sequencerHeight: 300,
@@ -257,6 +262,7 @@ export const useSettingsStore = defineStore('settings', () => {
       maxTextureSize: 2048,
       textureLODEnabled: true,
       textureLODBias: 1.0,
+      textureReferenceDistance: 5.0,
       // Shader LOD
       shaderLODEnabled: true,
       shaderComplexity: 'standard',
@@ -293,6 +299,7 @@ export const useSettingsStore = defineStore('settings', () => {
         graphics.value.maxTextureSize = 512
         graphics.value.textureLODEnabled = true
         graphics.value.textureLODBias = 2.0
+        graphics.value.textureReferenceDistance = 2.0  // Lower = switch to lower res sooner
         // Shader LOD - minimal shaders
         graphics.value.shaderLODEnabled = true
         graphics.value.shaderComplexity = 'minimal'
@@ -321,6 +328,7 @@ export const useSettingsStore = defineStore('settings', () => {
         graphics.value.maxTextureSize = 1024
         graphics.value.textureLODEnabled = true
         graphics.value.textureLODBias = 1.5
+        graphics.value.textureReferenceDistance = 4.0
         // Shader LOD - simple shaders
         graphics.value.shaderLODEnabled = true
         graphics.value.shaderComplexity = 'simple'
@@ -349,6 +357,7 @@ export const useSettingsStore = defineStore('settings', () => {
         graphics.value.maxTextureSize = 2048
         graphics.value.textureLODEnabled = true
         graphics.value.textureLODBias = 1.0
+        graphics.value.textureReferenceDistance = 5.0
         // Shader LOD - standard PBR
         graphics.value.shaderLODEnabled = true
         graphics.value.shaderComplexity = 'standard'
@@ -377,6 +386,7 @@ export const useSettingsStore = defineStore('settings', () => {
         graphics.value.maxTextureSize = 4096
         graphics.value.textureLODEnabled = false  // Always max quality
         graphics.value.textureLODBias = 0.75
+        graphics.value.textureReferenceDistance = 10.0  // Keep high quality longer
         // Shader LOD - full quality
         graphics.value.shaderLODEnabled = false  // Always max complexity
         graphics.value.shaderComplexity = 'full'
@@ -465,6 +475,7 @@ export const useSettingsStore = defineStore('settings', () => {
       w.allolib.textureLOD.setEnabled(graphics.value.textureLODEnabled)
       w.allolib.textureLOD.setBias(graphics.value.textureLODBias)
       w.allolib.textureLOD.setMaxResolution(graphics.value.maxTextureSize)
+      w.allolib.textureLOD.setReferenceDistance(graphics.value.textureReferenceDistance)
 
       console.log(
         '[Settings] Texture LOD settings applied: enabled=' +
@@ -473,6 +484,8 @@ export const useSettingsStore = defineStore('settings', () => {
           graphics.value.textureLODBias +
           ', maxResolution=' +
           graphics.value.maxTextureSize +
+          ', refDist=' +
+          graphics.value.textureReferenceDistance +
           ', quality=' +
           graphics.value.textureQuality
       )
