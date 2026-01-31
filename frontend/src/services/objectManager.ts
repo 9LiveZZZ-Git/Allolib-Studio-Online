@@ -44,9 +44,23 @@ class ObjectManagerBridge {
   private animationFrameId: number | null = null
 
   /**
+   * Check if WASM module has object manager functions
+   */
+  private hasObjectManagerFunctions(wasm: any): boolean {
+    return typeof wasm._al_obj_create === 'function' &&
+           typeof wasm._al_obj_clear === 'function'
+  }
+
+  /**
    * Connect to WASM module and stores
    */
   connect(wasmModule: any): void {
+    // Check if object manager functions are available
+    if (!this.hasObjectManagerFunctions(wasmModule)) {
+      console.log('[ObjectManagerBridge] WASM object manager not available (expected for basic apps)')
+      return
+    }
+
     this.wasmModule = wasmModule as ObjectManagerWasm
     this.objectsStore = useObjectsStore()
     this.timelineStore = useTimelineStore()
@@ -67,6 +81,9 @@ class ObjectManagerBridge {
    * Disconnect from WASM
    */
   disconnect(): void {
+    // Only do cleanup if we were actually connected
+    if (!this.wasmModule) return
+
     this.stopLifecycleLoop()
 
     for (const unwatch of this.unwatchFns) {
@@ -74,7 +91,7 @@ class ObjectManagerBridge {
     }
     this.unwatchFns = []
 
-    if (this.wasmModule) {
+    if (this.wasmModule._al_obj_clear) {
       this.wasmModule._al_obj_clear()
     }
 
