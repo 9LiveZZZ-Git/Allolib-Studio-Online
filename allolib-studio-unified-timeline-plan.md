@@ -1059,6 +1059,31 @@ interface ArrangementFileData {
 
 ---
 
+### 📋 Detailed Implementation Specs Reference
+
+The following detailed specifications are in `allolib-studio-unified-timeline-plan (old).md`:
+
+| Specification | Location in Old Plan |
+|--------------|---------------------|
+| **ObjectDefinition Schema** | Part 3: ◈ OBJECTS - Full TypeScript interfaces |
+| **ObjectTrack & Keyframeable Types** | Part 3: ◈ OBJECTS - Instance data structure |
+| **ObjectManager Runtime** | Part 3: ◈ OBJECTS - Full class implementation |
+| **EnvironmentData Schema** | Part 3: ◐ ENVIRONMENT - Skybox, fog, lights, terrain |
+| **SkyboxTransition & LightDefinition** | Part 3: ◐ ENVIRONMENT - Animation types |
+| **EventsData & TimedEvent Types** | Part 3: ⚡ EVENTS - All action types |
+| **ListenerEvent & Trigger Types** | Part 3: ⚡ EVENTS - condition, input, audio, custom |
+| **ScriptContext Full API** | Part 3: ⚡ EVENTS - objects, audio, env, camera, input |
+| **ScriptSandbox Implementation** | Part 3: ⚡ EVENTS - Execution and condition evaluation |
+| **EventManager Runtime** | Part 3: ⚡ EVENTS - Full class with camera state |
+| **TimelineStore Orchestrator** | Part 7: Store Structure - Unified state management |
+| **WASM Bridge Extensions** | Part 8: WASM Bridge - All required C++ bindings |
+| **Test Strategy** | Part 9: Testing - Unit, integration, manual tests |
+| **Migration Path** | Part 10: Migration - Backward compatibility |
+
+When implementing a feature, refer to the old plan for the complete TypeScript/code specifications.
+
+---
+
 ## Part 3.5: Unified Timeline Main View (NEW)
 
 ### Overview
@@ -2195,3 +2220,454 @@ backend/src/
 └── services/
     └── transpilerService.ts      # Server-side transpilation
 ```
+
+---
+
+## Part 8: Studio Examples & Full Showcase
+
+### Overview
+
+After implementing the unified timeline, we need comprehensive examples that demonstrate the full workflow and all features working together. These examples go in `frontend/src/data/studioExamples.ts` under a new "Allolib Studio" category.
+
+### Example Categories to Add
+
+```typescript
+// In studioExamples.ts - Add new category
+{
+  category: 'Allolib Studio',
+  subcategories: [
+    'Full Workflows',      // Complete projects showing all features
+    'Object Animation',    // Object tracks with keyframes
+    'Environment',         // Skybox, fog, lighting animation
+    'Events & Scripting',  // Camera, triggers, JavaScript
+    'Audio-Reactive',      // Audio FFT driving visuals
+    'Interactive',         // User input and game-like behavior
+  ]
+}
+```
+
+### Required Examples
+
+#### 1. Crystal Cave Journey (Full Workflow Showcase)
+**Demonstrates:** All 4 track types working together
+
+```cpp
+// Category: Allolib Studio > Full Workflows
+// Description: Complete audiovisual experience with animated objects,
+//              dynamic environment, camera movements, and audio-reactive effects
+
+class CrystalCaveJourney : public WebApp {
+  // Audio: Ambient pad synth + percussion
+  // Objects: Crystal formations with animated glow and rotation
+  // Environment: Skybox transition (dark → glowing), fog density animation
+  // Events: Camera dolly shots, audio-reactive crystal pulses
+
+  // Timeline:
+  // 0:00 - Fade in, camera orbits cave entrance
+  // 0:15 - First crystals spawn, start glowing
+  // 0:30 - Camera pushes into cave, fog increases
+  // 1:00 - Climax: all crystals pulse with audio bass
+  // 1:30 - Camera pulls back, fade to black
+};
+```
+
+**Full code includes:**
+- PolySynth setup with ambient pads
+- 5 crystal objects with keyframed position/rotation/glow
+- Environment with skybox crossfade and fog animation
+- Camera events: orbit → push → follow → pullback
+- Audio-reactive listener: bass triggers crystal flash
+- Full .synthSequence integration
+
+#### 2. Procedural Planet (Object Animation)
+**Demonstrates:** Complex object keyframes, material animation
+
+```cpp
+// Category: Allolib Studio > Object Animation
+// Description: Animated procedural planet with atmosphere, rings, and moons
+
+class ProceduralPlanet : public WebApp {
+  // Objects:
+  // - planet: sphere with procedural texture, slow rotation
+  // - atmosphere: transparent shell with animated glow
+  // - rings: torus with particle texture, independent rotation
+  // - moon1, moon2: orbiting with keyframed positions
+
+  // Keyframes:
+  // - Planet rotation: 360° over 60s
+  // - Atmosphere intensity: pulsing 0.5-1.0
+  // - Moon orbits: circular paths at different speeds
+  // - Ring opacity: fades in at 5s
+};
+```
+
+#### 3. Day-Night Cycle (Environment Animation)
+**Demonstrates:** Skybox transitions, lighting animation, fog
+
+```cpp
+// Category: Allolib Studio > Environment
+// Description: Complete day/night cycle with sun, moon, and atmospheric effects
+
+class DayNightCycle : public WebApp {
+  // Environment timeline (60s loop):
+  // 0:00 - Dawn: orange horizon skybox, sun rises
+  // 15:00 - Midday: blue sky, full sun intensity
+  // 30:00 - Dusk: purple/orange, sun sets
+  // 45:00 - Night: star field, moon, fog increases
+
+  // Lights:
+  // - Sun: directional, color shifts orange → white → orange → off
+  // - Moon: point light, intensity ramps during night
+  // - Ambient: color follows sky tone
+};
+```
+
+#### 4. Interactive Camera Demo (Events & Scripting)
+**Demonstrates:** Camera events, markers, JavaScript scripting
+
+```cpp
+// Category: Allolib Studio > Events & Scripting
+// Description: Cinematic camera system with user-triggerable transitions
+
+class CameraDemo : public WebApp {
+  // Camera modes:
+  // - Orbit: smooth rotation around center
+  // - Follow: tracks moving object with offset
+  // - Cinematic: scripted dolly shots
+  // - Shake: triggered by events
+
+  // Timed events:
+  // 0:00 - camera.orbit()
+  // 5:00 - camera.follow("sphere", [0,2,5])
+  // 10:00 - camera.cinematic([path points])
+
+  // Listeners:
+  // - Spacebar: camera.shake(0.5, 1.0)
+  // - Click: spawn particle at mouse position
+};
+```
+
+#### 5. Audio Visualizer (Audio-Reactive)
+**Demonstrates:** Audio FFT driving object properties
+
+```cpp
+// Category: Allolib Studio > Audio-Reactive
+// Description: 3D audio visualizer with frequency bands driving geometry
+
+class AudioVisualizer : public WebApp {
+  // Objects: 64 bars in circular arrangement
+  // Each bar height driven by FFT bin
+
+  // Listeners (all audio-triggered):
+  // - Bass > 0.7: flash background, camera shake
+  // - Mid > 0.5: rotate bar ring
+  // - High > 0.4: spawn particles at peaks
+
+  // Scripts:
+  // onFrame: update all bar heights from audio.fft.bins
+  // onBeat: pulse ambient light intensity
+};
+```
+
+#### 6. Simple Game (Interactive)
+**Demonstrates:** User input, game state, collision-like behavior
+
+```cpp
+// Category: Allolib Studio > Interactive
+// Description: Simple collect-the-orbs game with score tracking
+
+class SimpleGame : public WebApp {
+  // Objects:
+  // - player: sphere controlled by WASD
+  // - orbs[]: randomly spawned collectibles
+  // - obstacles[]: avoid these
+
+  // Listeners:
+  // - WASD keys: move player (velocity-based)
+  // - Condition "distance(player, orb) < 1": collect orb, score++
+  // - Condition "distance(player, obstacle) < 1": game over
+  // - R key: restart game
+
+  // State:
+  // - score: number
+  // - gameOver: boolean
+  // - highScore: number (persists)
+};
+```
+
+### Showcase Project: "Emergence"
+
+A complete 3-minute audiovisual piece that serves as the definitive demonstration of Allolib Studio Online's capabilities.
+
+#### Concept
+An abstract journey from chaos to order, with audio and visuals tightly synchronized.
+
+#### Timeline Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  EMERGENCE - 3:00 Complete Audiovisual Experience                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ACT 1: CHAOS (0:00 - 1:00)                                                │
+│  ─────────────────────────                                                  │
+│  ♫ Audio: Noise, scattered hits, building tension                          │
+│  ◈ Objects: 100 particles in random Brownian motion                        │
+│  ◐ Env: Dark, heavy fog, no skybox                                         │
+│  ⚡ Events: Random camera shake, particle spawns                           │
+│                                                                             │
+│  ACT 2: EMERGENCE (1:00 - 2:00)                                            │
+│  ──────────────────────────────                                             │
+│  ♫ Audio: Melody emerges, harmonic progression                             │
+│  ◈ Objects: Particles attract to center, form geometric shapes             │
+│  ◐ Env: Fog clears, ambient light increases, skybox fades in              │
+│  ⚡ Events: Camera dollies in, audio-reactive pulses on downbeats          │
+│                                                                             │
+│  ACT 3: ORDER (2:00 - 3:00)                                                │
+│  ─────────────────────────                                                  │
+│  ♫ Audio: Full arrangement, triumphant finale                              │
+│  ◈ Objects: Perfect crystal structure, synchronized rotation               │
+│  ◐ Env: Bright HDRI environment, lens flare                               │
+│  ⚡ Events: Camera orbits structure, fade to white on final note          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Technical Breakdown
+
+```typescript
+// Showcase project structure
+const emergenceProject = {
+  name: "Emergence",
+  duration: 180, // 3 minutes
+  bpm: 120,
+
+  audioTracks: [
+    { name: "NoiseSynth", clips: ["chaos.synthSequence"] },
+    { name: "MelodySynth", clips: ["melody.synthSequence"] },
+    { name: "PadSynth", clips: ["harmony.synthSequence"] },
+    { name: "PercSynth", clips: ["rhythm.synthSequence"] },
+  ],
+
+  objectTracks: [
+    // 100 particles with individually keyframed positions
+    ...Array.from({ length: 100 }, (_, i) => ({
+      id: `particle_${i}`,
+      definition: "particle",
+      spawnTime: 0,
+      overrides: {
+        transform: {
+          position: {
+            keyframes: [
+              { time: 0, value: randomPosition() },      // Chaos
+              { time: 60, value: attractToCenter(i) },   // Emerging
+              { time: 120, value: crystalPosition(i) },  // Order
+            ]
+          }
+        }
+      }
+    })),
+
+    // Central crystal (spawns at 1:30)
+    {
+      id: "crystal_main",
+      definition: "crystal",
+      spawnTime: 90,
+      overrides: {
+        transform: {
+          scale: { keyframes: [
+            { time: 0, value: [0,0,0] },
+            { time: 30, value: [5,5,5], easing: "easeOutElastic" }
+          ]}
+        }
+      }
+    }
+  ],
+
+  environment: {
+    skybox: {
+      transitions: [
+        { time: 0, asset: "void_black.hdr" },
+        { time: 60, asset: "nebula.hdr", duration: 10 },
+        { time: 120, asset: "crystal_palace.hdr", duration: 5 }
+      ]
+    },
+    fog: {
+      density: { keyframes: [
+        { time: 0, value: 0.1 },
+        { time: 60, value: 0.05 },
+        { time: 120, value: 0 }
+      ]}
+    },
+    ambient: {
+      intensity: { keyframes: [
+        { time: 0, value: 0.1 },
+        { time: 60, value: 0.3 },
+        { time: 120, value: 1.0 }
+      ]}
+    }
+  },
+
+  events: {
+    timedEvents: [
+      // Camera choreography
+      { time: 0, action: { type: "camera", pose: { position: [0,0,50] }, fov: 90 }},
+      { time: 30, action: { type: "camera-shake", intensity: 0.3, duration: 2 }},
+      { time: 60, action: { type: "camera", pose: { position: [0,10,30] }, duration: 5 }},
+      { time: 90, action: { type: "camera-follow", target: "crystal_main", offset: [0,5,15] }},
+      { time: 150, action: { type: "camera", pose: { position: [20,10,20] }, duration: 10 }},
+
+      // Markers
+      { time: 0, action: { type: "marker", label: "ACT 1: CHAOS" }},
+      { time: 60, action: { type: "marker", label: "ACT 2: EMERGENCE" }},
+      { time: 120, action: { type: "marker", label: "ACT 3: ORDER" }},
+
+      // Finale
+      { time: 175, action: { type: "transition", effect: "fade", color: [1,1,1], duration: 5 }}
+    ],
+
+    listeners: [
+      // Audio-reactive throughout
+      {
+        id: "bass-pulse",
+        trigger: { type: "audio", band: "bass", threshold: 0.7, edge: "rising" },
+        action: { type: "script", code: `
+          for (const p of objects.all()) {
+            if (p.id.startsWith('particle_')) {
+              p.setUniform('u_glow', 2.0);
+            }
+          }
+        `},
+        cooldown: 0.1
+      },
+
+      // Beat-synced camera
+      {
+        id: "beat-camera",
+        trigger: { type: "audio", band: "mid", threshold: 0.8, edge: "rising" },
+        action: { type: "camera-shake", intensity: 0.05, duration: 0.1 },
+        activeTimeRange: [60, 180],
+        cooldown: 0.5
+      }
+    ]
+  }
+};
+```
+
+### Implementation Tasks
+
+Add to **Phase 6: Integration & Polish (Week 2)**:
+
+#### Studio Examples & Showcase
+
+- [ ] Create "Allolib Studio" category in studioExamples.ts
+- [ ] Implement Crystal Cave Journey example (full workflow)
+- [ ] Implement Procedural Planet example (object animation)
+- [ ] Implement Day-Night Cycle example (environment)
+- [ ] Implement Camera Demo example (events & scripting)
+- [ ] Implement Audio Visualizer example (audio-reactive)
+- [ ] Implement Simple Game example (interactive)
+- [ ] Create "Emergence" showcase project
+  - [ ] Design audio: 4 synth tracks for 3-minute piece
+  - [ ] Design particle system behavior
+  - [ ] Create all keyframe animations
+  - [ ] Choreograph camera movements
+  - [ ] Implement audio-reactive scripts
+  - [ ] Create all environment transitions
+- [ ] Record video of "Emergence" for promotional material
+- [ ] Write documentation/tutorial for each example
+- [ ] Add example project templates to Asset Library
+
+### Example Code Template
+
+Each Studio example should follow this structure:
+
+```cpp
+/**
+ * [Example Name]
+ * Category: Allolib Studio > [Subcategory]
+ *
+ * Demonstrates:
+ * - [Feature 1]
+ * - [Feature 2]
+ * - [Feature 3]
+ *
+ * Timeline: [Brief timeline description]
+ *
+ * Controls:
+ * - [Key/Mouse]: [Action]
+ */
+
+#include "al_WebApp.hpp"
+// ... includes for all track type features
+
+class ExampleName : public WebApp {
+  // ═══════════════════════════════════════════════════════════════════════
+  // AUDIO TRACK ASSETS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  PolySynth polySynth;
+  // .synthSequence references
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // OBJECT TRACK ASSETS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Object definitions with keyframeable properties
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENVIRONMENT ASSETS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Skybox, fog, lights configuration
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // EVENT SYSTEM
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Camera state, event timeline, listener definitions
+
+public:
+  void onCreate() override {
+    // Initialize all track types
+  }
+
+  void onAnimate(double dt) override {
+    // Update timeline, process events
+  }
+
+  void onDraw(Graphics& g) override {
+    // Render environment, then objects, then synth visuals
+  }
+
+  void onSound(AudioIOData& io) override {
+    // Audio processing
+  }
+
+  bool onKeyDown(Keyboard const& k) override {
+    // Input handling for interactive examples
+  }
+};
+
+ALLOLIB_WEB_MAIN(ExampleName)
+```
+
+### Documentation Requirements
+
+Each example must include:
+1. **Inline comments** explaining each track type's contribution
+2. **Timeline annotations** showing when events occur
+3. **Parameter documentation** for tweakable values
+4. **Learning objectives** at the top of the file
+5. **Suggested modifications** for users to try
+
+### Success Criteria
+
+The showcase project ("Emergence") is complete when:
+- [ ] Runs smoothly at 60fps on mid-range hardware
+- [ ] Audio and visuals are perfectly synchronized
+- [ ] All 4 track types are actively demonstrated
+- [ ] Can be exported to native AlloLib and runs identically
+- [ ] Video recording is suitable for promotional use
+- [ ] Project file can be loaded and modified by users
+- [ ] Serves as documentation of all timeline features
