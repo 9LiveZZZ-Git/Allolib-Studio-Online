@@ -292,7 +292,7 @@ public:
                     Module.HEAPU8.set(data, ptr);
 
                     var urlPtr = allocateString(url);
-                    var mimePtr = allocateString('');
+                    var mimePtr = allocateString("");
 
                     Module.ccall('_al_web_file_url_loaded_v2', null,
                         ['number', 'number', 'number', 'number', 'number'],
@@ -305,7 +305,7 @@ public:
                 .catch(function(err) {
                     console.error('[WebFile] Load error for', url, ':', err.message);
                     var urlPtr = allocateString(url);
-                    var mimePtr = allocateString('');
+                    var mimePtr = allocateString("");
                     Module.ccall('_al_web_file_url_loaded_v2', null,
                         ['number', 'number', 'number', 'number', 'number'],
                         [requestId, urlPtr, mimePtr, 0, 0]);

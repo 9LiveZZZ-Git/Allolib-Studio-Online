@@ -46,6 +46,15 @@
 #include "al_WebImage.hpp"
 #include "al/graphics/al_OpenGL.hpp"
 
+// Anisotropic filtering extension constants (EXT_texture_filter_anisotropic)
+// These may not be defined in all OpenGL ES / WebGL2 headers
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
 namespace al {
 
 /**
