@@ -7389,6 +7389,8 @@ int main() {
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
+#include "al/scene/al_PolySynth.hpp"
+#include "al/scene/al_SynthSequencer.hpp"
 #include "Gamma/Oscillator.h"
 #include "Gamma/Envelope.h"
 #include "Gamma/Noise.h"
@@ -7435,14 +7437,6 @@ public:
     float cutoff = 200.0f;
     float resonance = 0.7f;
 
-    void init() override {
-        env.levels(0, 1, 0.6, 0);
-        env.lengths(0.5, 2.0, 1.0);
-        env.curve(-2);
-        env.sustainPoint(2);
-        filter.set(cutoff, resonance);
-    }
-
     void onProcess(AudioIOData& io) override {
         while (io()) {
             float n = noise() * env() * amplitude;
@@ -7454,7 +7448,14 @@ public:
         if (env.done()) free();
     }
 
-    void onTriggerOn() override { env.reset(); }
+    void onTriggerOn() override {
+        env.levels(0, 1, 0.6, 0);
+        env.lengths(0.5, 2.0, 1.0);
+        env.curve(-2);
+        env.sustainPoint(2);
+        filter.set(cutoff, resonance);
+        env.reset();
+    }
     void onTriggerOff() override { env.release(); }
 };
 
@@ -7471,25 +7472,7 @@ public:
     float modIndex = 2.0f;
     float modRatio = 2.0f;
 
-    void init() override {
-        ampEnv.attack(0.08f);
-        ampEnv.decay(0.2f);
-        ampEnv.sustain(0.7f);
-        ampEnv.release(0.8f);
-        modEnv.attack(0.01f);
-        modEnv.decay(0.3f);
-        modEnv.sustain(0.4f);
-        modEnv.release(0.5f);
-        vibrato.freq(5.0f);
-
-        createInternalTriggerParameter("frequency", 440, 100, 2000);
-        createInternalTriggerParameter("amplitude", 0.25f, 0, 1);
-    }
-
     void onProcess(AudioIOData& io) override {
-        frequency = getInternalParameterValue("frequency");
-        amplitude = getInternalParameterValue("amplitude");
-
         while (io()) {
             float vib = 1.0f + vibrato() * 0.003f;
             modulator.freq(frequency * modRatio * vib);
@@ -7503,6 +7486,15 @@ public:
     }
 
     void onTriggerOn() override {
+        ampEnv.attack(0.08f);
+        ampEnv.decay(0.2f);
+        ampEnv.sustain(0.7f);
+        ampEnv.release(0.8f);
+        modEnv.attack(0.01f);
+        modEnv.decay(0.3f);
+        modEnv.sustain(0.4f);
+        modEnv.release(0.5f);
+        vibrato.freq(5.0f);
         ampEnv.reset();
         modEnv.reset();
     }
@@ -7524,15 +7516,7 @@ public:
     float amplitude = 0.12f;
     float detune = 1.003f;
 
-    void init() override {
-        createInternalTriggerParameter("frequency", 220, 50, 1000);
-        createInternalTriggerParameter("amplitude", 0.12f, 0, 0.5f);
-    }
-
     void onProcess(AudioIOData& io) override {
-        frequency = getInternalParameterValue("frequency");
-        amplitude = getInternalParameterValue("amplitude");
-
         osc1.freq(frequency);
         osc2.freq(frequency * detune);
         osc3.freq(frequency / detune);
@@ -7562,19 +7546,7 @@ public:
     float pitch = 200.0f;
     float amplitude = 0.3f;
 
-    void init() override {
-        env.levels(1, 0.3, 0);
-        env.lengths(0.01, 0.15);
-        env.curve(-4);
-        filter.set(pitch, 0.9f);
-
-        createInternalTriggerParameter("pitch", 200, 50, 800);
-        createInternalTriggerParameter("amplitude", 0.3f, 0, 1);
-    }
-
     void onProcess(AudioIOData& io) override {
-        pitch = getInternalParameterValue("pitch");
-        amplitude = getInternalParameterValue("amplitude");
         filter.set(pitch, 0.9f);
 
         while (io()) {
@@ -7586,7 +7558,13 @@ public:
         if (env.done()) free();
     }
 
-    void onTriggerOn() override { env.reset(); }
+    void onTriggerOn() override {
+        env.levels(1, 0.3, 0);
+        env.lengths(0.01, 0.15);
+        env.curve(-4);
+        filter.set(pitch, 0.9f);
+        env.reset();
+    }
     void onTriggerOff() override { }
 };
 
@@ -8020,22 +7998,22 @@ public:
 
     void triggerMelodyNote(float freq, float amp) {
         auto* voice = melodySynth.getVoice<MelodyVoice>();
-        voice->setInternalParameterValue("frequency", freq);
-        voice->setInternalParameterValue("amplitude", amp);
+        voice->frequency = freq;
+        voice->amplitude = amp;
         melodySynth.triggerOn(voice);
     }
 
     void triggerPadNote(float freq, float amp) {
         auto* voice = padSynth.getVoice<PadVoice>();
-        voice->setInternalParameterValue("frequency", freq);
-        voice->setInternalParameterValue("amplitude", amp);
+        voice->frequency = freq;
+        voice->amplitude = amp;
         padSynth.triggerOn(voice);
     }
 
-    void triggerPercHit(float pitch, float amp) {
+    void triggerPercHit(float pitchVal, float amp) {
         auto* voice = percSynth.getVoice<PercVoice>();
-        voice->setInternalParameterValue("pitch", pitch);
-        voice->setInternalParameterValue("amplitude", amp);
+        voice->pitch = pitchVal;
+        voice->amplitude = amp;
         percSynth.triggerOn(voice);
     }
 
