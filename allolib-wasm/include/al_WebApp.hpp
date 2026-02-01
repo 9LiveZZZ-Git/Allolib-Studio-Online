@@ -42,6 +42,7 @@
 #include "al/math/al_Matrix4.hpp"
 #include "al/spatial/al_Pose.hpp"
 #include "al_WebAutoLOD.hpp"
+#include "al_WebGraphicsBackend.hpp"
 
 #include <vector>
 #include <memory>
@@ -123,6 +124,11 @@ public:
     /// Configure window/canvas dimensions
     void dimensions(int width, int height);
 
+    /// Configure graphics backend (call before start())
+    /// Options: BackendType::WebGL2, BackendType::WebGPU, BackendType::Auto
+    /// Default: WebGL2 for maximum compatibility
+    void configureBackend(BackendType type) { mBackendType = type; }
+
     // =========================================================================
     // Runtime control
     // =========================================================================
@@ -140,11 +146,26 @@ public:
     // Accessors
     // =========================================================================
 
-    /// Get the graphics context
+    /// Get the graphics context (WebGL2/OpenGL ES 3.0)
     Graphics& graphics() { return *mGraphics; }
 
     /// Get the default window
     Window& defaultWindow() { return *mWindow; }
+
+    /// Get the graphics backend (for low-level rendering)
+    /// Returns nullptr if not initialized or if using classic Graphics only
+    GraphicsBackend* backend() { return mBackend.get(); }
+    const GraphicsBackend* backend() const { return mBackend.get(); }
+
+    /// Check which backend type is active
+    BackendType activeBackendType() const {
+        return mBackend ? mBackend->getType() : BackendType::WebGL2;
+    }
+
+    /// Check if WebGPU backend is active (has compute shader support)
+    bool hasComputeSupport() const {
+        return mBackend && mBackend->supportsCompute();
+    }
 
     /// Get audio configuration
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
@@ -227,14 +248,17 @@ private:
 
     // Initialization helpers
     void initGraphics();
+    void initBackend();
     void initAudio();
     void cleanupGraphics();
+    void cleanupBackend();
     void cleanupAudio();
 
     // Configuration
     WebAudioConfig mAudioConfig;
     int mWidth = 800;
     int mHeight = 600;
+    BackendType mBackendType = BackendType::WebGL2;  // Default to WebGL2 for compatibility
 
     // Runtime state
     bool mRunning = false;
@@ -244,6 +268,7 @@ private:
     // Graphics
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Graphics> mGraphics;
+    std::unique_ptr<GraphicsBackend> mBackend;
 
     // Audio
     AudioIOData* mAudioIO = nullptr;
@@ -277,6 +302,12 @@ private:
             if (!gWebApp) {                                              \
                 gWebApp = new AppClass();                                \
                 EM_ASM({ console.log('[WASM] App instance created'); });\
+            }                                                            \
+        }                                                                \
+        EMSCRIPTEN_KEEPALIVE void allolib_configure_backend(int type) { \
+            EM_ASM({ console.log('[WASM] allolib_configure_backend: ' + $0); }, type); \
+            if (gWebApp) {                                               \
+                gWebApp->configureBackend(static_cast<al::BackendType>(type)); \
             }                                                            \
         }                                                                \
         EMSCRIPTEN_KEEPALIVE void allolib_start() {                     \
@@ -314,8 +345,10 @@ private:
     int main() {                                                         \
         EM_ASM({ console.log('[WASM] main() called'); });               \
         allolib_create();                                                \
-        allolib_start();                                                 \
-        EM_ASM({ console.log('[WASM] main() done'); });                 \
+        /* NOTE: Do NOT call allolib_start() here! */                   \
+        /* JavaScript runtime must call allolib_configure_backend() */  \
+        /* first to set up WebGPU, then call allolib_start() */         \
+        EM_ASM({ console.log('[WASM] main() done - waiting for JS to call allolib_start()'); }); \
         return 0;                                                        \
     }
 

@@ -5,6 +5,8 @@ import { randomUUID } from 'crypto'
 import { logger } from './logger.js'
 import { broadcast } from './ws-manager.js'
 
+export type BackendType = 'webgl2' | 'webgpu'
+
 export interface CompilationResult {
   success: boolean
   jobId: string
@@ -13,6 +15,7 @@ export interface CompilationResult {
   errors?: string[]
   warnings?: string[]
   duration?: number
+  backend?: BackendType
 }
 
 export interface ProjectFile {
@@ -24,6 +27,7 @@ export interface CompilationJob {
   id: string
   files: ProjectFile[]
   mainFile: string
+  backend: BackendType
   status: 'pending' | 'compiling' | 'completed' | 'failed'
   createdAt: Date
   completedAt?: Date
@@ -38,12 +42,14 @@ const COMPILER_CONTAINER = process.env.COMPILER_CONTAINER || 'allolib-compiler'
 
 export async function createCompilationJob(
   files: ProjectFile[],
-  mainFile: string = 'main.cpp'
+  mainFile: string = 'main.cpp',
+  backend: BackendType = 'webgl2'
 ): Promise<CompilationJob> {
   const job: CompilationJob = {
     id: randomUUID(),
     files,
     mainFile,
+    backend,
     status: 'pending',
     createdAt: new Date(),
   }
@@ -111,6 +117,7 @@ async function compileAsync(job: CompilationJob): Promise<void> {
       wasmUrl: `/api/compile/output/${job.id}/app.wasm`,
       jsUrl: `/api/compile/output/${job.id}/app.js`,
       duration,
+      backend: job.backend,
     }
 
     logger.info(`Compilation completed for job ${job.id} in ${duration}ms`)
@@ -141,8 +148,9 @@ async function compileWithDocker(
     logger.info(`[${job.id}] Container: ${COMPILER_CONTAINER}`)
     logger.info(`[${job.id}] Source: ${containerSourceFile}`)
     logger.info(`[${job.id}] Output: ${containerOutputDir}`)
+    logger.info(`[${job.id}] Backend: ${job.backend}`)
 
-    broadcast('compile:status', { jobId: job.id, status: 'compiling' })
+    broadcast('compile:status', { jobId: job.id, status: 'compiling', backend: job.backend })
 
     const dockerProcess = spawn('docker', [
       'exec',
@@ -151,6 +159,7 @@ async function compileWithDocker(
       containerSourceFile,
       containerOutputDir,
       job.id,
+      job.backend,  // Pass backend as 4th argument
     ])
 
     let stdout = ''

@@ -30,6 +30,7 @@ export interface WasmModule {
 
   // AlloLib-specific exports
   _allolib_create?: () => void
+  _allolib_configure_backend?: (type: number) => void
   _allolib_start?: () => void
   _allolib_stop?: () => void
   _allolib_destroy?: () => void
@@ -104,19 +105,9 @@ export class AllolibRuntime {
     this.onError = config.onError || console.error
     this.onExit = config.onExit || (() => {})
 
-    // Pre-create WebGL2 context with preserveDrawingBuffer for screenshots
-    // This context will be reused by Emscripten
-    const gl = this.canvas.getContext('webgl2', {
-      preserveDrawingBuffer: true,  // Required for toDataURL() screenshots
-      alpha: true,
-      antialias: true,
-      depth: true,
-      stencil: true,
-      premultipliedAlpha: true,
-    })
-    if (!gl) {
-      console.warn('[Runtime] Failed to pre-create WebGL2 context')
-    }
+    // NOTE: Do NOT pre-create WebGL2 context here!
+    // Creating any GL context on the canvas prevents WebGPU from working.
+    // The context will be created lazily in load() based on the selected backend.
 
     this.resize()
   }
@@ -134,14 +125,99 @@ export class AllolibRuntime {
       // Load audio worklet processor first
       await this.loadAudioWorklet(baseUrl)
 
-      // Get the pre-created WebGL context (created in constructor with preserveDrawingBuffer)
-      const gl = this.canvas.getContext('webgl2')
+      // Get backend setting from store
+      const settings = useSettingsStore()
+      const backendType = settings.graphics.backendType || 'webgl2'
+
+      // Clear debug output for backend selection
+      console.log('%c╔══════════════════════════════════════════╗', 'color: #00ff00; font-weight: bold')
+      console.log('%c║     GRAPHICS BACKEND SELECTION           ║', 'color: #00ff00; font-weight: bold')
+      console.log('%c╠══════════════════════════════════════════╣', 'color: #00ff00; font-weight: bold')
+      console.log(`%c║  Requested: ${backendType.padEnd(28)}║`, 'color: #00ff00; font-weight: bold')
+      this.onPrint(`[Backend] Requested backend: ${backendType}`)
+
+      // Determine which backend to use
+      let useWebGPU = false
+      let webgpuDevice: GPUDevice | null = null
+
+      if (backendType === 'webgpu' || backendType === 'auto') {
+        // Try to initialize WebGPU
+        console.log('%c║  Checking WebGPU support...              ║', 'color: #ffff00; font-weight: bold')
+        if (navigator.gpu) {
+          try {
+            this.onPrint('[Backend] navigator.gpu exists, requesting adapter...')
+            const adapter = await navigator.gpu.requestAdapter()
+            if (adapter) {
+              this.onPrint('[Backend] Adapter acquired, requesting device...')
+              webgpuDevice = await adapter.requestDevice()
+              useWebGPU = true
+              console.log('%c║  ✓ WebGPU device acquired!               ║', 'color: #00ff00; font-weight: bold')
+              this.onPrint('[Backend] WebGPU device acquired successfully!')
+            } else {
+              console.log('%c║  ✗ WebGPU adapter not available          ║', 'color: #ff0000; font-weight: bold')
+              this.onPrint('[Backend] WebGPU adapter not available')
+            }
+          } catch (e) {
+            console.log('%c║  ✗ WebGPU init failed                    ║', 'color: #ff0000; font-weight: bold')
+            this.onPrint(`[Backend] WebGPU initialization failed: ${e}`)
+          }
+        } else {
+          console.log('%c║  ✗ navigator.gpu not found               ║', 'color: #ff0000; font-weight: bold')
+          this.onPrint('[Backend] WebGPU not supported (no navigator.gpu)')
+        }
+
+        if (!useWebGPU && backendType === 'webgpu') {
+          this.onError('[Backend] ERROR: WebGPU was requested but is not available!')
+        }
+      } else {
+        console.log('%c║  WebGL2 selected (skipping WebGPU)       ║', 'color: #00ffff; font-weight: bold')
+      }
+
+      // Create WebGL2 context only if NOT using WebGPU
+      // (WebGL and WebGPU contexts are mutually exclusive on the same canvas)
+      let gl: WebGL2RenderingContext | null = null
+
+      if (useWebGPU) {
+        // For WebGPU, we need a fresh canvas without any GL context
+        // Replace the existing canvas with a new one to ensure it's clean
+        this.onPrint('[Backend] Creating fresh canvas for WebGPU...')
+        const parent = this.canvas.parentElement
+        const oldCanvas = this.canvas
+
+        // Create new canvas with same attributes
+        const newCanvas = document.createElement('canvas')
+        // Ensure we always have an ID for the canvas (fallback to 'canvas' if none)
+        newCanvas.id = oldCanvas.id || 'canvas'
+        newCanvas.className = oldCanvas.className
+        newCanvas.style.cssText = oldCanvas.style.cssText
+        newCanvas.width = oldCanvas.width
+        newCanvas.height = oldCanvas.height
+
+        // Replace old canvas in DOM
+        if (parent) {
+          parent.replaceChild(newCanvas, oldCanvas)
+          this.canvas = newCanvas
+
+          // Also update any global references
+          // This ensures Emscripten's Module.canvas points to the new canvas
+          ;(window as any).__alloCanvas = newCanvas
+
+          this.onPrint(`[Backend] Fresh canvas created for WebGPU (id=${newCanvas.id})`)
+        }
+      } else {
+        gl = this.canvas.getContext('webgl2', {
+          preserveDrawingBuffer: true,  // Required for toDataURL() screenshots
+          alpha: true,
+          antialias: true,
+          depth: true,
+          stencil: true,
+          premultipliedAlpha: true,
+        })
+      }
 
       // Module configuration for Emscripten
-      const moduleConfig = {
+      const moduleConfig: Record<string, any> = {
         canvas: this.canvas,
-        // Pass pre-created context so Emscripten reuses it (keeps preserveDrawingBuffer)
-        preinitializedWebGLContext: gl,
         print: (text: string) => this.onPrint(text),
         printErr: (text: string) => this.onError(text),
         onExit: (code: number) => {
@@ -156,10 +232,39 @@ export class AllolibRuntime {
         },
       }
 
+      // Configure backend-specific options
+      if (useWebGPU && webgpuDevice) {
+        // For WebGPU, pass the pre-initialized device
+        moduleConfig.preinitializedWebGPUDevice = webgpuDevice
+        console.log('%c║  → Configuring WebGPU module             ║', 'color: #ff00ff; font-weight: bold')
+        this.onPrint('[Backend] Passing WebGPU device to WASM module')
+      } else {
+        // For WebGL2, pass pre-created context so Emscripten reuses it
+        moduleConfig.preinitializedWebGLContext = gl
+        console.log('%c║  → Configuring WebGL2 module             ║', 'color: #00ffff; font-weight: bold')
+        this.onPrint('[Backend] Passing WebGL2 context to WASM module')
+      }
+
+      // Store backend type for runtime queries
+      const activeBackend = useWebGPU ? 'webgpu' : 'webgl2'
+      ;(window as any).alloBackendType = activeBackend
+
+      // Final debug output
+      console.log(`%c║  Active:    ${activeBackend.padEnd(28)}║`, useWebGPU ? 'color: #ff00ff; font-weight: bold' : 'color: #00ff00; font-weight: bold')
+      console.log(`%c║  Compute:   ${(useWebGPU ? 'YES' : 'NO').padEnd(28)}║`, 'color: #00ff00; font-weight: bold')
+      console.log('%c╚══════════════════════════════════════════╝', 'color: #00ff00; font-weight: bold')
+      this.onPrint(`[Backend] Active backend: ${activeBackend}`)
+      this.onPrint(`[Backend] Compute shaders: ${useWebGPU ? 'ENABLED' : 'DISABLED'}`)
+
       // Dynamically import the ES6 module
       // The module exports a factory function that returns a Promise<Module>
       this.onPrint('[INFO] Importing ES6 module...')
       const createModule = await this.importModule(jsUrl)
+
+      // Set up object registration callback BEFORE module init
+      // This allows C++ code in onCreate() to register objects with the timeline
+      // The callback will be properly connected after module loads
+      this.setupPreInitCallbacks()
 
       this.onPrint('[INFO] Instantiating WASM module...')
       const wasmModule = await createModule(moduleConfig)
@@ -167,6 +272,8 @@ export class AllolibRuntime {
       // Store reference to the module
       this.module = wasmModule as WasmModule
       window.Module = this.module
+      // Also store for other systems that need it
+      ;(window as any).__alloWasmModule = this.module
 
       this.onPrint('[SUCCESS] AlloLib WASM module loaded')
     } catch (error) {
@@ -174,6 +281,41 @@ export class AllolibRuntime {
       this.onError(`[ERROR] Failed to load module: ${message}`)
       throw error
     }
+  }
+
+  /**
+   * Set up callbacks that need to exist BEFORE module initialization.
+   * This is critical for C++ code that registers objects in onCreate().
+   */
+  private setupPreInitCallbacks(): void {
+    // Ensure window.allolib namespace exists
+    ;(window as any).allolib = (window as any).allolib || {}
+
+    // Store pending objects - will be synced after module fully loads
+    const pendingObjects: Array<{
+      id: string
+      name: string
+      primitive: string
+      position: [number, number, number]
+      scale: [number, number, number]
+      color: [number, number, number, number]
+    }> = []
+
+    // This is called by C++ registerTimelineObject() via EM_ASM
+    ;(window as any).allolib.onObjectRegistered = (info: {
+      id: string
+      name: string
+      primitive: string
+      position: [number, number, number]
+      scale: [number, number, number]
+      color: [number, number, number, number]
+    }) => {
+      console.log(`[Runtime] C++ registered timeline object: ${info.name} (${info.id})`)
+      pendingObjects.push(info)
+    }
+
+    // Store pending objects reference for later sync
+    ;(window as any).__pendingTimelineObjects = pendingObjects
   }
 
   private async loadAudioWorklet(baseUrl: string): Promise<void> {
@@ -424,7 +566,22 @@ export class AllolibRuntime {
 
     try {
       // With MODULARIZE=1 + EXPORT_ES6=1, main() runs automatically during module init
-      // The ALLOLIB_WEB_MAIN macro's main() calls allolib_create() and allolib_start()
+      // The ALLOLIB_WEB_MAIN macro's main() calls allolib_create() but NOT allolib_start()
+      // We need to configure the backend and then start manually
+
+      // Configure backend based on detected WebGPU availability
+      const activeBackend = (window as any).alloBackendType || 'webgl2'
+      if (this.module._allolib_configure_backend) {
+        // BackendType enum: WebGL2 = 0, WebGPU = 1, Auto = 2
+        const backendTypeNum = activeBackend === 'webgpu' ? 1 : 0
+        this.onPrint(`[Runtime] Configuring backend: ${activeBackend} (${backendTypeNum})`)
+        this.module._allolib_configure_backend(backendTypeNum)
+      }
+
+      // Now start the application
+      if (this.module._allolib_start) {
+        this.module._allolib_start()
+      }
 
       // Set up audio worklet now that we have the module
       this.setupAudioWorklet()
@@ -590,6 +747,13 @@ export class AllolibRuntime {
    */
   get hasSequencerBridge(): boolean {
     return !!this.module?._al_seq_trigger_on
+  }
+
+  /**
+   * Get the active graphics backend type ('webgl2' or 'webgpu')
+   */
+  get activeBackendType(): string {
+    return (window as any).alloBackendType || 'webgl2'
   }
 
   getModule(): WasmModule | null {

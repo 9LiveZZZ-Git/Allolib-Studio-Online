@@ -1,5 +1,14 @@
 #include "al_WebApp.hpp"
 
+// Conditionally include backends based on build configuration
+#if defined(ALLOLIB_WEBGL2)
+#include "al_WebGL2Backend.hpp"
+#endif
+
+#if defined(ALLOLIB_WEBGPU)
+#include "al_WebGPUBackend.hpp"
+#endif
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
@@ -149,6 +158,7 @@ WebApp::WebApp() {
 WebApp::~WebApp() {
     stop();
     cleanupAudio();
+    cleanupBackend();
     cleanupGraphics();
 }
 
@@ -188,6 +198,12 @@ void WebApp::start() {
     EM_ASM({ console.log('[AlloLib] About to call initGraphics()'); });
 #endif
     initGraphics();
+
+    // Initialize graphics backend (optional, for WebGPU support)
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] About to call initBackend()'); });
+#endif
+    initBackend();
 
     // Initialize audio
 #ifdef __EMSCRIPTEN__
@@ -478,6 +494,26 @@ static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void*
 void WebApp::initGraphics() {
 #ifdef __EMSCRIPTEN__
     gCurrentApp = this;
+
+    // Check if we're using WebGPU backend - if so, skip WebGL context creation
+    // WebGPU and WebGL contexts are mutually exclusive on the same canvas
+    if (mBackendType == BackendType::WebGPU) {
+        EM_ASM({ console.log('[AlloLib] initGraphics() - WebGPU mode, skipping WebGL context'); });
+
+        // Don't create WebGL context - WebGPU backend will handle rendering
+        mWindow = nullptr;
+
+        // Still create Graphics object but it won't be used for rendering
+        // User code may still call g.draw() but it will be a no-op until
+        // WebGPU rendering is fully implemented
+        mGraphics = std::make_unique<Graphics>();
+
+        // Note: Graphics::init() requires a GL context, so we skip it for WebGPU
+        // This means the Graphics object won't be fully functional
+        EM_ASM({ console.log('[AlloLib] Graphics object created (WebGPU mode - limited functionality)'); });
+        return;
+    }
+
     EM_ASM({ console.log('[AlloLib] initGraphics() - using Emscripten WebGL'); });
 
     // Create WebGL2 context directly using Emscripten API
@@ -578,6 +614,83 @@ void WebApp::cleanupAudio() {
     if (mAudioIO) {
         delete mAudioIO;
         mAudioIO = nullptr;
+    }
+}
+
+void WebApp::initBackend() {
+    // Create backend based on configured type and available backends
+    switch (mBackendType) {
+        case BackendType::WebGPU:
+#ifdef __EMSCRIPTEN__
+            EM_ASM({ console.log('[AlloLib] Attempting WebGPU backend...'); });
+#endif
+#if defined(ALLOLIB_WEBGPU)
+            if (isWebGPUAvailable()) {
+                mBackend = createWebGPUBackend();
+            } else {
+                std::cout << "[AlloLib] WebGPU not available";
+#if defined(ALLOLIB_WEBGL2)
+                std::cout << ", falling back to WebGL2" << std::endl;
+                mBackend = createWebGL2Backend();
+#else
+                std::cout << " and WebGL2 not compiled in!" << std::endl;
+#endif
+            }
+#elif defined(ALLOLIB_WEBGL2)
+            std::cout << "[AlloLib] WebGPU not compiled in, using WebGL2" << std::endl;
+            mBackend = createWebGL2Backend();
+#endif
+            break;
+
+        case BackendType::Auto:
+#ifdef __EMSCRIPTEN__
+            EM_ASM({ console.log('[AlloLib] Auto-detecting best backend...'); });
+#endif
+#if defined(ALLOLIB_WEBGPU)
+            if (isWebGPUAvailable()) {
+                mBackend = createWebGPUBackend();
+            } else {
+#if defined(ALLOLIB_WEBGL2)
+                mBackend = createWebGL2Backend();
+#endif
+            }
+#elif defined(ALLOLIB_WEBGL2)
+            mBackend = createWebGL2Backend();
+#endif
+            break;
+
+        case BackendType::WebGL2:
+        default:
+#ifdef __EMSCRIPTEN__
+            EM_ASM({ console.log('[AlloLib] Using WebGL2 backend'); });
+#endif
+#if defined(ALLOLIB_WEBGL2)
+            mBackend = createWebGL2Backend();
+#elif defined(ALLOLIB_WEBGPU)
+            std::cout << "[AlloLib] WebGL2 not compiled in, using WebGPU" << std::endl;
+            mBackend = createWebGPUBackend();
+#endif
+            break;
+    }
+
+    // Initialize the backend
+    if (mBackend) {
+        if (!mBackend->init(mWidth, mHeight)) {
+            std::cerr << "[AlloLib] Backend initialization failed!" << std::endl;
+            mBackend.reset();
+        } else {
+            std::cout << "[AlloLib] Backend initialized: " << mBackend->getName() << std::endl;
+#ifdef __EMSCRIPTEN__
+            EM_ASM({ console.log('[AlloLib] Backend active: ' + UTF8ToString($0)); }, mBackend->getName());
+#endif
+        }
+    }
+}
+
+void WebApp::cleanupBackend() {
+    if (mBackend) {
+        mBackend->shutdown();
+        mBackend.reset();
     }
 }
 

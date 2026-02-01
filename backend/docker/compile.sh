@@ -1,18 +1,22 @@
 #!/bin/bash
 # AlloLib WASM Compilation Script
 # Compiles user C++ code and links against pre-built AlloLib
+# Supports dual backends: WebGL2 (default) and WebGPU
 
 set -e
 
 SOURCE_FILE="${1:-/app/source/main.cpp}"
 OUTPUT_DIR="${2:-/app/output}"
 JOB_ID="${3:-default}"
+BACKEND="${4:-webgl2}"  # webgl2 or webgpu
 
 ALLOLIB_DIR="${ALLOLIB_DIR:-/app/allolib}"
 ALLOLIB_WASM_DIR="${ALLOLIB_WASM_DIR:-/app/allolib-wasm}"
 GAMMA_DIR="${GAMMA_DIR:-/app/allolib/external/Gamma}"
 AL_EXT_DIR="${AL_EXT_DIR:-/app/al_ext}"
-LIB_DIR="/app/lib"
+
+# Select library directory based on backend
+LIB_DIR="/app/lib-$BACKEND"
 
 echo "[INFO] ================================================"
 echo "[INFO] AlloLib WASM Compilation"
@@ -20,22 +24,29 @@ echo "[INFO] ================================================"
 echo "[INFO] Job ID: $JOB_ID"
 echo "[INFO] Source: $SOURCE_FILE"
 echo "[INFO] Output: $OUTPUT_DIR"
+echo "[INFO] Backend: $BACKEND"
+echo "[INFO] Library: $LIB_DIR"
 
-# Build AlloLib if not already built
+# Validate backend
+if [ "$BACKEND" != "webgl2" ] && [ "$BACKEND" != "webgpu" ]; then
+    echo "[ERROR] Invalid backend: $BACKEND"
+    echo "[INFO] Valid options: webgl2, webgpu"
+    exit 1
+fi
+
+# Build AlloLib if not already built for this backend
 if [ ! -f "$LIB_DIR/libal_web.a" ]; then
-    echo "[INFO] AlloLib not built yet, building..."
-    /app/build-allolib.sh
+    echo "[INFO] AlloLib not built for $BACKEND, building..."
+    /app/build-allolib.sh "$BACKEND"
 fi
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Emscripten compilation flags
+# Base Emscripten compilation flags
 EMCC_FLAGS=(
     -O2
     -std=c++17
-    -sUSE_WEBGL2=1
-    -sFULL_ES3=1
     -sUSE_GLFW=3
     -sALLOW_MEMORY_GROWTH=1
     -sEXPORTED_RUNTIME_METHODS="['ccall','cwrap','UTF8ToString','stringToUTF8']"
@@ -49,7 +60,18 @@ EMCC_FLAGS=(
     --bind
 )
 
-# Include paths - ALLOLIB_WASM_DIR must come FIRST to override AlloLib headers with WebGL2 patches
+# Backend-specific flags
+if [ "$BACKEND" = "webgpu" ]; then
+    echo "[INFO] Using WebGPU backend (compute shaders enabled)"
+    EMCC_FLAGS+=(-sUSE_WEBGPU=1)
+    # WebGPU builds also include WebGL2 for compatibility
+    EMCC_FLAGS+=(-sUSE_WEBGL2=1 -sFULL_ES3=1)
+else
+    echo "[INFO] Using WebGL2 backend (maximum compatibility)"
+    EMCC_FLAGS+=(-sUSE_WEBGL2=1 -sFULL_ES3=1)
+fi
+
+# Include paths - ALLOLIB_WASM_DIR must come FIRST to override AlloLib headers
 INCLUDE_FLAGS=(
     -I"$ALLOLIB_WASM_DIR/include"
     -I"$ALLOLIB_DIR/include"
@@ -73,13 +95,20 @@ DEFS=(
     -DGLFW_INCLUDE_ES3
 )
 
-echo "[INFO] Compiling with em++..."
-echo "[INFO] Command: em++ ${EMCC_FLAGS[*]} ${INCLUDE_FLAGS[*]} ${DEFS[*]} $SOURCE_FILE ${LIB_FLAGS[*]} -o $OUTPUT_DIR/app.js"
+# Backend-specific definitions
+if [ "$BACKEND" = "webgpu" ]; then
+    DEFS+=(-DALLOLIB_WEBGPU=1)
+else
+    DEFS+=(-DALLOLIB_WEBGL2=1)
+fi
 
-# WebControlGUI stubs file (provides default implementations for programs that don't use WebControlGUI)
+echo "[INFO] Compiling with em++..."
+echo "[INFO] Flags: ${EMCC_FLAGS[*]}"
+
+# WebControlGUI stubs file
 WEBGUI_STUBS="$ALLOLIB_WASM_DIR/src/al_WebControlGUI.cpp"
 
-# Compile - include stubs to ensure exported symbols are always defined
+# Compile
 em++ "${EMCC_FLAGS[@]}" "${INCLUDE_FLAGS[@]}" "${DEFS[@]}" \
     "$SOURCE_FILE" \
     "$WEBGUI_STUBS" \
@@ -92,6 +121,10 @@ if [ -f "$ALLOLIB_WASM_DIR/src/allolib-audio-processor.js" ]; then
     echo "[INFO] Copied audio worklet processor"
 fi
 
-echo "[SUCCESS] Compilation complete!"
+# Write backend info file for frontend
+echo "$BACKEND" > "$OUTPUT_DIR/backend.txt"
+echo "[INFO] Backend info written to backend.txt"
+
+echo "[SUCCESS] Compilation complete! (backend: $BACKEND)"
 echo "[INFO] Output files:"
 ls -la "$OUTPUT_DIR"

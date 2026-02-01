@@ -1,11 +1,24 @@
 # AlloLib WASM Build Configuration
 # Compiles AlloLib for WebAssembly using Emscripten
+# Supports dual backends: WebGL2 (default) and WebGPU
 
 cmake_minimum_required(VERSION 3.20)
 project(allolib-wasm)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ==============================================================================
+# Backend Selection Options
+# ==============================================================================
+
+option(ALLOLIB_BACKEND_WEBGL2 "Build with WebGL2 backend (default, maximum compatibility)" ON)
+option(ALLOLIB_BACKEND_WEBGPU "Build with WebGPU backend (compute shaders, modern features)" OFF)
+
+# Validate at least one backend is selected
+if(NOT ALLOLIB_BACKEND_WEBGL2 AND NOT ALLOLIB_BACKEND_WEBGPU)
+    message(FATAL_ERROR "At least one backend must be enabled: ALLOLIB_BACKEND_WEBGL2 or ALLOLIB_BACKEND_WEBGPU")
+endif()
 
 # Paths
 set(ALLOLIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../allolib")
@@ -18,26 +31,23 @@ endif()
 
 message(STATUS "Building AlloLib for WebAssembly")
 message(STATUS "AlloLib directory: ${ALLOLIB_DIR}")
+message(STATUS "Backend: WebGL2=${ALLOLIB_BACKEND_WEBGL2}, WebGPU=${ALLOLIB_BACKEND_WEBGPU}")
 
 # ==============================================================================
 # Emscripten Configuration
 # ==============================================================================
 
-# Emscripten compile flags
+# Base compile flags (common to both backends)
 set(EMSCRIPTEN_COMPILE_FLAGS
-    "-sUSE_WEBGL2=1"
-    "-sFULL_ES3=1"
     "-sUSE_GLFW=3"
 )
 
-# Emscripten link flags for applications (not library)
+# Base link flags for applications
 set(EMSCRIPTEN_LINK_FLAGS
-    "-sUSE_WEBGL2=1"
-    "-sFULL_ES3=1"
     "-sUSE_GLFW=3"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','stringToUTF8']"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_allolib_configure_backend']"
     "-sMODULARIZE=1"
     "-sEXPORT_ES6=1"
     "-sENVIRONMENT='web'"
@@ -45,6 +55,21 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sASYNCIFY_STACK_SIZE=65536"
     "--bind"
 )
+
+# Backend-specific flags
+if(ALLOLIB_BACKEND_WEBGPU)
+    message(STATUS "Configuring WebGPU backend")
+    list(APPEND EMSCRIPTEN_COMPILE_FLAGS "-sUSE_WEBGPU=1")
+    list(APPEND EMSCRIPTEN_LINK_FLAGS "-sUSE_WEBGPU=1")
+    # Note: WebGPU builds still need WebGL2 for fallback/compatibility layers
+    list(APPEND EMSCRIPTEN_COMPILE_FLAGS "-sUSE_WEBGL2=1" "-sFULL_ES3=1")
+    list(APPEND EMSCRIPTEN_LINK_FLAGS "-sUSE_WEBGL2=1" "-sFULL_ES3=1")
+else()
+    # Pure WebGL2 build (no WebGPU)
+    message(STATUS "Configuring WebGL2 backend (no WebGPU)")
+    list(APPEND EMSCRIPTEN_COMPILE_FLAGS "-sUSE_WEBGL2=1" "-sFULL_ES3=1")
+    list(APPEND EMSCRIPTEN_LINK_FLAGS "-sUSE_WEBGL2=1" "-sFULL_ES3=1")
+endif()
 
 string(REPLACE ";" " " EMSCRIPTEN_COMPILE_FLAGS_STR "${EMSCRIPTEN_COMPILE_FLAGS}")
 string(REPLACE ";" " " EMSCRIPTEN_LINK_FLAGS_STR "${EMSCRIPTEN_LINK_FLAGS}")
@@ -178,6 +203,22 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebControlGUI.cpp
 )
 
+# WebGL2 backend sources - always included (needed for al::Graphics)
+list(APPEND WEB_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGL2Backend.cpp
+)
+
+# WebGPU backend sources
+if(ALLOLIB_BACKEND_WEBGPU)
+    list(APPEND WEB_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGPUBackend.cpp
+    )
+    # Future: Add compute infrastructure sources when implemented
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGPUCompute.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGPUParticles.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGPUFluid.cpp
+endif()
+
 add_library(al_web STATIC ${ALLOLIB_SOURCES} ${WEB_SOURCES})
 
 # IMPORTANT: Our patched include directory MUST come first to override AlloLib headers
@@ -196,6 +237,14 @@ target_compile_definitions(al_web PUBLIC
     AL_EMSCRIPTEN
     GLFW_INCLUDE_ES3
 )
+
+# Backend-specific definitions
+# WebGL2 is always available (needed for al::Graphics)
+target_compile_definitions(al_web PUBLIC ALLOLIB_WEBGL2=1)
+
+if(ALLOLIB_BACKEND_WEBGPU)
+    target_compile_definitions(al_web PUBLIC ALLOLIB_WEBGPU=1)
+endif()
 
 target_compile_options(al_web PRIVATE
     -Wno-deprecated-declarations

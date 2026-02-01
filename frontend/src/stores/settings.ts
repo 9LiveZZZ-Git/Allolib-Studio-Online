@@ -40,8 +40,10 @@ export interface DisplaySettings {
 }
 
 export type QualityPreset = 'auto' | 'low' | 'medium' | 'high' | 'ultra'
+export type BackendType = 'webgl2' | 'webgpu' | 'auto'
 
 export interface GraphicsSettings {
+  backendType: BackendType  // Graphics backend: webgl2 (default), webgpu, or auto
   qualityPreset: QualityPreset
   targetFPS: number
   resolutionScale: number
@@ -119,6 +121,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // Graphics/rendering quality settings
   const graphics = ref<GraphicsSettings>({
+    backendType: 'webgl2',  // Default to WebGL2 for maximum compatibility
     qualityPreset: 'auto',
     targetFPS: 60,
     resolutionScale: 1.0,
@@ -236,6 +239,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function resetGraphics() {
     graphics.value = {
+      backendType: 'webgl2',  // Default to WebGL2 for maximum compatibility
       qualityPreset: 'auto',
       targetFPS: 60,
       resolutionScale: 1.0,

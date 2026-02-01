@@ -23,7 +23,8 @@ services:
       - compiler-source:/app/source
       - compiler-output:/app/output
       - compiler-cache:/app/cache
-      - compiler-lib:/app/lib
+      - compiler-lib-webgl2:/app/lib-webgl2
+      - compiler-lib-webgpu:/app/lib-webgpu
     environment:
       - EMSDK=/emsdk
       - ALLOLIB_DIR=/app/allolib
@@ -63,5 +64,6 @@ volumes:
   compiler-cache:
   compiler-source:
   compiler-output:
-  compiler-lib:
+  compiler-lib-webgl2:
+  compiler-lib-webgpu:
   backend-node-modules:

@@ -1,7 +1,10 @@
 # AlloLib Compilation Server
 # Uses Emscripten for C++ to WebAssembly compilation
+# Supports dual backends: WebGL2 and WebGPU
 
-FROM emscripten/emsdk:3.1.50
+# IMPORTANT: Emscripten 3.1.73+ required for WebGPU support
+# See webgpu-implementation-plan.md "Proof of Concept Findings" for details
+FROM emscripten/emsdk:3.1.73
 
 # Install additional dependencies
 RUN apt-get update && apt-get install -y \
@@ -13,8 +16,9 @@ RUN apt-get update && apt-get install -y \
 # Set up working directory
 WORKDIR /app
 
-# Create directories
-RUN mkdir -p /app/source /app/output /app/cache /app/allolib /app/allolib-wasm /app/lib
+# Create directories for dual-backend builds
+RUN mkdir -p /app/source /app/output /app/cache /app/allolib /app/allolib-wasm
+RUN mkdir -p /app/lib-webgl2 /app/lib-webgpu
 
 # Environment variables
 ENV EMSDK=/emsdk
