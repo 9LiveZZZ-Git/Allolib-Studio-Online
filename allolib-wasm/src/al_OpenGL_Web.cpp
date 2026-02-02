@@ -6,6 +6,10 @@
  * - glPointSize() doesn't exist in WebGL2/OpenGL ES 3.0
  * - Point size must be set via gl_PointSize in vertex shader
  * - We store the point size and provide a getter for the shader uniform
+ *
+ * WebGPU mode:
+ * - All GL functions become no-ops (rendering state managed by backend)
+ * - Only pointSize/getPointSize remain functional for compatibility
  */
 
 #include "al/graphics/al_OpenGL.hpp"
@@ -13,11 +17,23 @@
 #include <cstdio>
 #include <cstring>
 
+// Forward declaration to check WebGPU mode
+namespace al {
+    bool Graphics_isWebGPU();
+}
+
 namespace al {
 namespace gl {
 
-// Store point size for shader uniform (WebGL2 doesn't support glPointSize)
-static float sPointSize = 1.0f;
+// Helper macro to early-return in WebGPU mode
+#define WEBGPU_NOOP_CHECK() if (Graphics_isWebGPU()) return
+
+// Point size is stored via the JS bridge in al_WebGL2Extensions.cpp
+// We use the extern "C" functions to maintain a single source of truth
+extern "C" {
+    void al_web_set_point_size(float size);
+    float al_web_get_point_size(void);
+}
 
 bool loaded() { return true; }  // Always loaded in Emscripten
 
@@ -32,6 +48,7 @@ const char *versionString() {
 }
 
 const char *errorString(bool verbose) {
+  if (Graphics_isWebGPU()) return "";
   GLenum err = glGetError();
   #define CS(GL_ERR, desc)                                                       \
     case GL_ERR:                                                                 \
@@ -120,39 +137,53 @@ void bufferToDraw(unsigned int buffer) {
 }
 
 void viewport(int left, int bottom, int width, int height) {
+  WEBGPU_NOOP_CHECK();
   glViewport(left, bottom, width, height);
 }
 
 void blending(bool doBlend) {
+  WEBGPU_NOOP_CHECK();
   doBlend ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
 }
 
 void blendMode(unsigned int src, unsigned int dst, unsigned int eq) {
+  WEBGPU_NOOP_CHECK();
   glBlendEquation(eq);
   glBlendFunc(src, dst);
 }
 
 void depthTesting(bool testDepth) {
+  WEBGPU_NOOP_CHECK();
   testDepth ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
 }
 
-void depthMask(bool maskDepth) { glDepthMask(maskDepth ? GL_TRUE : GL_FALSE); }
+void depthMask(bool maskDepth) {
+  WEBGPU_NOOP_CHECK();
+  glDepthMask(maskDepth ? GL_TRUE : GL_FALSE);
+}
 
 void scissorTest(bool testScissor) {
+  WEBGPU_NOOP_CHECK();
   testScissor ? glEnable(GL_SCISSOR_TEST) : glDisable(GL_SCISSOR_TEST);
 }
 
 void scissorArea(int left, int bottom, int width, int height) {
+  WEBGPU_NOOP_CHECK();
   glScissor(left, bottom, width, height);
 }
 
 void culling(bool doCulling) {
+  WEBGPU_NOOP_CHECK();
   doCulling ? glEnable(GL_CULL_FACE) : glDisable(GL_CULL_FACE);
 }
 
-void cullFace(unsigned int face) { glCullFace(face); }
+void cullFace(unsigned int face) {
+  WEBGPU_NOOP_CHECK();
+  glCullFace(face);
+}
 
 void polygonMode(unsigned int mode) {
+  WEBGPU_NOOP_CHECK();
   // Note: glPolygonMode not available in OpenGL ES 3.0/WebGL2
   // Only GL_FILL is supported, GL_LINE and GL_POINT modes don't exist
 #ifndef __EMSCRIPTEN__
@@ -161,14 +192,20 @@ void polygonMode(unsigned int mode) {
   // In WebGL2, wireframe rendering must be done with GL_LINES primitive
 }
 
-void colorMask(bool r, bool g, bool b, bool a) { glColorMask(r, g, b, a); }
-void colorMask(bool b) { colorMask(b, b, b, b); }
+void colorMask(bool r, bool g, bool b, bool a) {
+  WEBGPU_NOOP_CHECK();
+  glColorMask(r, g, b, a);
+}
+void colorMask(bool b) {
+  WEBGPU_NOOP_CHECK();
+  colorMask(b, b, b, b);
+}
 
 void pointSize(float size) {
-  // Store point size for shader uniform
+  // Store point size via JS bridge for shader uniform
   // WebGL2/OpenGL ES 3.0 doesn't support glPointSize()
   // Point size must be set via gl_PointSize in the vertex shader
-  sPointSize = size;
+  al_web_set_point_size(size);
 
 #ifndef __EMSCRIPTEN__
   // On desktop, also call the real glPointSize for compatibility
@@ -178,26 +215,30 @@ void pointSize(float size) {
 
 // Get current point size for setting shader uniform
 float getPointSize() {
-  return sPointSize;
+  return al_web_get_point_size();
 }
 
 void lineWidth(float size) {
+  WEBGPU_NOOP_CHECK();
   // Note: lineWidth > 1.0 may not be supported in WebGL2
   // Most implementations only support lineWidth of 1.0
   glLineWidth(size);
 }
 
 void clearColor(float r, float g, float b, float a) {
+  WEBGPU_NOOP_CHECK();
   glClearColor(r, g, b, a);
   glClear(GL_COLOR_BUFFER_BIT);
 }
 
 void clearDepth(float d) {
+  WEBGPU_NOOP_CHECK();
   glClearDepthf(d);
   glClear(GL_DEPTH_BUFFER_BIT);
 }
 
 void clearBuffer(int buffer, float r, float g, float b, float a) {
+  WEBGPU_NOOP_CHECK();
   float color[4] = {r, g, b, a};
   glClearBufferfv(GL_COLOR, buffer, color);
 }

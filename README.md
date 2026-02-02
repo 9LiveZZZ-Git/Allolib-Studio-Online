@@ -25,6 +25,7 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Code Editor** - Monaco Editor with C++ syntax highlighting, AlloLib snippets, and intelligent autocomplete
 - **Live Compilation** - Server-side Emscripten compilation to WebAssembly with streaming output
 - **WebGL2 Graphics** - 3D rendering with meshes, lighting, shaders, and textures
+- **WebGPU Backend** - Modern GPU API with compute shaders, WGSL shaders, and improved performance
 - **Web Audio** - Real-time audio synthesis with Gamma DSP library
 - **Parameter Panel** - Interactive GUI controls for synth parameters (like ImGui)
 - **Preset System** - Save/load presets as allolib-compatible `.preset` files
@@ -38,6 +39,7 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Audio Safety** - Built-in limiter protects your speakers
 
 ### Advanced Graphics
+- **Dual Backend Support** - Choose between WebGL2 (compatibility) or WebGPU (modern performance)
 - **PBR Materials** - Physically-based rendering with metallic-roughness workflow and IBL
 - **Normal Mapping** - Screen-space TBN calculation for correct normal maps on any surface
 - **HDR Environment Maps** - Load `.hdr` files for skyboxes and image-based lighting
@@ -241,6 +243,17 @@ Creative coding examples with synthesis and audio-visual integration:
 | **Synthesis** | Sine Envelope, Wavetable, FM, Subtractive, Additive |
 | **AudioVisual** | AudioVisual Spheres, Synthesis Showcase |
 
+### AlloLib Studio (GPU) Examples
+
+WebGPU-specific examples demonstrating modern GPU features:
+
+| Category | Examples |
+|----------|----------|
+| **Basics** | Simple Cube, Points & Lines, Mesh Normals, Custom Mesh |
+| **Lighting** | Diffuse Lighting, Multi-Light Test |
+| **Textures** | Procedural Texture, Textured Mesh |
+| **Advanced** | Wave Deformation, Dynamic Vertex Colors, Gradient Sphere |
+
 ### Loading Examples
 
 When selecting an example, a dialog appears with two options:
@@ -275,7 +288,8 @@ Browser                                Server
 | **Frontend** | Vue 3, TypeScript, Monaco Editor, Tailwind CSS, Pinia |
 | **Backend** | Node.js, Express, Redis, BullMQ |
 | **Compiler** | Emscripten 3.1.50, Docker |
-| **Output** | WebGL2, Web Audio API, AudioWorklet |
+| **Graphics** | WebGL2 (default), WebGPU (experimental) |
+| **Audio** | Web Audio API, AudioWorklet |
 
 ## Project Structure
 
@@ -406,6 +420,30 @@ AlloLib Studio uses WebGL2 (OpenGL ES 3.0). Key differences from desktop OpenGL:
 - No tessellation (use pre-tessellated meshes)
 - GLSL ES 3.0 (not GLSL 330)
 - Float textures require `EXT_color_buffer_float` for FBO rendering
+
+</details>
+
+<details>
+<summary><strong>WebGPU Backend</strong></summary>
+
+AlloLib Studio includes an experimental WebGPU backend for modern browsers:
+
+- **WGSL Shaders** - WebGPU Shading Language replaces GLSL
+- **Improved Performance** - Better driver overhead, explicit resource management
+- **Compute Shaders** - GPU compute capability (future feature)
+- **Texture Bridge** - Automatic sync between OpenGL textures and WebGPU
+
+**Browser Support:** Chrome 113+, Edge 113+, Firefox (Nightly), Safari (Technology Preview)
+
+**Switching Backends:**
+```cpp
+// In your app, call before start():
+configureBackend(BackendType::WebGPU);  // or BackendType::WebGL2 (default)
+```
+
+**Current Limitations:**
+- Custom GLSL shaders must be rewritten in WGSL
+- Some advanced features (FBO, cubemaps, PBR) are still being ported
 
 </details>
 

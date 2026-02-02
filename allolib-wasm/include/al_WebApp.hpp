@@ -43,6 +43,7 @@
 #include "al/spatial/al_Pose.hpp"
 #include "al_WebAutoLOD.hpp"
 #include "al_WebGraphicsBackend.hpp"
+#include "al_GraphicsWebExtension.hpp"
 
 #include <vector>
 #include <memory>
@@ -279,6 +280,9 @@ private:
 
     // Automatic LOD
     AutoLODManager mAutoLOD;
+
+    // Graphics-Backend integration for WebGPU rendering
+    GraphicsWebExtension mGraphicsExtension;
 
     // Initialize viewpoint with nav pose
     void initViewpoint() {

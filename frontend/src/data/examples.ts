@@ -156,6 +156,32 @@ export const categoryGroups: CategoryGroup[] = [
     title: 'AlloLib Studio',
     categories: studioCategories,
   },
+  {
+    id: 'gpu',
+    title: 'Allolib Studio (GPU)',
+    categories: [
+      {
+        id: 'gpu-graphics',
+        title: 'Graphics',
+        subcategories: [
+          { id: 'shaders', title: 'Shaders' },
+          { id: 'textures', title: 'Textures' },
+        ],
+      },
+    ],
+  },
+]
+
+// GPU-specific categories for the flat list
+const gpuCategories: ExampleCategory[] = [
+  {
+    id: 'gpu-graphics',
+    title: 'Graphics',
+    subcategories: [
+      { id: 'shaders', title: 'Shaders' },
+      { id: 'textures', title: 'Textures' },
+    ],
+  },
 ]
 
 // Flat list of all categories for backwards compatibility
@@ -163,6 +189,7 @@ export const categories: ExampleCategory[] = [
   ...categoryGroups[0].categories,
   ...playgroundCategories,
   ...studioCategories,
+  ...gpuCategories,
 ]
 
 // Combine base examples with playground examples
@@ -3849,7 +3876,6 @@ public:
         Color lc[] = {Color(1,0.2,0.2), Color(0.2,1,0.2), Color(0.2,0.2,1), Color(0.5,0.5,0.5)};
         for (int i = 0; i < 4; i++) {
             lights[i].diffuse(lc[i]);
-            lights[i].attenuation(1.0f, 0.1f, 0.01f);
         }
         lights[3].dir(0, -1, -0.5);
 
@@ -3882,7 +3908,8 @@ public:
         g.lighting(false);
         for (int i = 0; i < 3; i++) {
             g.pushMatrix();
-            g.translate(lights[i].pos());
+            const float* p = lights[i].pos();
+            g.translate(p[0], p[1], p[2]);
             g.color(lights[i].diffuse());
             g.draw(lightMarker);
             g.popMatrix();
@@ -12476,6 +12503,386 @@ ALLOLIB_MAIN(MultiFileSynthApp)
 
   // Merge studio examples (AlloLib Studio Online originals)
   ...studioExamples,
+
+  // ==========================================================================
+  // ALLOLIB STUDIO (GPU) - WebGPU-optimized examples
+  // ==========================================================================
+
+  // GPU Graphics - Shaders
+  {
+    id: 'gpu-wave-shader',
+    title: 'Wave Deformation',
+    description: 'Animated wave deformation with rainbow colors (WebGPU)',
+    category: 'gpu-graphics',
+    subcategory: 'shaders',
+    code: `/**
+ * Wave Deformation - CPU-animated mesh with rainbow colors
+ *
+ * This example demonstrates vertex animation with per-vertex colors.
+ * The wave effect is computed in C++ and the mesh is re-uploaded each frame.
+ * WebGPU's diffuse lighting makes the 3D shape clearly visible.
+ *
+ * For WebGPU: This uses the default shader with diffuse lighting.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class WaveShader : public WebApp {
+public:
+    Mesh baseMesh;    // Original mesh (unchanged)
+    Mesh animMesh;    // Animated mesh (updated each frame)
+    double time = 0;
+
+    void onCreate() override {
+        // Create a high-res sphere for smooth waves
+        addSphere(baseMesh, 1.5, 64, 64);
+        baseMesh.generateNormals();
+
+        // Copy to animated mesh
+        animMesh = baseMesh;
+
+        nav().pos(0, 0, 5);
+    }
+
+    // HSV to RGB conversion
+    Color hsv2rgb(float h, float s, float v) {
+        float c = v * s;
+        float x = c * (1 - fabs(fmod(h * 6, 2) - 1));
+        float m = v - c;
+        float r, g, b;
+
+        if (h < 1.0f/6) { r = c; g = x; b = 0; }
+        else if (h < 2.0f/6) { r = x; g = c; b = 0; }
+        else if (h < 3.0f/6) { r = 0; g = c; b = x; }
+        else if (h < 4.0f/6) { r = 0; g = x; b = c; }
+        else if (h < 5.0f/6) { r = x; g = 0; b = c; }
+        else { r = c; g = 0; b = x; }
+
+        return Color(r + m, g + m, b + m, 1.0f);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        auto& baseVerts = baseMesh.vertices();
+        auto& animVerts = animMesh.vertices();
+        auto& baseNorms = baseMesh.normals();
+        auto& animNorms = animMesh.normals();
+
+        // Clear and rebuild colors
+        animMesh.colors().clear();
+
+        for (size_t i = 0; i < baseVerts.size(); ++i) {
+            Vec3f p = baseVerts[i];
+            Vec3f n = baseNorms[i];
+
+            // Wave displacement along normal
+            float wave1 = sin(p.x * 4.0f + time * 3.0f) * 0.15f;
+            float wave2 = cos(p.z * 4.0f + time * 2.0f) * 0.1f;
+            float wave3 = sin(p.y * 3.0f + time * 2.5f) * 0.08f;
+            float displacement = wave1 + wave2 + wave3;
+
+            // Displace vertex along its normal
+            animVerts[i] = p + n * displacement;
+
+            // Rainbow color based on height and time
+            float hue = fmod(animVerts[i].y * 0.3f + time * 0.1f, 1.0f);
+            if (hue < 0) hue += 1.0f;
+            animMesh.color(hsv2rgb(hue, 0.8f, 1.0f));
+        }
+
+        // Regenerate normals for correct lighting
+        animMesh.generateNormals();
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.1f);
+        g.depthTesting(true);
+
+        g.pushMatrix();
+        g.rotate(time * 10, 0, 1, 0);
+        g.draw(animMesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(WaveShader)
+`,
+  },
+  {
+    id: 'gpu-vertex-colors',
+    title: 'Dynamic Vertex Colors',
+    description: 'Real-time procedural vertex coloring (WebGPU)',
+    category: 'gpu-graphics',
+    subcategory: 'shaders',
+    code: `/**
+ * Dynamic Vertex Colors - Procedural coloring updated each frame
+ *
+ * Demonstrates real-time vertex color animation.
+ * Colors flow across the mesh based on position and time.
+ *
+ * For WebGPU: Uses the default shader's per-vertex color support.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class DynamicColors : public WebApp {
+public:
+    Mesh mesh;
+    double time = 0;
+    std::vector<Vec3f> originalPositions;
+
+    void onCreate() override {
+        // Create a torus
+        addTorus(mesh, 0.4, 1.2, 32, 64);
+        mesh.generateNormals();
+
+        // Store original positions
+        originalPositions = mesh.vertices();
+
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        auto& verts = mesh.vertices();
+        mesh.colors().clear();
+
+        for (size_t i = 0; i < verts.size(); ++i) {
+            Vec3f p = originalPositions[i];
+
+            // Animated color based on position
+            float r = 0.5f + 0.5f * sin(p.x * 3.0f + time * 2.0f);
+            float g = 0.5f + 0.5f * sin(p.y * 3.0f + time * 1.5f + 2.0f);
+            float b = 0.5f + 0.5f * sin(p.z * 3.0f + time * 1.8f + 4.0f);
+
+            mesh.color(r, g, b, 1.0f);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+
+        g.pushMatrix();
+        g.rotate(time * 20, 0, 1, 0);
+        g.rotate(time * 10, 1, 0, 0);
+        g.draw(mesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(DynamicColors)
+`,
+  },
+
+  // GPU Graphics - Textures
+  {
+    id: 'gpu-procedural-pattern',
+    title: 'Procedural Pattern',
+    description: 'Checkerboard pattern via vertex colors (WebGPU)',
+    category: 'gpu-graphics',
+    subcategory: 'textures',
+    code: `/**
+ * Procedural Pattern - Checkerboard via vertex colors
+ *
+ * Creates a procedural pattern by coloring mesh vertices.
+ * This approach works with WebGPU without needing texture support.
+ *
+ * Note: For true textures in WebGPU, texture binding would need
+ * to be implemented in the shader. This demo shows an alternative.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class ProceduralPattern : public WebApp {
+public:
+    Mesh mesh;
+    double angle = 0;
+
+    void onCreate() override {
+        // Create a high-res plane
+        int res = 64;
+        float size = 2.0f;
+
+        mesh.primitive(Mesh::TRIANGLES);
+
+        for (int j = 0; j < res; ++j) {
+            for (int i = 0; i < res; ++i) {
+                float x0 = (float(i) / res - 0.5f) * size;
+                float x1 = (float(i + 1) / res - 0.5f) * size;
+                float z0 = (float(j) / res - 0.5f) * size;
+                float z1 = (float(j + 1) / res - 0.5f) * size;
+
+                // Checkerboard color
+                bool check = ((i / 8) + (j / 8)) % 2;
+
+                Color c1, c2;
+                if (check) {
+                    c1 = Color(0.2f + float(i) / res * 0.6f,
+                              0.4f + float(j) / res * 0.4f,
+                              0.8f);
+                    c2 = c1;
+                } else {
+                    c1 = Color(0.9f,
+                              0.7f + float(j) / res * 0.2f,
+                              0.2f);
+                    c2 = c1;
+                }
+
+                // Two triangles per quad
+                mesh.vertex(x0, 0, z0); mesh.color(c1); mesh.normal(0, 1, 0);
+                mesh.vertex(x1, 0, z0); mesh.color(c1); mesh.normal(0, 1, 0);
+                mesh.vertex(x1, 0, z1); mesh.color(c1); mesh.normal(0, 1, 0);
+
+                mesh.vertex(x0, 0, z0); mesh.color(c2); mesh.normal(0, 1, 0);
+                mesh.vertex(x1, 0, z1); mesh.color(c2); mesh.normal(0, 1, 0);
+                mesh.vertex(x0, 0, z1); mesh.color(c2); mesh.normal(0, 1, 0);
+            }
+        }
+
+        nav().pos(0, 2, 3);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        angle += dt * 15.0;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+        g.depthTesting(true);
+
+        g.pushMatrix();
+        g.rotate(angle, 0, 1, 0);
+        g.draw(mesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(ProceduralPattern)
+`,
+  },
+  {
+    id: 'gpu-gradient-sphere',
+    title: 'Gradient Sphere',
+    description: 'Smooth color gradients on 3D surface (WebGPU)',
+    category: 'gpu-graphics',
+    subcategory: 'textures',
+    code: `/**
+ * Gradient Sphere - Smooth color transitions
+ *
+ * Demonstrates creating smooth gradients using vertex colors.
+ * Colors are interpolated across the surface by the GPU.
+ */
+
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+
+using namespace al;
+
+class GradientSphere : public WebApp {
+public:
+    Mesh mesh;
+    double time = 0;
+
+    // Convert spherical coordinates to gradient colors
+    Color sphereGradient(float theta, float phi) {
+        // theta: 0 to 2*PI (around equator)
+        // phi: 0 to PI (pole to pole)
+
+        float r = 0.5f + 0.5f * sin(theta * 2);
+        float g = 0.5f + 0.5f * cos(phi * 2);
+        float b = 0.5f + 0.5f * sin(theta + phi);
+
+        return Color(r, g, b, 1.0f);
+    }
+
+    void onCreate() override {
+        // Create sphere with colors
+        int slices = 64;
+        int stacks = 32;
+        float radius = 1.5f;
+
+        mesh.primitive(Mesh::TRIANGLES);
+
+        for (int i = 0; i < stacks; ++i) {
+            float phi1 = M_PI * float(i) / stacks;
+            float phi2 = M_PI * float(i + 1) / stacks;
+
+            for (int j = 0; j < slices; ++j) {
+                float theta1 = 2.0f * M_PI * float(j) / slices;
+                float theta2 = 2.0f * M_PI * float(j + 1) / slices;
+
+                // Vertices
+                Vec3f v1(radius * sin(phi1) * cos(theta1),
+                        radius * cos(phi1),
+                        radius * sin(phi1) * sin(theta1));
+                Vec3f v2(radius * sin(phi1) * cos(theta2),
+                        radius * cos(phi1),
+                        radius * sin(phi1) * sin(theta2));
+                Vec3f v3(radius * sin(phi2) * cos(theta2),
+                        radius * cos(phi2),
+                        radius * sin(phi2) * sin(theta2));
+                Vec3f v4(radius * sin(phi2) * cos(theta1),
+                        radius * cos(phi2),
+                        radius * sin(phi2) * sin(theta1));
+
+                // Colors
+                Color c1 = sphereGradient(theta1, phi1);
+                Color c2 = sphereGradient(theta2, phi1);
+                Color c3 = sphereGradient(theta2, phi2);
+                Color c4 = sphereGradient(theta1, phi2);
+
+                // Triangle 1
+                mesh.vertex(v1); mesh.color(c1); mesh.normal(v1.normalized());
+                mesh.vertex(v2); mesh.color(c2); mesh.normal(v2.normalized());
+                mesh.vertex(v3); mesh.color(c3); mesh.normal(v3.normalized());
+
+                // Triangle 2
+                mesh.vertex(v1); mesh.color(c1); mesh.normal(v1.normalized());
+                mesh.vertex(v3); mesh.color(c3); mesh.normal(v3.normalized());
+                mesh.vertex(v4); mesh.color(c4); mesh.normal(v4.normalized());
+            }
+        }
+
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        g.depthTesting(true);
+
+        g.pushMatrix();
+        g.rotate(time * 15, 0, 1, 0);
+        g.rotate(time * 8, 1, 0, 0);
+        g.draw(mesh);
+        g.popMatrix();
+    }
+};
+
+ALLOLIB_WEB_MAIN(GradientSphere)
+`,
+  },
 ]
 
 // Multi-file examples (separate array for better organization)

@@ -127,20 +127,21 @@ set(ALLOLIB_SOURCES
     # Graphics
     ${ALLOLIB_DIR}/src/graphics/al_BufferObject.cpp
     # NOTE: al_DefaultShaders.cpp and al_DefaultShaderString.cpp are replaced by web versions
+    # NOTE: al_Graphics.cpp is replaced by al_Graphics_Web.cpp (WebGL2/WebGPU support)
     ${ALLOLIB_DIR}/src/graphics/al_EasyFBO.cpp
     ${ALLOLIB_DIR}/src/graphics/al_EasyVAO.cpp
     ${ALLOLIB_DIR}/src/graphics/al_FBO.cpp
     ${ALLOLIB_DIR}/src/graphics/al_GPUObject.cpp
-    ${ALLOLIB_DIR}/src/graphics/al_Graphics.cpp
+    # ${ALLOLIB_DIR}/src/graphics/al_Graphics.cpp  # Replaced by web version
     ${ALLOLIB_DIR}/src/graphics/al_Isosurface.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Lens.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Light.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Mesh.cpp
-    ${ALLOLIB_DIR}/src/graphics/al_OpenGL.cpp
+    # ${ALLOLIB_DIR}/src/graphics/al_OpenGL.cpp  # Replaced by al_OpenGL_Web.cpp
     ${ALLOLIB_DIR}/src/graphics/al_RenderManager.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Shader.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Shapes.cpp
-    ${ALLOLIB_DIR}/src/graphics/al_Texture.cpp
+    # ${ALLOLIB_DIR}/src/graphics/al_Texture.cpp  # Replaced by al_Texture_Web.cpp (WebGPU texture bridge)
     ${ALLOLIB_DIR}/src/graphics/al_VAO.cpp
     ${ALLOLIB_DIR}/src/graphics/al_VAOMesh.cpp
     ${ALLOLIB_DIR}/src/graphics/al_Viewpoint.cpp
@@ -201,6 +202,12 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_OSC_Web.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGL2Extensions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebControlGUI.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_Graphics_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_OpenGL_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_Texture_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebMeshAdapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebShaders.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_GraphicsWebExtension.cpp
 )
 
 # WebGL2 backend sources - always included (needed for al::Graphics)

@@ -3787,6 +3787,79 @@ await assetStore.preloadAssets();`,
     platforms: ['native'],
     relatedTerms: ['WebOBJ', 'WebHDR', 'WebEnvironment'],
   },
+
+  // ============================================================================
+  // WEBGPU BACKEND
+  // ============================================================================
+  {
+    term: 'WebGPU',
+    category: 'web',
+    definition: 'Modern graphics API providing low-overhead GPU access in browsers. AlloLib Studio supports WebGPU as an alternative to WebGL2, offering improved performance and compute shader capability.',
+    syntax: 'configureBackend(BackendType::WebGPU);',
+    example: `// Enable WebGPU backend before starting
+void onCreate() override {
+  configureBackend(BackendType::WebGPU);
+}`,
+    platforms: ['web'],
+    relatedTerms: ['WebGL2', 'WGSL', 'GraphicsBackend'],
+  },
+  {
+    term: 'WGSL',
+    category: 'web',
+    definition: 'WebGPU Shading Language - the shader language for WebGPU. Replaces GLSL when using the WebGPU backend. Has different syntax: vec3f instead of vec3, explicit type annotations, different built-in functions.',
+    example: `// WGSL vertex shader example
+@vertex
+fn main(@location(0) position: vec3f) -> @builtin(position) vec4f {
+    return uniforms.projectionMatrix * uniforms.modelViewMatrix * vec4f(position, 1.0);
+}`,
+    platforms: ['web'],
+    relatedTerms: ['WebGPU', 'Shader'],
+  },
+  {
+    term: 'GraphicsBackend',
+    category: 'web',
+    definition: 'Abstract interface for graphics rendering backends. AlloLib Studio implements WebGL2Backend (default) and WebGPUBackend. User code uses the same al::Graphics API regardless of backend.',
+    platforms: ['web'],
+    relatedTerms: ['WebGPU', 'WebGL2'],
+  },
+  {
+    term: 'BackendType',
+    category: 'web',
+    definition: 'Enum for selecting graphics backend: BackendType::WebGL2 (default, maximum compatibility) or BackendType::WebGPU (modern, better performance).',
+    syntax: 'BackendType::WebGL2 | BackendType::WebGPU',
+    example: `// Check which backend is active
+if (getBackendType() == BackendType::WebGPU) {
+  // WebGPU-specific code
+}`,
+    platforms: ['web'],
+    relatedTerms: ['WebGPU', 'GraphicsBackend', 'configureBackend'],
+  },
+  {
+    term: 'configureBackend',
+    category: 'web',
+    definition: 'Function to select the graphics backend before application start. Call in onCreate() or before start() to switch between WebGL2 and WebGPU.',
+    syntax: 'configureBackend(BackendType type)',
+    example: `void onCreate() override {
+  configureBackend(BackendType::WebGPU);
+  // ... rest of initialization
+}`,
+    platforms: ['web'],
+    relatedTerms: ['BackendType', 'WebGPU', 'GraphicsBackend'],
+  },
+  {
+    term: 'TextureBridge',
+    category: 'web',
+    definition: 'Internal system that synchronizes OpenGL textures to WebGPU. When using WebGPU backend, textures created via al::Texture are automatically mirrored to WebGPU format.',
+    platforms: ['web'],
+    relatedTerms: ['WebGPU', 'Texture'],
+  },
+  {
+    term: 'WebGL2',
+    category: 'web',
+    definition: 'Default graphics backend for AlloLib Studio. Based on OpenGL ES 3.0, provides broad browser compatibility. Use WebGPU for improved performance on supported browsers.',
+    platforms: ['web'],
+    relatedTerms: ['WebGPU', 'GraphicsBackend'],
+  },
 ]
 
 // Helper function to get entries by category

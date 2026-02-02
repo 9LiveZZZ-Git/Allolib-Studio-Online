@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { AppStatus } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
 import {
@@ -20,8 +20,9 @@ import {
   type GlossaryEntry
 } from '@/data/glossary'
 import ExampleDialog from './ExampleDialog.vue'
+import { downloadProject, importProjectFile, newProject } from '@/services/unifiedProject'
 
-defineProps<{
+const props = defineProps<{
   status: AppStatus
 }>()
 
@@ -43,6 +44,8 @@ const emit = defineEmits<{
   fileExportZip: []
   importNative: []
   exportNative: []
+  showExportNativeDialog: []
+  showImportNativeDialog: []
 }>()
 
 // File menu state
@@ -67,7 +70,39 @@ function handleFileAction(action: string) {
     case 'exportZip': emit('fileExportZip'); break
     case 'importNative': emit('importNative'); break
     case 'exportNative': emit('exportNative'); break
+    case 'showExportNativeDialog': emit('showExportNativeDialog'); break
+    case 'showImportNativeDialog': emit('showImportNativeDialog'); break
   }
+}
+
+// Project import/export handlers
+const projectFileInput = ref<HTMLInputElement | null>(null)
+
+function handleProjectExport() {
+  closeFileMenu()
+  downloadProject()
+}
+
+function handleProjectImport() {
+  closeFileMenu()
+  // Create a file input and trigger it
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.allolib'
+  input.onchange = async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (file) {
+      try {
+        await importProjectFile(file)
+        // Reload the page to ensure all components reflect the new state
+        window.location.reload()
+      } catch (error) {
+        console.error('Failed to import project:', error)
+        alert('Failed to import project. Please check the file format.')
+      }
+    }
+  }
+  input.click()
 }
 
 // Settings dropdown state
@@ -81,6 +116,87 @@ function closeSettings() {
 
 function handleSettingChange() {
   emit('settingsChanged')
+}
+
+// WebGPU backend handling
+interface WebGPUStatus {
+  available: boolean
+  message: string
+}
+
+const webgpuStatus = ref<WebGPUStatus | null>(null)
+const backendChanged = ref(false)
+const initialBackendType = ref(settings.graphics.backendType)
+
+// Watch for status changes to reset backend changed flag
+watch(() => props.status, (newStatus) => {
+  if (newStatus === 'running' || newStatus === 'compiling') {
+    // Reset backend changed flag when app is re-run
+    initialBackendType.value = settings.graphics.backendType
+    backendChanged.value = false
+  }
+})
+
+// Check WebGPU availability on mount
+async function checkWebGPUAvailability() {
+  if (!navigator.gpu) {
+    webgpuStatus.value = {
+      available: false,
+      message: 'WebGPU not supported in this browser'
+    }
+    return
+  }
+
+  try {
+    const adapter = await navigator.gpu.requestAdapter()
+    if (adapter) {
+      const info = await adapter.requestAdapterInfo?.() || {}
+      webgpuStatus.value = {
+        available: true,
+        message: `WebGPU available: ${info.vendor || 'GPU'} ${info.architecture || ''}`
+      }
+    } else {
+      webgpuStatus.value = {
+        available: false,
+        message: 'WebGPU adapter not available'
+      }
+    }
+  } catch (e) {
+    webgpuStatus.value = {
+      available: false,
+      message: 'WebGPU check failed: ' + (e as Error).message
+    }
+  }
+}
+
+// Check on component mount
+checkWebGPUAvailability()
+
+function handleBackendChange() {
+  const backend = settings.graphics.backendType
+  console.log('[Settings] Backend changed to:', backend)
+
+  // Track if backend was changed from initial value
+  backendChanged.value = backend !== initialBackendType.value
+
+  // Store the preference - it will be used on next app start/reload
+  handleSettingChange()
+
+  // Notify user that a reload is required
+  const w = window as any
+  if (w.allolib?.setBackendType) {
+    // If runtime supports dynamic backend switching (future)
+    w.allolib.setBackendType(backend)
+  } else {
+    // Show a notification that reload is required
+    console.log('[Settings] Backend change will take effect on next compile/run')
+  }
+}
+
+// Reset backendChanged flag when app is re-run
+function resetBackendChanged() {
+  initialBackendType.value = settings.graphics.backendType
+  backendChanged.value = false
 }
 
 const statusColors: Record<AppStatus, string> = {
@@ -345,6 +461,30 @@ function getPlatformBadgeClass(platform: string) {
 
         <div class="border-t border-editor-border my-1"></div>
 
+        <div class="px-4 py-1 text-xs text-gray-500 font-medium">Full Project (with Timeline)</div>
+
+        <button
+          @click="handleProjectExport()"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span>Export as .allolib Project</span>
+        </button>
+
+        <button
+          @click="handleProjectImport()"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <span>Import .allolib Project...</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
         <div class="px-4 py-1 text-xs text-gray-500 font-medium">Cross-Platform</div>
 
         <button
@@ -365,6 +505,30 @@ function getPlatformBadgeClass(platform: string) {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
           </svg>
           <span>Export for Desktop AlloLib</span>
+        </button>
+
+        <div class="border-t border-editor-border my-1"></div>
+
+        <div class="px-4 py-1 text-xs text-gray-500 font-medium">Full Project Export</div>
+
+        <button
+          @click="handleFileAction('showExportNativeDialog')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+          <span>Export Native C++ Project...</span>
+        </button>
+
+        <button
+          @click="handleFileAction('showImportNativeDialog')"
+          class="w-full px-4 py-2 text-left text-sm hover:bg-editor-active flex items-center gap-3"
+        >
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1-4l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <span>Import Native C++ Project...</span>
         </button>
       </div>
 
@@ -519,6 +683,10 @@ function getPlatformBadgeClass(platform: string) {
                 </svg>
                 <svg v-else-if="group.id === 'studio'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                </svg>
+                <svg v-else-if="group.id === 'gpu'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <!-- GPU/Chip icon -->
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M3 9h2m-2 6h2m14-6h2m-2 6h2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                 </svg>
                 <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
@@ -968,42 +1136,6 @@ function getPlatformBadgeClass(platform: string) {
             </div>
           </div>
 
-          <div class="border-t border-editor-border pt-3 mt-3">
-            <div class="flex items-center justify-between">
-              <label class="text-sm text-gray-300">Show Sequencer</label>
-              <button
-                @click="settings.display.showSequencer = !settings.display.showSequencer; handleSettingChange()"
-                :class="[
-                  'w-12 h-6 rounded-full transition-colors relative',
-                  settings.display.showSequencer ? 'bg-allolib-blue' : 'bg-gray-600'
-                ]"
-              >
-                <span
-                  :class="[
-                    'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform',
-                    settings.display.showSequencer ? 'left-7' : 'left-1'
-                  ]"
-                />
-              </button>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-between" v-if="settings.display.showSequencer">
-            <label class="text-sm text-gray-300">Sequencer Height</label>
-            <div class="flex items-center gap-2">
-              <input
-                type="range"
-                v-model.number="settings.display.sequencerHeight"
-                @input="handleSettingChange()"
-                min="150"
-                max="600"
-                step="10"
-                class="w-24 accent-allolib-blue"
-              />
-              <span class="text-xs text-gray-400 w-12 text-right">{{ settings.display.sequencerHeight }}px</span>
-            </div>
-          </div>
-
           <!-- Asset Loading Test Panel (Development) -->
           <div class="flex items-center justify-between">
             <div>
@@ -1056,6 +1188,35 @@ function getPlatformBadgeClass(platform: string) {
 
         <!-- Graphics Settings -->
         <div v-if="activeSettingsTab === 'graphics'" class="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
+          <!-- Backend Selection (Phase 1 WebGPU support) -->
+          <div class="border border-allolib-blue/30 rounded-lg p-3 bg-allolib-blue/5">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-sm text-gray-300 font-medium">Graphics Backend</label>
+              <select
+                v-model="settings.graphics.backendType"
+                @change="handleBackendChange"
+                class="bg-editor-sidebar border border-editor-border rounded px-2 py-1 text-sm"
+              >
+                <option value="webgl2">WebGL2 (Stable)</option>
+                <option value="webgpu">WebGPU (Compute)</option>
+                <option value="auto">Auto-detect</option>
+              </select>
+            </div>
+            <p class="text-xs text-gray-500">
+              <span v-if="settings.graphics.backendType === 'webgl2'">WebGL2: Maximum compatibility, works in all browsers</span>
+              <span v-else-if="settings.graphics.backendType === 'webgpu'">WebGPU: Modern API with compute shader support (Chrome 113+, Edge 113+)</span>
+              <span v-else>Auto: Uses WebGPU if available, falls back to WebGL2</span>
+            </p>
+            <p v-if="webgpuStatus" class="text-xs mt-1" :class="webgpuStatus.available ? 'text-green-400' : 'text-orange-400'">
+              {{ webgpuStatus.message }}
+            </p>
+            <div v-if="backendChanged" class="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded">
+              <p class="text-xs text-yellow-400">
+                Backend change requires recompilation. Click "Run" to apply.
+              </p>
+            </div>
+          </div>
+
           <div class="flex items-center justify-between">
             <label class="text-sm text-gray-300">Quality Preset</label>
             <select

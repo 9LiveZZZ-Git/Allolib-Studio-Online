@@ -1179,9 +1179,22 @@ export class RuntimeService {
 - [x] Correct WASM loaded based on selection (runtime.ts detects and passes WebGPU device)
 - [x] WebGPU option disabled with message on unsupported browsers
 - [x] Auto-detect mode works correctly
-- [ ] Existing examples work without modification on WebGL2
+- [x] Existing examples work without modification on WebGL2
 
 **✅ Phase 2 Complete** — Verified 2026-02-01. Dual-target build system configured with full frontend-backend integration.
+
+### Known Limitation: Graphics Class Integration
+
+The WebGPU backend successfully initializes (device, queue, canvas context), but the existing `al::Graphics` class internally uses direct OpenGL (`gl*`) calls. When user code calls `g.draw(mesh)`, it ultimately invokes OpenGL functions which cause "RuntimeError: function signature mismatch" on the WebGPU backend.
+
+**Current Workarounds:**
+1. Use WebGL2 backend (default) for all existing examples
+2. WebGPU backend is ready for compute-only workloads
+
+**Resolution Path:**
+- Option A: Update `al::Graphics` to use `GraphicsBackend` interface for all rendering
+- Option B: Provide a separate `WebGPURenderer` class for WebGPU-specific rendering
+- This will be addressed as part of Phase 3 or as a separate Graphics integration phase
 
 ---
 

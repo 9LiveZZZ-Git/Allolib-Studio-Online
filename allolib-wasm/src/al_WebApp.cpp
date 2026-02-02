@@ -307,7 +307,52 @@ void WebApp::tick(double dt) {
     // Adaptive quality adjustment based on frame time
     mAutoLOD.adaptQuality();
 
-    // Render graphics
+    // Check if using WebGPU backend
+    bool usingWebGPU = mBackend && mBackend->isWebGPU();
+
+    // Begin frame for backend (if using WebGPU)
+    if (usingWebGPU) {
+#ifdef __EMSCRIPTEN__
+        static int frameCount = 0;
+        if (frameCount < 3) {
+            EM_ASM({ console.log('[WebGPU tick] Frame ' + $0 + ' - calling beginFrame'); }, frameCount);
+        }
+#endif
+        mBackend->beginFrame();
+
+        // WebGPU mode: Use Graphics methods that now route through backend
+        if (mGraphics) {
+#ifdef __EMSCRIPTEN__
+            if (frameCount < 3) {
+                EM_ASM({ console.log('[WebGPU tick] Calling Graphics methods (now routed to backend)'); });
+            }
+#endif
+            // Update viewport to match current canvas size
+            // This ensures correct aspect ratio for projection matrix
+            mGraphics->viewport(0, 0, mBackend->getWidth(), mBackend->getHeight());
+
+            // Set up view matrix from navigation pose (same as WebGL2 path)
+            mGraphics->camera(mNav);
+
+            // Clear through Graphics (routed to backend)
+            mGraphics->clear(0.1f, 0.1f, 0.1f);
+
+            // Call user's onDraw - g.draw() calls now route through backend
+            onDraw(*mGraphics);
+        }
+
+        mBackend->endFrame();
+
+#ifdef __EMSCRIPTEN__
+        if (frameCount < 3) {
+            EM_ASM({ console.log('[WebGPU tick] Frame ' + $0 + ' complete'); }, frameCount);
+            frameCount++;
+        }
+#endif
+        return;
+    }
+
+    // WebGL2 mode: standard rendering path
     if (mGraphics) {
         // Set up view matrix from navigation pose
         mGraphics->camera(mNav);
@@ -495,22 +540,53 @@ void WebApp::initGraphics() {
 #ifdef __EMSCRIPTEN__
     gCurrentApp = this;
 
-    // Check if we're using WebGPU backend - if so, skip WebGL context creation
-    // WebGPU and WebGL contexts are mutually exclusive on the same canvas
+    // Check if we're using WebGPU backend
+    // We still create a hidden WebGL context for backward compatibility
+    // This allows user code that compiles GLSL shaders to not crash
     if (mBackendType == BackendType::WebGPU) {
-        EM_ASM({ console.log('[AlloLib] initGraphics() - WebGPU mode, skipping WebGL context'); });
+        EM_ASM({ console.log('[AlloLib] initGraphics() - WebGPU mode with WebGL compatibility layer'); });
 
-        // Don't create WebGL context - WebGPU backend will handle rendering
+        // Create an offscreen WebGL2 context for compatibility
+        // This allows user code that compiles GLSL shaders to not crash
+        // even though the shaders won't actually be used for rendering
+        EmscriptenWebGLContextAttributes attrs;
+        emscripten_webgl_init_context_attributes(&attrs);
+        attrs.majorVersion = 2;
+        attrs.minorVersion = 0;
+        attrs.alpha = false;
+        attrs.depth = true;
+        attrs.stencil = false;
+        attrs.antialias = false;
+        attrs.premultipliedAlpha = false;
+        attrs.preserveDrawingBuffer = false;
+
+        // Create on a hidden canvas to not conflict with WebGPU's canvas
+        EM_ASM({
+            if (!document.getElementById('gl-compat-canvas')) {
+                var canvas = document.createElement('canvas');
+                canvas.id = 'gl-compat-canvas';
+                canvas.width = 1;
+                canvas.height = 1;
+                canvas.style.display = 'none';
+                document.body.appendChild(canvas);
+            }
+        });
+
+        EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#gl-compat-canvas", &attrs);
+        if (ctx > 0) {
+            emscripten_webgl_make_context_current(ctx);
+            gladLoadGLLoader((void* (*)(const char*))eglGetProcAddress);
+            EM_ASM({ console.log('[AlloLib] WebGL compatibility context created for shader compilation'); });
+        } else {
+            EM_ASM({ console.warn('[AlloLib] Could not create WebGL compatibility context - GLSL shaders will not compile'); });
+        }
+
         mWindow = nullptr;
-
-        // Still create Graphics object but it won't be used for rendering
-        // User code may still call g.draw() but it will be a no-op until
-        // WebGPU rendering is fully implemented
         mGraphics = std::make_unique<Graphics>();
+        // Initialize Graphics (will compile default shaders using the compat context)
+        mGraphics->init();
 
-        // Note: Graphics::init() requires a GL context, so we skip it for WebGPU
-        // This means the Graphics object won't be fully functional
-        EM_ASM({ console.log('[AlloLib] Graphics object created (WebGPU mode - limited functionality)'); });
+        EM_ASM({ console.log('[AlloLib] Graphics initialized (WebGPU mode with GL compatibility)'); });
         return;
     }
 
@@ -685,9 +761,41 @@ void WebApp::initBackend() {
 #endif
         }
     }
+
+    // Connect Graphics to Backend
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[AlloLib] Checking Graphics/Backend connection: mGraphics=' + $0 + ', mBackend=' + $1); },
+           mGraphics ? 1 : 0, mBackend ? 1 : 0);
+#endif
+    if (mGraphics && mBackend) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ console.log('[AlloLib] Connecting Graphics to Backend...'); });
+#endif
+
+        // Set the global backend pointer in Graphics - this enables WebGPU routing
+        extern void Graphics_setBackend(GraphicsBackend*);
+        Graphics_setBackend(mBackend.get());
+
+        // Now initialize Graphics - in WebGPU mode this will skip GL shader compilation
+        mGraphics->init();
+
+        // Also set up extension for any additional functionality
+        mGraphicsExtension.setGraphics(mGraphics.get());
+        mGraphicsExtension.setBackend(mBackend.get());
+        setGlobalGraphicsExtension(&mGraphicsExtension);
+
+        std::cout << "[AlloLib] Graphics connected to " << mBackend->getName() << " backend" << std::endl;
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ console.log('[AlloLib] Graphics-Backend connection complete'); });
+#endif
+    }
 }
 
 void WebApp::cleanupBackend() {
+    // Clear graphics extension
+    mGraphicsExtension.setBackend(nullptr);
+    setGlobalGraphicsExtension(nullptr);
+
     if (mBackend) {
         mBackend->shutdown();
         mBackend.reset();

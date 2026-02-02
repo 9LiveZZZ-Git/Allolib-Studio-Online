@@ -111,13 +111,4 @@ EMSCRIPTEN_KEEPALIVE float al_web_get_point_size(void) {
 
 } // extern "C"
 
-// Implementation of al::gl::getPointSize() for the patched al_OpenGL.hpp
-namespace al {
-namespace gl {
-
-float getPointSize() {
-    return s_pointSize;
-}
-
-}  // namespace gl
-}  // namespace al
+// Note: al::gl::getPointSize() is now implemented in al_OpenGL_Web.cpp

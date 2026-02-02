@@ -223,7 +223,9 @@ private:
     struct ShaderResource {
         WGPUShaderModule vertModule = nullptr;
         WGPUShaderModule fragModule = nullptr;
-        WGPURenderPipeline pipeline = nullptr;
+        // Pipelines per primitive topology (WebGPU requires separate pipelines)
+        std::unordered_map<int, WGPURenderPipeline> pipelines; // keyed by PrimitiveType
+        WGPURenderPipeline defaultPipeline = nullptr; // TriangleList for fallback
         WGPUBindGroupLayout bindGroupLayout = nullptr;
         WGPUPipelineLayout pipelineLayout = nullptr;
         std::string name;
@@ -279,14 +281,32 @@ private:
 
     // Current pipeline state
     ShaderHandle mCurrentShader;
+    ShaderHandle mDefaultShader;    // Default mesh shader for fallback
+    ShaderHandle mTexturedShader;   // Textured mesh shader
     BufferHandle mCurrentVertexBuffer;
     BufferHandle mCurrentIndexBuffer;
     bool mIndexBuffer32Bit = false;
     VertexLayout mCurrentVertexLayout;
 
+    // Texture state
+    TextureHandle mBoundTextures[8];  // Up to 8 texture units
+    int mActiveTextureUnit = 0;
+    bool mTextureBindingDirty = false;
+    WGPUBindGroup mTexturedBindGroup = nullptr;  // Bind group with texture
+
     // Pending uniform data (accumulated before draw)
     std::vector<uint8_t> mUniformData;
     bool mUniformsDirty = false;
+
+    // Dynamic uniform buffer for multiple draw calls per frame
+    // WebGPU requires 256-byte alignment for dynamic offsets
+    static constexpr size_t kUniformAlignment = 256;
+    static constexpr size_t kMaxDrawsPerFrame = 256;
+    WGPUBuffer mUniformRingBuffer = nullptr;
+    WGPUBindGroup mDynamicBindGroup = nullptr;
+    WGPUBindGroupLayout mDynamicBindGroupLayout = nullptr;
+    size_t mUniformRingOffset = 0;
+    uint32_t mCurrentDynamicOffset = 0;
 
     // Viewport state
     int mViewportX = 0, mViewportY = 0;
@@ -311,9 +331,16 @@ private:
 
     void createSwapChain();
     void createDepthBuffer();
+    void createDefaultShader();
+    void createTexturedShader();
+    void updateTexturedBindGroup();
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();
+
+    // Get or create pipeline for a specific primitive type
+    WGPURenderPipeline getPipelineForPrimitive(ShaderResource& shader, PrimitiveType primitive);
+    WGPURenderPipeline createPipelineForPrimitive(ShaderResource& shader, PrimitiveType primitive);
 
     WGPUBufferUsageFlags toWGPUBufferUsage(BufferType type, BufferUsage usage);
     WGPUTextureFormat toWGPUFormat(PixelFormat format);

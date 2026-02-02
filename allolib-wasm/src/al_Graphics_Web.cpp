@@ -1,14 +1,131 @@
 /**
- * WebGL2-compatible Graphics implementation
+ * WebGL2/WebGPU-compatible Graphics implementation
  *
- * This is a patched version of al_Graphics.cpp for WebGL2/Emscripten builds.
+ * This is a patched version of al_Graphics.cpp for web builds.
  * Key changes:
  * - Sets al_PointSize uniform before drawing (WebGL2 doesn't support glPointSize)
+ * - Supports WebGPU backend routing for draw calls
  */
 
 #include "al/graphics/al_Graphics.hpp"
+#include "al_WebGraphicsBackend.hpp"
+#include "al_WebMeshAdapter.hpp"
+#include <utility>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include "al/graphics/al_OpenGL.hpp"
+#include <unordered_map>
+#include <vector>
+#endif
 
 namespace al {
+
+// ─── WebGPU Backend Integration ──────────────────────────────────────────────
+
+static GraphicsBackend* sGraphicsBackend = nullptr;
+static WebMeshAdapter sMeshAdapter;
+static bool sWebGPUMode = false;
+
+// ─── Texture Bridge (OpenGL ↔ WebGPU) ────────────────────────────────────────
+
+struct TextureBridgeEntry {
+    TextureHandle webgpuHandle;
+    int width = 0;
+    int height = 0;
+    uint32_t version = 0;  // To detect if texture data changed
+};
+
+static std::unordered_map<GLuint, TextureBridgeEntry> sTextureBridge;
+static GLuint sLastBoundGLTexture = 0;
+
+// Register a texture for WebGPU use (called after texture.submit())
+void Graphics_registerTexture(GLuint glTextureId, int width, int height, const void* pixels) {
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) return;
+
+    auto it = sTextureBridge.find(glTextureId);
+
+    // Create new or update existing
+    TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = PixelFormat::RGBA8;
+    desc.minFilter = FilterMode::Linear;
+    desc.magFilter = FilterMode::Linear;
+    desc.wrapS = WrapMode::Repeat;
+    desc.wrapT = WrapMode::Repeat;
+
+    if (it == sTextureBridge.end()) {
+        // Create new WebGPU texture
+        TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+        if (handle.valid()) {
+            sTextureBridge[glTextureId] = {handle, width, height, 1};
+            printf("[Graphics] Registered GL texture %u → WebGPU (size: %dx%d)\n",
+                   glTextureId, width, height);
+        }
+    } else {
+        // Update existing texture
+        if (it->second.width != width || it->second.height != height) {
+            // Size changed - recreate
+            sGraphicsBackend->destroyTexture(it->second.webgpuHandle);
+            TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+            it->second = {handle, width, height, it->second.version + 1};
+        } else {
+            // Same size - just update data
+            sGraphicsBackend->updateTexture(it->second.webgpuHandle, pixels);
+            it->second.version++;
+        }
+    }
+}
+
+// Called when a GL texture is bound - sync to WebGPU backend
+void Graphics_onTextureBind(GLuint glTextureId, int unit) {
+    if (!sWebGPUMode || !sGraphicsBackend) return;
+
+    sLastBoundGLTexture = glTextureId;
+
+    auto it = sTextureBridge.find(glTextureId);
+    if (it != sTextureBridge.end() && it->second.webgpuHandle.valid()) {
+        sGraphicsBackend->setTexture("tex0", it->second.webgpuHandle, unit);
+    }
+}
+
+// Check if there's a registered texture for WebGPU
+bool Graphics_hasWebGPUTexture() {
+    if (!sWebGPUMode || sLastBoundGLTexture == 0) return false;
+    auto it = sTextureBridge.find(sLastBoundGLTexture);
+    return it != sTextureBridge.end() && it->second.webgpuHandle.valid();
+}
+
+// Clean up texture bridge
+void Graphics_clearTextureBridge() {
+    if (sGraphicsBackend) {
+        for (auto& [glId, entry] : sTextureBridge) {
+            if (entry.webgpuHandle.valid()) {
+                sGraphicsBackend->destroyTexture(entry.webgpuHandle);
+            }
+        }
+    }
+    sTextureBridge.clear();
+    sLastBoundGLTexture = 0;
+}
+
+void Graphics_setBackend(GraphicsBackend* backend) {
+    sGraphicsBackend = backend;
+    sMeshAdapter.setBackend(backend);
+    sWebGPUMode = backend && backend->isWebGPU();
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[Graphics] Backend set, WebGPU mode: ' + $0); }, sWebGPUMode ? 1 : 0);
+#endif
+}
+
+GraphicsBackend* Graphics_getBackend() {
+    return sGraphicsBackend;
+}
+
+bool Graphics_isWebGPU() {
+    return sWebGPUMode;
+}
 
 const float Graphics::LEFT_EYE = -1.0f;
 const float Graphics::RIGHT_EYE = 1.0f;
@@ -17,6 +134,15 @@ const float Graphics::MONO_EYE = 0.0f;
 void Graphics::init() {
   if (initialized)
     return;
+
+  // In WebGPU mode, skip GL shader compilation - backend handles rendering
+  if (sWebGPUMode) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[Graphics::init] WebGPU mode - skipping GL shader compilation'); });
+#endif
+    initialized = true;
+    return;
+  }
 
   compileDefaultShader(color_shader, ShaderType::COLOR);
   compileDefaultShader(mesh_shader, ShaderType::MESH);
@@ -262,6 +388,21 @@ void Graphics::quadViewport(Texture &tex, float x, float y, float w, float h) {
 }
 
 void Graphics::shader(ShaderProgram &s) {
+  // Custom GLSL shaders don't work with WebGPU - WGSL is required
+  if (sWebGPUMode) {
+#ifdef __EMSCRIPTEN__
+    static bool warned = false;
+    if (!warned) {
+      EM_ASM({
+        console.warn('[Graphics::shader] Custom GLSL shaders are not supported in WebGPU mode.');
+        console.warn('WebGPU requires WGSL shaders. The default shader will be used instead.');
+      });
+      warned = true;
+    }
+#endif
+    // Don't set CUSTOM mode - keep using default shader
+    return;
+  }
   mColoringMode = ColoringMode::CUSTOM;
   RenderManager::shader(s);
 }
@@ -487,5 +628,182 @@ void Graphics::omni(bool b) {
 }
 
 bool Graphics::omni() { return is_omni; }
+
+// ─── WebGPU Backend Draw Routing ─────────────────────────────────────────────
+
+// Helper to draw mesh through WebGPU backend
+static void drawMeshWithWebGPU(Graphics& g, const Mesh& m) {
+    // Sync matrices
+    Mat4f model = g.modelMatrix();
+    Mat4f view = g.viewMatrix();
+    Mat4f mv = view * model;
+    Mat4f proj = g.projMatrix();
+
+#ifdef __EMSCRIPTEN__
+    static int matrixLogCount = 0;
+    if (matrixLogCount < 3) {
+        // Log model matrix translation (column 3)
+        EM_ASM({
+            console.log('[WebGPU Matrix] Model translation: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
+        }, model.elems()[12], model.elems()[13], model.elems()[14]);
+
+        // Log view matrix (position is embedded in column 3)
+        EM_ASM({
+            console.log('[WebGPU Matrix] View[12-14]: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
+        }, view.elems()[12], view.elems()[13], view.elems()[14]);
+
+        // Log modelView result translation
+        EM_ASM({
+            console.log('[WebGPU Matrix] ModelView translation: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
+        }, mv.elems()[12], mv.elems()[13], mv.elems()[14]);
+
+        // Log projection matrix diagonal (aspect ratio info)
+        EM_ASM({
+            console.log('[WebGPU Matrix] Proj diagonal: (' + $0 + ', ' + $1 + ', ' + $2 + ', ' + $3 + ')');
+        }, proj.elems()[0], proj.elems()[5], proj.elems()[10], proj.elems()[15]);
+
+        matrixLogCount++;
+    }
+#endif
+
+    sGraphicsBackend->setUniformMat4("modelViewMatrix", mv.elems());
+    sGraphicsBackend->setUniformMat4("projectionMatrix", proj.elems());
+
+    // Sync uniforms using accessors
+    Color tint = g.currentTint();
+    Color col = g.currentColor();
+    sGraphicsBackend->setUniform("tint", tint.r, tint.g, tint.b, tint.a);
+    sGraphicsBackend->setUniform("color", col.r, col.g, col.b, col.a);
+    sGraphicsBackend->setUniform("pointSize", gl::getPointSize());
+    sGraphicsBackend->setUniform("eyeSep", static_cast<float>(g.lens().eyeSep() * g.eye() / 2.0f));
+    sGraphicsBackend->setUniform("focLen", static_cast<float>(g.lens().focalLength()));
+
+    // Prepare and draw mesh
+    if (sMeshAdapter.prepareMesh(m)) {
+        PrimitiveType prim = meshPrimitiveToPrimitiveType(m.primitive());
+        sMeshAdapter.drawMesh(prim);
+    }
+}
+
+void Graphics::draw(const Mesh& mesh) {
+#ifdef __EMSCRIPTEN__
+    static int drawCount = 0;
+    if (drawCount < 5) {
+        EM_ASM({ console.log('[Graphics::draw] Entry, count=' + $0 + ', WebGPU=' + $1); }, drawCount, sWebGPUMode ? 1 : 0);
+    }
+#endif
+
+    if (sWebGPUMode && sGraphicsBackend) {
+#ifdef __EMSCRIPTEN__
+        if (drawCount < 5) {
+            EM_ASM({ console.log('[Graphics::draw] Calling drawMeshWithWebGPU...'); });
+        }
+#endif
+        drawMeshWithWebGPU(*this, mesh);
+#ifdef __EMSCRIPTEN__
+        if (drawCount < 5) {
+            EM_ASM({ console.log('[Graphics::draw] drawMeshWithWebGPU done'); });
+            drawCount++;
+        }
+#endif
+        return;
+    }
+
+    // Standard WebGL2 path - delegate to RenderManager
+#ifdef __EMSCRIPTEN__
+    if (drawCount < 5) {
+        EM_ASM({ console.log('[Graphics::draw] Using WebGL2 path'); });
+        drawCount++;
+    }
+#endif
+    RenderManager::draw(mesh);
+}
+
+void Graphics::draw(Mesh&& mesh) {
+    if (sWebGPUMode && sGraphicsBackend) {
+        drawMeshWithWebGPU(*this, mesh);
+        return;
+    }
+
+    // Standard WebGL2 path - delegate to RenderManager
+    RenderManager::draw(std::move(mesh));
+}
+
+void Graphics::draw(VAOMesh& mesh) {
+    if (sWebGPUMode && sGraphicsBackend) {
+        // VAOMesh is a Mesh, route through backend
+        drawMeshWithWebGPU(*this, mesh);
+        return;
+    }
+
+    // Standard WebGL2 path - delegate to RenderManager
+    RenderManager::draw(mesh);
+}
+
+void Graphics::draw(EasyVAO& vao) {
+    // EasyVAO doesn't have mesh data we can extract for WebGPU
+    // Just delegate to RenderManager
+    RenderManager::draw(vao);
+}
+
+void Graphics::clear(float r, float g, float b, float a) {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[Graphics::clear] Entry: r=' + $0 + ', g=' + $1 + ', b=' + $2 + ', a=' + $3 + ', WebGPU=' + $4); },
+           r, g, b, a, sWebGPUMode ? 1 : 0);
+#endif
+
+    if (sWebGPUMode && sGraphicsBackend) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ console.log('[Graphics::clear] Calling backend->clear...'); });
+#endif
+        sGraphicsBackend->clear(r, g, b, a);
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ console.log('[Graphics::clear] backend->clear done'); });
+#endif
+        return;
+    }
+
+    // Standard WebGL2 path
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ console.log('[Graphics::clear] Using WebGL2 path'); });
+#endif
+    gl::clearColor(r, g, b, a);
+    gl::clearDepth(1.f);
+}
+
+void Graphics::clear(float grayscale, float a) {
+    clear(grayscale, grayscale, grayscale, a);
+}
+
+void Graphics::clear(Color const& c) {
+    clear(c.r, c.g, c.b, c.a);
+}
+
+// ─── WebGPU-safe Viewport ────────────────────────────────────────────────────
+
+void Graphics::viewport(int left, int bottom, int width, int height) {
+    // Update the viewport stack (same as base class)
+    mViewportStack.set(left, bottom, width, height);
+
+    // Skip glViewport in WebGPU mode - the backend manages its own viewport
+    if (sWebGPUMode) {
+        // Optionally, sync viewport to backend
+        if (sGraphicsBackend) {
+            sGraphicsBackend->viewport(left, bottom, width, height);
+        }
+        return;
+    }
+
+    // WebGL2 path - call glViewport
+    gl::viewport(left, bottom, width, height);
+}
+
+void Graphics::popViewport() {
+    // Pop from the stack (same as base class)
+    mViewportStack.pop();
+    // Re-apply the viewport at the top of the stack using our override
+    Viewport v = mViewportStack.get();
+    viewport(v);
+}
 
 } // namespace al

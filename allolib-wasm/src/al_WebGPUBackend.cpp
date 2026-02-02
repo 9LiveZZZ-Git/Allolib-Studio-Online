@@ -23,6 +23,200 @@
 
 namespace al {
 
+// ─── Embedded WGSL Shaders ───────────────────────────────────────────────────
+// Default mesh shader with diffuse lighting
+
+static const char* kDefaultVertexShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3f,
+    @location(1) color: vec4f,
+    @location(2) texcoord: vec2f,
+    @location(3) normal: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+    @location(1) viewNormal: vec3f,
+    @location(2) viewPos: vec3f,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    // Transform position to view space
+    let viewPos = uniforms.modelViewMatrix * vec4f(in.position, 1.0);
+    out.viewPos = viewPos.xyz;
+
+    // Transform to clip space
+    var clipPos = uniforms.projectionMatrix * viewPos;
+
+    // Convert Z from OpenGL clip space [-w,w] to WebGPU clip space [0,w]
+    clipPos.z = clipPos.z * 0.5 + clipPos.w * 0.5;
+
+    out.position = clipPos;
+    out.color = in.color;
+
+    // Transform normal to view space using upper-left 3x3 of modelView matrix
+    // Note: For non-uniform scaling, we'd need the inverse transpose (normal matrix)
+    // This is a simplification that works for uniform scaling and rotation
+    let normalMat = mat3x3f(
+        uniforms.modelViewMatrix[0].xyz,
+        uniforms.modelViewMatrix[1].xyz,
+        uniforms.modelViewMatrix[2].xyz
+    );
+    out.viewNormal = normalize(normalMat * in.normal);
+
+    return out;
+}
+)";
+
+static const char* kDefaultFragmentShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct FragmentInput {
+    @location(0) color: vec4f,
+    @location(1) viewNormal: vec3f,
+    @location(2) viewPos: vec3f,
+}
+
+@fragment
+fn fs_main(in: FragmentInput) -> @location(0) vec4f {
+    // Normalize interpolated normal
+    let N = normalize(in.viewNormal);
+
+    // Light direction in view space (from above-right-front, like typical 3-point lighting)
+    // This matches AlloLib's default light at (1, 1, 1) in world space, transformed to view
+    let lightDir = normalize(vec3f(1.0, 1.0, 1.0));
+
+    // Ambient light (provides base illumination so back faces aren't completely black)
+    let ambient = 0.3;
+
+    // Diffuse lighting (Lambert)
+    let diffuse = max(dot(N, lightDir), 0.0);
+
+    // Combined lighting with some softening
+    let lighting = ambient + diffuse * 0.7;
+
+    // Apply lighting to vertex color and tint
+    let litColor = in.color.rgb * lighting;
+    return vec4f(litColor * uniforms.tint.rgb, in.color.a * uniforms.tint.a);
+}
+)";
+
+// Textured shader - for rendering with 2D textures
+static const char* kTexturedVertexShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3f,
+    @location(1) color: vec4f,
+    @location(2) texcoord: vec2f,
+    @location(3) normal: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+    @location(1) texcoord: vec2f,
+    @location(2) viewNormal: vec3f,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    let viewPos = uniforms.modelViewMatrix * vec4f(in.position, 1.0);
+    var clipPos = uniforms.projectionMatrix * viewPos;
+    clipPos.z = clipPos.z * 0.5 + clipPos.w * 0.5;
+
+    out.position = clipPos;
+    out.color = in.color;
+    out.texcoord = in.texcoord;
+
+    let normalMat = mat3x3f(
+        uniforms.modelViewMatrix[0].xyz,
+        uniforms.modelViewMatrix[1].xyz,
+        uniforms.modelViewMatrix[2].xyz
+    );
+    out.viewNormal = normalize(normalMat * in.normal);
+
+    return out;
+}
+)";
+
+static const char* kTexturedFragmentShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var tex0: texture_2d<f32>;
+@group(0) @binding(2) var samp0: sampler;
+
+struct FragmentInput {
+    @location(0) color: vec4f,
+    @location(1) texcoord: vec2f,
+    @location(2) viewNormal: vec3f,
+}
+
+@fragment
+fn fs_main(in: FragmentInput) -> @location(0) vec4f {
+    // Sample texture
+    let texColor = textureSample(tex0, samp0, in.texcoord);
+
+    // Apply diffuse lighting
+    let N = normalize(in.viewNormal);
+    let lightDir = normalize(vec3f(1.0, 1.0, 1.0));
+    let ambient = 0.3;
+    let diffuse = max(dot(N, lightDir), 0.0);
+    let lighting = ambient + diffuse * 0.7;
+
+    // Combine texture, vertex color, lighting, and tint
+    let litColor = texColor.rgb * in.color.rgb * lighting;
+    return vec4f(litColor * uniforms.tint.rgb, texColor.a * in.color.a * uniforms.tint.a);
+}
+)";
+
 // ─── Constructor / Destructor ────────────────────────────────────────────────
 
 WebGPUBackend::WebGPUBackend() {
@@ -92,11 +286,35 @@ bool WebGPUBackend::init(int width, int height) {
     printf("[WebGPUBackend] Creating depth buffer...\n");
     createDepthBuffer();
 
+    // Create uniform ring buffer for dynamic offsets (supports many draw calls per frame)
+    printf("[WebGPUBackend] Creating uniform ring buffer...\n");
+    {
+        WGPUBufferDescriptor ringBufDesc = {};
+        ringBufDesc.size = kUniformAlignment * kMaxDrawsPerFrame;  // 256 * 256 = 64KB
+        ringBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        ringBufDesc.mappedAtCreation = false;
+        mUniformRingBuffer = wgpuDeviceCreateBuffer(mDevice, &ringBufDesc);
+        if (!mUniformRingBuffer) {
+            printf("[WebGPUBackend] ERROR: Failed to create uniform ring buffer!\n");
+            return false;
+        }
+        printf("[WebGPUBackend] Uniform ring buffer created: %zu bytes\n",
+               kUniformAlignment * kMaxDrawsPerFrame);
+    }
+
     // Initialize viewport
     mViewportX = 0;
     mViewportY = 0;
     mViewportW = width;
     mViewportH = height;
+
+    // Create default shader
+    printf("[WebGPUBackend] Creating default shader...\n");
+    createDefaultShader();
+
+    // Create textured shader
+    printf("[WebGPUBackend] Creating textured shader...\n");
+    createTexturedShader();
 
     printf("[WebGPUBackend] Initialized %dx%d successfully\n", width, height);
     return true;
@@ -120,6 +338,18 @@ void WebGPUBackend::shutdown() {
     }
 
     // Destroy all resources
+
+    // Release textured bind group first (before textures)
+    if (mTexturedBindGroup) {
+        wgpuBindGroupRelease(mTexturedBindGroup);
+        mTexturedBindGroup = nullptr;
+    }
+
+    // Clear bound texture references
+    for (int i = 0; i < 8; i++) {
+        mBoundTextures[i] = {};
+    }
+
     for (auto& [id, buf] : mBuffers) {
         if (buf.buffer) wgpuBufferRelease(buf.buffer);
     }
@@ -135,7 +365,11 @@ void WebGPUBackend::shutdown() {
     for (auto& [id, shader] : mShaders) {
         if (shader.bindGroup) wgpuBindGroupRelease(shader.bindGroup);
         if (shader.uniformBuffer) wgpuBufferRelease(shader.uniformBuffer);
-        if (shader.pipeline) wgpuRenderPipelineRelease(shader.pipeline);
+        // Release all pipelines (different primitive topologies)
+        for (auto& [primType, pipeline] : shader.pipelines) {
+            if (pipeline) wgpuRenderPipelineRelease(pipeline);
+        }
+        shader.pipelines.clear();
         if (shader.pipelineLayout) wgpuPipelineLayoutRelease(shader.pipelineLayout);
         if (shader.bindGroupLayout) wgpuBindGroupLayoutRelease(shader.bindGroupLayout);
         if (shader.fragModule) wgpuShaderModuleRelease(shader.fragModule);
@@ -166,6 +400,20 @@ void WebGPUBackend::shutdown() {
     if (mDepthTexture) {
         wgpuTextureRelease(mDepthTexture);
         mDepthTexture = nullptr;
+    }
+
+    // Destroy uniform ring buffer and dynamic bind group
+    if (mDynamicBindGroup) {
+        wgpuBindGroupRelease(mDynamicBindGroup);
+        mDynamicBindGroup = nullptr;
+    }
+    if (mDynamicBindGroupLayout) {
+        wgpuBindGroupLayoutRelease(mDynamicBindGroupLayout);
+        mDynamicBindGroupLayout = nullptr;
+    }
+    if (mUniformRingBuffer) {
+        wgpuBufferRelease(mUniformRingBuffer);
+        mUniformRingBuffer = nullptr;
     }
 
     // Swap chain is managed via JS canvas context - just clear the dummy handle
@@ -206,6 +454,28 @@ void WebGPUBackend::resize(int width, int height) {
 }
 
 void WebGPUBackend::beginFrame() {
+    // First, check if canvas size has changed and resize depth buffer if needed
+    int canvasWidth = EM_ASM_INT({
+        var context = Module._webgpuCanvasContext;
+        if (!context) return 0;
+        var texture = context.getCurrentTexture();
+        return texture ? texture.width : 0;
+    });
+    int canvasHeight = EM_ASM_INT({
+        var context = Module._webgpuCanvasContext;
+        if (!context) return 0;
+        var texture = context.getCurrentTexture();
+        return texture ? texture.height : 0;
+    });
+
+    // Resize depth buffer if canvas size changed
+    if (canvasWidth > 0 && canvasHeight > 0 &&
+        (canvasWidth != mWidth || canvasHeight != mHeight)) {
+        printf("[WebGPUBackend] Canvas resized from %dx%d to %dx%d, updating depth buffer\n",
+               mWidth, mHeight, canvasWidth, canvasHeight);
+        resize(canvasWidth, canvasHeight);
+    }
+
     // Get current texture view from JavaScript canvas context
     // Since wgpuDeviceCreateSwapChain has issues in MODULARIZE mode,
     // we get the texture directly from the configured canvas context
@@ -266,6 +536,9 @@ void WebGPUBackend::beginFrame() {
 
     // Mark that we need to clear at next render pass
     mHasPendingClear = true;
+
+    // Reset uniform ring buffer offset for new frame
+    mUniformRingOffset = 0;
 }
 
 void WebGPUBackend::endFrame() {
@@ -602,12 +875,13 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
         }
     }
 
-    // Create bind group layout for uniforms
+    // Create bind group layout for uniforms with dynamic offset support
     WGPUBindGroupLayoutEntry layoutEntry = {};
     layoutEntry.binding = 0;
     layoutEntry.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
     layoutEntry.buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntry.buffer.minBindingSize = 256; // Standard uniform buffer size
+    layoutEntry.buffer.minBindingSize = 160; // Actual uniform struct size
+    layoutEntry.buffer.hasDynamicOffset = true; // Enable dynamic offsets!
 
     WGPUBindGroupLayoutDescriptor layoutDesc = {};
     layoutDesc.entryCount = 1;
@@ -620,32 +894,55 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
     pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
     resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
 
-    // Create uniform buffer
-    WGPUBufferDescriptor uniformBufDesc = {};
-    uniformBufDesc.label = "Uniform Buffer";
-    uniformBufDesc.size = 256;
-    uniformBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    resource.uniformBuffer = wgpuDeviceCreateBuffer(mDevice, &uniformBufDesc);
+    // Use the shared ring buffer for uniforms (created in init())
+    // This allows dynamic offsets for each draw call
+    resource.uniformBuffer = nullptr; // Don't create per-shader buffer
 
-    // Create bind group
-    WGPUBindGroupEntry bindGroupEntry = {};
-    bindGroupEntry.binding = 0;
-    bindGroupEntry.buffer = resource.uniformBuffer;
-    bindGroupEntry.offset = 0;
-    bindGroupEntry.size = 256;
+    // Create bind group using the shared ring buffer
+    if (mUniformRingBuffer) {
+        WGPUBindGroupEntry bindGroupEntry = {};
+        bindGroupEntry.binding = 0;
+        bindGroupEntry.buffer = mUniformRingBuffer;
+        bindGroupEntry.offset = 0;
+        bindGroupEntry.size = kUniformAlignment; // Size for one draw call
 
-    WGPUBindGroupDescriptor bindGroupDesc = {};
-    bindGroupDesc.layout = resource.bindGroupLayout;
-    bindGroupDesc.entryCount = 1;
-    bindGroupDesc.entries = &bindGroupEntry;
-    resource.bindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+        WGPUBindGroupDescriptor bindGroupDesc = {};
+        bindGroupDesc.layout = resource.bindGroupLayout;
+        bindGroupDesc.entryCount = 1;
+        bindGroupDesc.entries = &bindGroupEntry;
+        resource.bindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    } else {
+        // Fallback: create per-shader buffer (for shaders created before init)
+        WGPUBufferDescriptor uniformBufDesc = {};
+        uniformBufDesc.label = "Uniform Buffer";
+        uniformBufDesc.size = 256;
+        uniformBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        resource.uniformBuffer = wgpuDeviceCreateBuffer(mDevice, &uniformBufDesc);
+
+        WGPUBindGroupEntry bindGroupEntry = {};
+        bindGroupEntry.binding = 0;
+        bindGroupEntry.buffer = resource.uniformBuffer;
+        bindGroupEntry.offset = 0;
+        bindGroupEntry.size = 256;
+
+        WGPUBindGroupDescriptor bindGroupDesc = {};
+        bindGroupDesc.layout = resource.bindGroupLayout;
+        bindGroupDesc.entryCount = 1;
+        bindGroupDesc.entries = &bindGroupEntry;
+        resource.bindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    }
 
     // Create render pipeline
     WGPURenderPipelineDescriptor pipelineDesc = {};
     pipelineDesc.layout = resource.pipelineLayout;
 
-    // Vertex state
-    WGPUVertexAttribute vertexAttribs[3] = {};
+    // Vertex state - must match InterleavedVertex from WebMeshAdapter:
+    // - Position (vec3f, 12 bytes) at offset 0
+    // - Color (vec4f, 16 bytes) at offset 12
+    // - TexCoord (vec2f, 8 bytes) at offset 28
+    // - Normal (vec3f, 12 bytes) at offset 36
+    // Total stride: 48 bytes
+    WGPUVertexAttribute vertexAttribs[4] = {};
     // Position
     vertexAttribs[0].format = WGPUVertexFormat_Float32x3;
     vertexAttribs[0].offset = 0;
@@ -654,15 +951,19 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
     vertexAttribs[1].format = WGPUVertexFormat_Float32x4;
     vertexAttribs[1].offset = 12;
     vertexAttribs[1].shaderLocation = 1;
-    // Tex coord (optional)
+    // Tex coord
     vertexAttribs[2].format = WGPUVertexFormat_Float32x2;
     vertexAttribs[2].offset = 28;
     vertexAttribs[2].shaderLocation = 2;
+    // Normal
+    vertexAttribs[3].format = WGPUVertexFormat_Float32x3;
+    vertexAttribs[3].offset = 36;
+    vertexAttribs[3].shaderLocation = 3;
 
     WGPUVertexBufferLayout vertexBufferLayout = {};
-    vertexBufferLayout.arrayStride = 36; // 3 + 4 + 2 floats
+    vertexBufferLayout.arrayStride = 48; // sizeof(InterleavedVertex)
     vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
-    vertexBufferLayout.attributeCount = 2; // Default: position + color
+    vertexBufferLayout.attributeCount = 4; // position, color, texcoord, normal
     vertexBufferLayout.attributes = vertexAttribs;
 
     pipelineDesc.vertex.module = resource.vertModule;
@@ -674,13 +975,14 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
     pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
     pipelineDesc.primitive.stripIndexFormat = WGPUIndexFormat_Undefined;
     pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
-    pipelineDesc.primitive.cullMode = WGPUCullMode_Back;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None; // Disable culling for now
 
     // Depth stencil state
+    // DEBUG: Using LessEqual and ensuring depth write works
     WGPUDepthStencilState depthStencil = {};
     depthStencil.format = WGPUTextureFormat_Depth24Plus;
     depthStencil.depthWriteEnabled = true;
-    depthStencil.depthCompare = WGPUCompareFunction_Less;
+    depthStencil.depthCompare = WGPUCompareFunction_LessEqual;
     pipelineDesc.depthStencil = &depthStencil;
 
     // Multisample state
@@ -709,8 +1011,8 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
     fragmentState.targets = &colorTarget;
     pipelineDesc.fragment = &fragmentState;
 
-    resource.pipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
-    if (!resource.pipeline) {
+    resource.defaultPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (!resource.defaultPipeline) {
         printf("[WebGPUBackend] Failed to create render pipeline!\n");
         // Cleanup
         wgpuBindGroupRelease(resource.bindGroup);
@@ -722,8 +1024,11 @@ ShaderHandle WebGPUBackend::createShader(const ShaderDesc& desc) {
         return {};
     }
 
+    // Store default pipeline (TriangleList) in the map too
+    resource.pipelines[static_cast<int>(PrimitiveType::Triangles)] = resource.defaultPipeline;
+
     uint64_t id = generateHandleId();
-    mShaders[id] = resource;
+    mShaders[id] = std::move(resource);
 
     printf("[WebGPUBackend] Created shader '%s'\n", desc.name.c_str());
     return ShaderHandle{id};
@@ -736,7 +1041,11 @@ void WebGPUBackend::destroyShader(ShaderHandle handle) {
     auto& shader = it->second;
     if (shader.bindGroup) wgpuBindGroupRelease(shader.bindGroup);
     if (shader.uniformBuffer) wgpuBufferRelease(shader.uniformBuffer);
-    if (shader.pipeline) wgpuRenderPipelineRelease(shader.pipeline);
+    // Release all pipelines (different primitive topologies)
+    for (auto& [primType, pipeline] : shader.pipelines) {
+        if (pipeline) wgpuRenderPipelineRelease(pipeline);
+    }
+    shader.pipelines.clear();
     if (shader.pipelineLayout) wgpuPipelineLayoutRelease(shader.pipelineLayout);
     if (shader.bindGroupLayout) wgpuBindGroupLayoutRelease(shader.bindGroupLayout);
     if (shader.fragModule) wgpuShaderModuleRelease(shader.fragModule);
@@ -750,23 +1059,152 @@ void WebGPUBackend::useShader(ShaderHandle handle) {
     mUniformsDirty = true;
 }
 
+// ─── Primitive Type Pipelines ────────────────────────────────────────────────
+//
+// WebGPU requires separate pipelines for different primitive topologies.
+// We lazily create pipelines for each primitive type as needed.
+
+WGPURenderPipeline WebGPUBackend::getPipelineForPrimitive(ShaderResource& shader, PrimitiveType primitive) {
+    int key = static_cast<int>(primitive);
+
+    // Check if we already have a pipeline for this primitive type
+    auto it = shader.pipelines.find(key);
+    if (it != shader.pipelines.end()) {
+        return it->second;
+    }
+
+    // Create a new pipeline for this primitive type
+    WGPURenderPipeline pipeline = createPipelineForPrimitive(shader, primitive);
+    if (pipeline) {
+        shader.pipelines[key] = pipeline;
+    }
+    return pipeline;
+}
+
+WGPURenderPipeline WebGPUBackend::createPipelineForPrimitive(ShaderResource& shader, PrimitiveType primitive) {
+    // Create render pipeline with specific primitive topology
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = shader.pipelineLayout;
+
+    // Vertex attributes (same as default pipeline)
+    WGPUVertexAttribute vertexAttribs[4] = {};
+    vertexAttribs[0].format = WGPUVertexFormat_Float32x3;
+    vertexAttribs[0].offset = 0;
+    vertexAttribs[0].shaderLocation = 0;
+    vertexAttribs[1].format = WGPUVertexFormat_Float32x4;
+    vertexAttribs[1].offset = 12;
+    vertexAttribs[1].shaderLocation = 1;
+    vertexAttribs[2].format = WGPUVertexFormat_Float32x2;
+    vertexAttribs[2].offset = 28;
+    vertexAttribs[2].shaderLocation = 2;
+    vertexAttribs[3].format = WGPUVertexFormat_Float32x3;
+    vertexAttribs[3].offset = 36;
+    vertexAttribs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttribs;
+
+    pipelineDesc.vertex.module = shader.vertModule;
+    pipelineDesc.vertex.entryPoint = "vs_main";
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexBufferLayout;
+
+    // Primitive state - THIS IS THE KEY DIFFERENCE
+    pipelineDesc.primitive.topology = toWGPUPrimitive(primitive);
+
+    // For strip/fan primitives with indexed drawing, we need to specify the index format
+    if (primitive == PrimitiveType::TriangleStrip || primitive == PrimitiveType::LineStrip) {
+        pipelineDesc.primitive.stripIndexFormat = WGPUIndexFormat_Uint32;
+    } else {
+        pipelineDesc.primitive.stripIndexFormat = WGPUIndexFormat_Undefined;
+    }
+
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+
+    // Depth stencil state
+    WGPUDepthStencilState depthStencil = {};
+    depthStencil.format = WGPUTextureFormat_Depth24Plus;
+    depthStencil.depthWriteEnabled = true;
+    depthStencil.depthCompare = WGPUCompareFunction_LessEqual;
+    pipelineDesc.depthStencil = &depthStencil;
+
+    // Multisample state
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+    pipelineDesc.multisample.alphaToCoverageEnabled = false;
+
+    // Fragment state
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = shader.fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (pipeline) {
+        printf("[WebGPUBackend] Created pipeline for primitive type %d\n", static_cast<int>(primitive));
+    } else {
+        printf("[WebGPUBackend] Failed to create pipeline for primitive type %d!\n", static_cast<int>(primitive));
+    }
+
+    return pipeline;
+}
+
 // ─── Uniforms ────────────────────────────────────────────────────────────────
+//
+// Uniform Buffer Layout (matches WGSL shaders):
+//   Offset 0:   mat4x4f modelViewMatrix   (64 bytes)
+//   Offset 64:  mat4x4f projectionMatrix  (64 bytes)
+//   Offset 128: vec4f   tint/color        (16 bytes)
+//   Offset 144: vec4f   tint (color shader) or scalars (mesh shader)
+//               f32     pointSize         (4 bytes at 144)
+//               f32     eyeSep            (4 bytes at 148)
+//               f32     focLen            (4 bytes at 152)
+//               f32     _pad              (4 bytes at 156)
+//   Total: 160-176 bytes depending on shader
 
 void WebGPUBackend::setUniform(const char* name, int value) {
-    // For now, we use a fixed layout uniform buffer
-    // Name-based uniforms would require reflection
-    (void)name;
-    (void)value;
-    mUniformsDirty = true;
+    // Convert to float and use float path
+    setUniform(name, static_cast<float>(value));
 }
 
 void WebGPUBackend::setUniform(const char* name, float value) {
-    (void)name;
-    (void)value;
-    mUniformsDirty = true;
+    int offset = -1;
+
+    if (strcmp(name, "pointSize") == 0 || strcmp(name, "al_PointSize") == 0) {
+        offset = 144;
+    } else if (strcmp(name, "eyeSep") == 0 || strcmp(name, "eye_sep") == 0) {
+        offset = 148;
+    } else if (strcmp(name, "focLen") == 0 || strcmp(name, "foc_len") == 0) {
+        offset = 152;
+    }
+
+    if (offset >= 0 && offset + 4 <= (int)mUniformData.size()) {
+        memcpy(mUniformData.data() + offset, &value, 4);
+        mUniformsDirty = true;
+    }
 }
 
 void WebGPUBackend::setUniform(const char* name, float x, float y) {
+    // vec2 uniforms - not commonly used in current shaders
     (void)name;
     (void)x;
     (void)y;
@@ -774,6 +1212,7 @@ void WebGPUBackend::setUniform(const char* name, float x, float y) {
 }
 
 void WebGPUBackend::setUniform(const char* name, float x, float y, float z) {
+    // vec3 uniforms - handle specific cases
     (void)name;
     (void)x;
     (void)y;
@@ -782,37 +1221,57 @@ void WebGPUBackend::setUniform(const char* name, float x, float y, float z) {
 }
 
 void WebGPUBackend::setUniform(const char* name, float x, float y, float z, float w) {
-    (void)name;
-    (void)x;
-    (void)y;
-    (void)z;
-    (void)w;
-    mUniformsDirty = true;
+    int offset = -1;
+
+    if (strcmp(name, "tint") == 0) {
+        offset = 128;
+    } else if (strcmp(name, "color") == 0 || strcmp(name, "col0") == 0) {
+        offset = 128;  // Color shader uses same offset as tint
+    }
+
+    if (offset >= 0 && offset + 16 <= (int)mUniformData.size()) {
+        float data[4] = {x, y, z, w};
+        memcpy(mUniformData.data() + offset, data, 16);
+        mUniformsDirty = true;
+    }
 }
 
 void WebGPUBackend::setUniformMat4(const char* name, const float* value) {
-    // Write to uniform buffer at standard offset
-    // AlloLib layout: modelViewMatrix at 0, projectionMatrix at 64
+    int offset = -1;
+
     if (strcmp(name, "al_ModelViewMatrix") == 0 || strcmp(name, "modelViewMatrix") == 0) {
-        memcpy(mUniformData.data(), value, 64);
+        offset = 0;
     } else if (strcmp(name, "al_ProjectionMatrix") == 0 || strcmp(name, "projectionMatrix") == 0) {
-        memcpy(mUniformData.data() + 64, value, 64);
+        offset = 64;
     }
-    mUniformsDirty = true;
+
+    if (offset >= 0 && offset + 64 <= (int)mUniformData.size()) {
+        memcpy(mUniformData.data() + offset, value, 64);
+        mUniformsDirty = true;
+    }
 }
 
 void WebGPUBackend::setUniformMat3(const char* name, const float* value) {
+    // mat3 uniforms - would need special handling for stride
     (void)name;
     (void)value;
     mUniformsDirty = true;
 }
 
 void WebGPUBackend::setTexture(const char* name, TextureHandle handle, int unit) {
-    // Would need to rebuild bind group with texture
-    // For now, textures need to be bound at pipeline creation
-    (void)name;
-    (void)handle;
-    (void)unit;
+    (void)name;  // We use unit-based binding, name is for compatibility
+
+    if (unit < 0 || unit >= 8) return;
+
+    // Track if binding changed
+    if (mBoundTextures[unit].id != handle.id) {
+        mBoundTextures[unit] = handle;
+        mTextureBindingDirty = true;
+
+        if (handle.valid()) {
+            printf("[WebGPUBackend] Texture bound to unit %d (id=%llu)\n", unit, (unsigned long long)handle.id);
+        }
+    }
 }
 
 void WebGPUBackend::setUniformBuffer(int binding, BufferHandle handle) {
@@ -838,8 +1297,6 @@ void WebGPUBackend::draw(
     int vertexCount,
     int firstVertex
 ) {
-    (void)primitive; // Pipeline was created with fixed topology
-
     // Ensure render pass is active
     beginRenderPass();
     if (!mRenderPassEncoder) return;
@@ -847,11 +1304,49 @@ void WebGPUBackend::draw(
     // Flush uniforms
     flushUniforms();
 
-    // Bind pipeline
-    auto shaderIt = mShaders.find(mCurrentShader.id);
-    if (shaderIt != mShaders.end() && shaderIt->second.pipeline) {
-        wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, shaderIt->second.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup, 0, nullptr);
+    // Check if we should use textured shader
+    bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+
+    // Use current shader, or textured shader if texture is bound, or fall back to default
+    ShaderHandle shaderToUse;
+    if (mCurrentShader.valid()) {
+        shaderToUse = mCurrentShader;
+    } else if (useTextured) {
+        shaderToUse = mTexturedShader;
+    } else {
+        shaderToUse = mDefaultShader;
+    }
+
+    // Get pipeline for this primitive type
+    auto shaderIt = mShaders.find(shaderToUse.id);
+    if (shaderIt == mShaders.end()) {
+        printf("[WebGPUBackend::draw] WARNING: No valid shader!\n");
+        return;
+    }
+
+    // Get or create pipeline for this primitive type
+    WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, primitive);
+    if (!pipeline) {
+        printf("[WebGPUBackend::draw] WARNING: No valid pipeline for primitive %d!\n", static_cast<int>(primitive));
+        return;
+    }
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+
+    // Bind appropriate bind group
+    if (useTextured && !mCurrentShader.valid()) {
+        // Update textured bind group if needed
+        if (mTextureBindingDirty || !mTexturedBindGroup) {
+            updateTexturedBindGroup();
+        }
+        if (mTexturedBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTexturedBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else {
+        // Use regular bind group
+        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
+                                           1, &mCurrentDynamicOffset);
     }
 
     // Bind vertex buffer
@@ -870,18 +1365,52 @@ void WebGPUBackend::drawIndexed(
     int firstIndex,
     int baseVertex
 ) {
-    (void)primitive;
-
     beginRenderPass();
     if (!mRenderPassEncoder) return;
 
     flushUniforms();
 
-    // Bind pipeline
-    auto shaderIt = mShaders.find(mCurrentShader.id);
-    if (shaderIt != mShaders.end() && shaderIt->second.pipeline) {
-        wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, shaderIt->second.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup, 0, nullptr);
+    // Check if we should use textured shader
+    bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+
+    // Use current shader, or textured shader if texture is bound, or fall back to default
+    ShaderHandle shaderToUse;
+    if (mCurrentShader.valid()) {
+        shaderToUse = mCurrentShader;
+    } else if (useTextured) {
+        shaderToUse = mTexturedShader;
+    } else {
+        shaderToUse = mDefaultShader;
+    }
+
+    // Get pipeline for this primitive type
+    auto shaderIt = mShaders.find(shaderToUse.id);
+    if (shaderIt == mShaders.end()) {
+        printf("[WebGPUBackend::drawIndexed] WARNING: No valid shader!\n");
+        return;
+    }
+
+    // Get or create pipeline for this primitive type
+    WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, primitive);
+    if (!pipeline) {
+        printf("[WebGPUBackend::drawIndexed] WARNING: No valid pipeline for primitive %d!\n", static_cast<int>(primitive));
+        return;
+    }
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+
+    // Bind appropriate bind group
+    if (useTextured && !mCurrentShader.valid()) {
+        if (mTextureBindingDirty || !mTexturedBindGroup) {
+            updateTexturedBindGroup();
+        }
+        if (mTexturedBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTexturedBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else {
+        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
+                                           1, &mCurrentDynamicOffset);
     }
 
     // Bind vertex buffer
@@ -908,19 +1437,26 @@ void WebGPUBackend::drawInstanced(
     int firstVertex,
     int firstInstance
 ) {
-    (void)primitive;
-
     beginRenderPass();
     if (!mRenderPassEncoder) return;
 
     flushUniforms();
 
-    // Bind pipeline
-    auto shaderIt = mShaders.find(mCurrentShader.id);
-    if (shaderIt != mShaders.end() && shaderIt->second.pipeline) {
-        wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, shaderIt->second.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup, 0, nullptr);
-    }
+    // Use current shader or fall back to default
+    ShaderHandle shaderToUse = mCurrentShader.valid() ? mCurrentShader : mDefaultShader;
+
+    // Get pipeline for this primitive type
+    auto shaderIt = mShaders.find(shaderToUse.id);
+    if (shaderIt == mShaders.end()) return;
+
+    // Get or create pipeline for this primitive type
+    WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, primitive);
+    if (!pipeline) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+    // Use dynamic offset for uniforms
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
+                                       1, &mCurrentDynamicOffset);
 
     // Bind vertex buffer
     auto vbIt = mBuffers.find(mCurrentVertexBuffer.id);
@@ -939,19 +1475,26 @@ void WebGPUBackend::drawIndexedInstanced(
     int baseVertex,
     int firstInstance
 ) {
-    (void)primitive;
-
     beginRenderPass();
     if (!mRenderPassEncoder) return;
 
     flushUniforms();
 
-    // Bind pipeline
-    auto shaderIt = mShaders.find(mCurrentShader.id);
-    if (shaderIt != mShaders.end() && shaderIt->second.pipeline) {
-        wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, shaderIt->second.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup, 0, nullptr);
-    }
+    // Use current shader or fall back to default
+    ShaderHandle shaderToUse = mCurrentShader.valid() ? mCurrentShader : mDefaultShader;
+
+    // Get pipeline for this primitive type
+    auto shaderIt = mShaders.find(shaderToUse.id);
+    if (shaderIt == mShaders.end()) return;
+
+    // Get or create pipeline for this primitive type
+    WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, primitive);
+    if (!pipeline) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+    // Use dynamic offset for uniforms
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
+                                       1, &mCurrentDynamicOffset);
 
     // Bind vertex buffer
     auto vbIt = mBuffers.find(mCurrentVertexBuffer.id);
@@ -1324,6 +1867,252 @@ void WebGPUBackend::createDepthBuffer() {
     mDepthTextureView = wgpuTextureCreateView(mDepthTexture, &depthViewDesc);
 }
 
+void WebGPUBackend::createDefaultShader() {
+    ShaderDesc desc;
+    desc.name = "default_mesh";
+    desc.vertexSource = kDefaultVertexShader;
+    desc.fragmentSource = kDefaultFragmentShader;
+
+    mDefaultShader = createShader(desc);
+    if (mDefaultShader.valid()) {
+        printf("[WebGPUBackend] Default shader created successfully\n");
+
+        // Initialize uniform data with sensible defaults
+
+        // Identity matrix for modelViewMatrix (offset 0, 64 bytes)
+        // Column-major: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+        float identityMat[16] = {
+            1.0f, 0.0f, 0.0f, 0.0f,  // column 0
+            0.0f, 1.0f, 0.0f, 0.0f,  // column 1
+            0.0f, 0.0f, 1.0f, 0.0f,  // column 2
+            0.0f, 0.0f, 0.0f, 1.0f   // column 3
+        };
+        memcpy(mUniformData.data() + 0, identityMat, 64);
+
+        // Identity matrix for projectionMatrix (offset 64, 64 bytes)
+        memcpy(mUniformData.data() + 64, identityMat, 64);
+
+        // Set default tint to white (offset 128, 16 bytes)
+        float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        memcpy(mUniformData.data() + 128, tint, 16);
+
+        // Set default scalar uniforms (offset 144+)
+        float pointSize = 1.0f;
+        float eyeSep = 0.0f;
+        float focLen = 6.0f;
+        float pad = 0.0f;
+        memcpy(mUniformData.data() + 144, &pointSize, 4);
+        memcpy(mUniformData.data() + 148, &eyeSep, 4);
+        memcpy(mUniformData.data() + 152, &focLen, 4);
+        memcpy(mUniformData.data() + 156, &pad, 4);
+
+        mUniformsDirty = true;
+        printf("[WebGPUBackend] Uniform buffer initialized with defaults\n");
+    } else {
+        printf("[WebGPUBackend] ERROR: Failed to create default shader!\n");
+    }
+}
+
+void WebGPUBackend::createTexturedShader() {
+    // The textured shader needs a special bind group layout with texture/sampler
+    ShaderResource resource;
+    resource.name = "textured_mesh";
+
+    // Create vertex shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescVert = {};
+    wgslDescVert.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescVert.code = kTexturedVertexShader;
+
+    WGPUShaderModuleDescriptor moduleDescVert = {};
+    moduleDescVert.nextInChain = &wgslDescVert.chain;
+    moduleDescVert.label = "textured_vert";
+    resource.vertModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescVert);
+
+    // Create fragment shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescFrag = {};
+    wgslDescFrag.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescFrag.code = kTexturedFragmentShader;
+
+    WGPUShaderModuleDescriptor moduleDescFrag = {};
+    moduleDescFrag.nextInChain = &wgslDescFrag.chain;
+    moduleDescFrag.label = "textured_frag";
+    resource.fragModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescFrag);
+
+    if (!resource.vertModule || !resource.fragModule) {
+        printf("[WebGPUBackend] ERROR: Failed to create textured shader modules!\n");
+        return;
+    }
+
+    // Create bind group layout with uniform buffer + texture + sampler
+    WGPUBindGroupLayoutEntry layoutEntries[3] = {};
+
+    // Binding 0: Uniform buffer
+    layoutEntries[0].binding = 0;
+    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[0].buffer.minBindingSize = 160;
+    layoutEntries[0].buffer.hasDynamicOffset = true;
+
+    // Binding 1: Texture
+    layoutEntries[1].binding = 1;
+    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[1].texture.sampleType = WGPUTextureSampleType_Float;
+    layoutEntries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+    layoutEntries[1].texture.multisampled = false;
+
+    // Binding 2: Sampler
+    layoutEntries[2].binding = 2;
+    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[2].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = 3;
+    layoutDesc.entries = layoutEntries;
+    resource.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
+
+    // Create pipeline layout
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
+    resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
+
+    // We don't create a bind group here - it's created dynamically when a texture is bound
+    resource.uniformBuffer = nullptr;
+    resource.bindGroup = nullptr;
+
+    // Create default render pipeline (TriangleList)
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = resource.pipelineLayout;
+
+    // Vertex state - must match InterleavedVertex layout
+    WGPUVertexAttribute vertexAttrs[4] = {};
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;  // sizeof(InterleavedVertex)
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    WGPUVertexState vertexState = {};
+    vertexState.module = resource.vertModule;
+    vertexState.entryPoint = "vs_main";
+    vertexState.bufferCount = 1;
+    vertexState.buffers = &vertexBufferLayout;
+    pipelineDesc.vertex = vertexState;
+
+    // Primitive state
+    WGPUPrimitiveState primitiveState = {};
+    primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
+    primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
+    primitiveState.frontFace = WGPUFrontFace_CCW;
+    primitiveState.cullMode = WGPUCullMode_None;
+    pipelineDesc.primitive = primitiveState;
+
+    // Fragment state
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = resource.fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    // Depth state
+    WGPUDepthStencilState depthState = {};
+    depthState.format = WGPUTextureFormat_Depth24Plus;
+    depthState.depthWriteEnabled = true;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    pipelineDesc.depthStencil = &depthState;
+
+    // Multisample
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    resource.defaultPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (!resource.defaultPipeline) {
+        printf("[WebGPUBackend] ERROR: Failed to create textured shader pipeline!\n");
+        wgpuPipelineLayoutRelease(resource.pipelineLayout);
+        wgpuBindGroupLayoutRelease(resource.bindGroupLayout);
+        wgpuShaderModuleRelease(resource.fragModule);
+        wgpuShaderModuleRelease(resource.vertModule);
+        return;
+    }
+
+    resource.pipelines[static_cast<int>(PrimitiveType::Triangles)] = resource.defaultPipeline;
+
+    uint64_t id = generateHandleId();
+    mShaders[id] = std::move(resource);
+    mTexturedShader = ShaderHandle{id};
+
+    printf("[WebGPUBackend] Textured shader created successfully\n");
+}
+
+void WebGPUBackend::updateTexturedBindGroup() {
+    // Create/update bind group for textured rendering
+    if (!mTexturedShader.valid() || !mBoundTextures[0].valid()) return;
+
+    auto shaderIt = mShaders.find(mTexturedShader.id);
+    if (shaderIt == mShaders.end()) return;
+
+    auto texIt = mTextures.find(mBoundTextures[0].id);
+    if (texIt == mTextures.end()) return;
+
+    // Release old bind group
+    if (mTexturedBindGroup) {
+        wgpuBindGroupRelease(mTexturedBindGroup);
+        mTexturedBindGroup = nullptr;
+    }
+
+    // Create bind group entries
+    WGPUBindGroupEntry entries[3] = {};
+
+    // Binding 0: Uniform buffer (using ring buffer)
+    entries[0].binding = 0;
+    entries[0].buffer = mUniformRingBuffer;
+    entries[0].offset = 0;
+    entries[0].size = 256;
+
+    // Binding 1: Texture view
+    entries[1].binding = 1;
+    entries[1].textureView = texIt->second.view;
+
+    // Binding 2: Sampler
+    entries[2].binding = 2;
+    entries[2].sampler = texIt->second.sampler;
+
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.layout = shaderIt->second.bindGroupLayout;
+    bindGroupDesc.entryCount = 3;
+    bindGroupDesc.entries = entries;
+
+    mTexturedBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    mTextureBindingDirty = false;
+}
+
 void WebGPUBackend::beginRenderPass() {
     if (mRenderPassEncoder) return; // Already in render pass
 
@@ -1354,6 +2143,7 @@ void WebGPUBackend::beginRenderPass() {
     };
 
     // Depth attachment
+    // Using Depth24Plus format (no stencil), so stencil ops must be Undefined
     WGPURenderPassDepthStencilAttachment depthAttachment = {};
     depthAttachment.view = depthView;
     depthAttachment.depthLoadOp = mHasPendingClear && mPendingClear.clearDepth ?
@@ -1361,9 +2151,10 @@ void WebGPUBackend::beginRenderPass() {
     depthAttachment.depthStoreOp = WGPUStoreOp_Store;
     depthAttachment.depthClearValue = mPendingClear.depth;
     depthAttachment.depthReadOnly = false;
-    depthAttachment.stencilLoadOp = WGPULoadOp_Clear;
-    depthAttachment.stencilStoreOp = WGPUStoreOp_Store;
-    depthAttachment.stencilClearValue = mPendingClear.stencil;
+    // Depth24Plus has no stencil - use Undefined ops
+    depthAttachment.stencilLoadOp = WGPULoadOp_Undefined;
+    depthAttachment.stencilStoreOp = WGPUStoreOp_Undefined;
+    depthAttachment.stencilClearValue = 0;
     depthAttachment.stencilReadOnly = true;
 
     // Render pass descriptor
@@ -1391,14 +2182,53 @@ void WebGPUBackend::endRenderPass() {
 }
 
 void WebGPUBackend::flushUniforms() {
-    if (!mUniformsDirty || !mCurrentShader.valid()) return;
+    if (!mUniformsDirty) return;
 
-    auto it = mShaders.find(mCurrentShader.id);
-    if (it == mShaders.end() || !it->second.uniformBuffer) return;
+    // Use current shader or fall back to default
+    ShaderHandle shaderToUse = mCurrentShader.valid() ? mCurrentShader : mDefaultShader;
+    if (!shaderToUse.valid()) return;
 
-    // Write uniform data to buffer
-    wgpuQueueWriteBuffer(mQueue, it->second.uniformBuffer, 0,
-                          mUniformData.data(), mUniformData.size());
+    auto it = mShaders.find(shaderToUse.id);
+    if (it == mShaders.end()) return;
+
+#ifdef __EMSCRIPTEN__
+    static int flushLogCount = 0;
+    if (flushLogCount < 3) {
+        // Log modelView matrix translation (bytes 48-60 = floats 12-14)
+        float* uniforms = reinterpret_cast<float*>(mUniformData.data());
+        EM_ASM({
+            console.log('[WebGPUBackend::flushUniforms] MV translation at offset ' + $3 + ': (' +
+                        $0 + ', ' + $1 + ', ' + $2 + ')');
+        }, uniforms[12], uniforms[13], uniforms[14], (int)mUniformRingOffset);
+
+        // Log projection matrix diagonal (floats 16+0, 16+5, 16+10, 16+15)
+        EM_ASM({
+            console.log('[WebGPUBackend::flushUniforms] Proj diagonal: (' +
+                        $0 + ', ' + $1 + ', ' + $2 + ', ' + $3 + ')');
+        }, uniforms[16+0], uniforms[16+5], uniforms[16+10], uniforms[16+15]);
+
+        flushLogCount++;
+    }
+#endif
+
+    // Check if we have room in the ring buffer
+    if (mUniformRingBuffer && mUniformRingOffset + kUniformAlignment <= kUniformAlignment * kMaxDrawsPerFrame) {
+        // Write uniform data to ring buffer at current offset
+        wgpuQueueWriteBuffer(mQueue, mUniformRingBuffer, mUniformRingOffset,
+                              mUniformData.data(), mUniformData.size());
+
+        // Store current offset for use in draw()
+        mCurrentDynamicOffset = static_cast<uint32_t>(mUniformRingOffset);
+
+        // Advance offset for next draw call (256-byte alignment required)
+        mUniformRingOffset += kUniformAlignment;
+    } else if (it->second.uniformBuffer) {
+        // Fallback: use per-shader buffer (old behavior)
+        wgpuQueueWriteBuffer(mQueue, it->second.uniformBuffer, 0,
+                              mUniformData.data(), mUniformData.size());
+        mCurrentDynamicOffset = 0;
+    }
+
     mUniformsDirty = false;
 }
 
