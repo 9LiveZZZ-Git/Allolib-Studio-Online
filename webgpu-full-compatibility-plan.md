@@ -81,7 +81,7 @@ These examples use **custom GLSL shaders** which cannot be automatically transpi
 ---
 
 ### Phase 2: Full Lighting System (Enables ~10 examples) ✅ COMPLETE
-**Status:** Fully implemented with multi-light support, materials, and normal matrix computation.
+**Status:** Fully implemented with multi-light support, materials, and normal matrix computation. All 11 Playwright tests passing.
 
 **Completed:**
 - [x] Reimplemented WebGPU lighting uniforms and bind groups
@@ -90,6 +90,8 @@ These examples use **custom GLSL shaders** which cannot be automatically transpi
 - [x] Material properties (ambient, diffuse, specular, emission, shininess)
 - [x] Global ambient light support
 - [x] Shader selection logic (lighting > textured > default)
+- [x] Fixed uniform buffer layout bug (tint/params saved before normalMatrix write)
+- [x] Fixed test canvas capture for WebGPU (uses Playwright screenshot instead of toDataURL)
 
 **Files modified:**
 - `al_WebGPUBackend.hpp` - Added LightData, MaterialData, LightingUniforms structs; lighting shader handle; API methods
@@ -259,15 +261,15 @@ LOD switching is done on CPU based on distance. The GPU just renders whichever m
 | Phase | Feature | Examples Enabled | Est. Lines | Cumulative | Status |
 |-------|---------|------------------|------------|------------|--------|
 | 1 | 2D Textures | 15 | 250 | 250 | ✅ DONE |
-| 2 | Full Lighting | 10 | 350 | 600 | ✅ DONE |
-| 3 | EasyFBO | 5 | 150 | 650 | Pending |
-| 4 | Cubemaps/Skybox | 8 | 180 | 830 | Pending |
-| 5 | WebPBR | 12 | 300 | 1130 | Pending |
-| 6 | WebEnvironment | 6 | 200 | 1330 | Pending |
-| 7 | ProceduralTexture | 4 | 100 | 1430 | Pending |
-| 8 | LOD System | 4 | 50 | 1480 | Pending |
+| 2 | Full Lighting | 10 | 450 | 700 | ✅ DONE |
+| 3 | EasyFBO | 5 | 150 | 850 | Pending |
+| 4 | Cubemaps/Skybox | 8 | 180 | 1030 | Pending |
+| 5 | WebPBR | 12 | 300 | 1330 | Pending |
+| 6 | WebEnvironment | 6 | 200 | 1530 | Pending |
+| 7 | ProceduralTexture | 4 | 100 | 1630 | Pending |
+| 8 | LOD System | 4 | 50 | 1680 | Pending |
 
-**Total: ~1,480 lines of new code (600 complete)**
+**Total: ~1,680 lines of new code (700 complete)**
 
 ---
 
@@ -494,27 +496,27 @@ ShaderHandle shader = mShaderManager.getShader(shaderType);
 
 ## Phase Implementation Checklists
 
-### Phase 2: Full Lighting (REDO)
+### Phase 2: Full Lighting ✅ COMPLETE
 
 **Pre-implementation checklist:**
-- [ ] Read `al_WebGPUBackend.cpp:1870-1914` (current default shader)
-- [ ] Verify `lighting.vert/frag.wgsl` uniform layout matches
-- [ ] Check `al_Graphics_Web.cpp` lighting state forwarding
+- [x] Read `al_WebGPUBackend.cpp:1870-1914` (current default shader)
+- [x] Verify `lighting.vert/frag.wgsl` uniform layout matches
+- [x] Check `al_Graphics_Web.cpp` lighting state forwarding
 
 **Implementation steps:**
-- [ ] Add `mLightingEnabled` flag to WebGPUBackend
-- [ ] Implement `setLight(index, Light&)` method
-- [ ] Implement `setMaterial(Material&)` method
-- [ ] Create lighting uniform buffer (matches WGSL layout)
-- [ ] Add lighting shader to selection logic
-- [ ] **TEST WebGL2 still works after changes**
+- [x] Add `mLightingEnabled` flag to WebGPUBackend
+- [x] Implement `setLight(index, Light&)` method
+- [x] Implement `setMaterial(Material&)` method
+- [x] Create lighting uniform buffer (matches WGSL layout)
+- [x] Add lighting shader to selection logic
+- [x] **TEST WebGL2 still works after changes**
 
 **Post-implementation verification:**
-- [ ] `npx playwright test --project=chromium-webgl2` passes
-- [ ] Lighting example works in WebGL2 mode
-- [ ] Lighting example works in WebGPU mode (if available)
+- [x] `npx playwright test --project=chromium-webgl2` passes
+- [x] Lighting example works in WebGL2 mode
+- [x] Lighting example works in WebGPU mode
 
-**Playwright tests:** ✅ COMPLETE
+**Playwright tests:** ✅ COMPLETE (11/11 passing)
 - [x] Add "WebGPU Phase 2: Lighting" test suite to `webgpu-features.spec.ts`
 - [x] Test single directional light (WebGL2 + WebGPU)
 - [x] Test single point light (WebGL2 + WebGPU)
@@ -664,19 +666,20 @@ tests/
 
 ### Phase-Specific Test Requirements
 
-#### Phase 1: Textures ✅ COMPLETE
-- [ ] Test: Texture loads and displays correctly
-- [ ] Test: UV coordinates work properly
-- [ ] Test: Multiple textures can be bound
-- [ ] Visual baseline: Simple textured quad
+#### Phase 1: Textures ✅ COMPLETE (7/7 passing)
+- [x] Test: Texture loads and displays correctly
+- [x] Test: UV coordinates work properly
+- [x] Test: Multiple textures can be bound
+- [x] Visual baseline: `webgpu-phase1-texture-quad.png`
 
-#### Phase 2: Full Lighting (REDO)
-- [ ] Test: Single directional light
-- [ ] Test: Single point light
-- [ ] Test: Multiple lights (up to 8)
-- [ ] Test: Material ambient/diffuse/specular
-- [ ] Test: Lighting + textures combined
-- [ ] Visual baseline: Lit sphere with 3 lights
+#### Phase 2: Full Lighting ✅ COMPLETE (11/11 passing)
+- [x] Test: Single directional light (WebGL2 + WebGPU)
+- [x] Test: Single point light (WebGL2 + WebGPU)
+- [x] Test: Multiple lights (3 colored lights)
+- [x] Test: Material ambient/diffuse/specular
+- [x] Test: Lighting + textures combined
+- [x] Visual baseline: `webgpu-phase2-lighting-sphere.png`
+- [x] Cross-backend comparison (WebGL2 vs WebGPU)
 
 #### Phase 3: EasyFBO
 - [ ] Test: Render to texture works
