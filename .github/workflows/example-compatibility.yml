@@ -1,6 +1,6 @@
 # AlloLib Studio Online - Example Compatibility Testing
 #
-# Tests ALL 150+ examples against both WebGL2 and WebGPU backends.
+# Tests ALL 107 examples against both WebGL2 and WebGPU backends.
 # Generates detailed compatibility reports with error analysis.
 #
 # This workflow runs:
@@ -137,7 +137,7 @@ jobs:
 
       - name: Wait for Services
         run: |
-          timeout 60 bash -c 'until curl -s http://localhost:5173 > /dev/null; do sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:3000 > /dev/null; do sleep 2; done'
           timeout 60 bash -c 'until curl -s http://localhost:4000/health > /dev/null; do sleep 2; done'
 
       - name: Run WebGL2 Example Tests
@@ -148,7 +148,7 @@ jobs:
             --parallel ${{ github.event.inputs.parallel || '1' }} \
             ${{ github.event.inputs.filter && format('--filter "{0}"', github.event.inputs.filter) || '' }}
         env:
-          TEST_URL: http://localhost:5173
+          TEST_URL: http://localhost:3000
           BACKEND_URL: http://localhost:4000
 
       - name: Upload WebGL2 Report
@@ -214,7 +214,7 @@ jobs:
             --backend webgpu \
             --parallel 1
         env:
-          TEST_URL: http://localhost:5173
+          TEST_URL: http://localhost:3000
         continue-on-error: true # WebGPU may have failures
 
       - name: Upload WebGPU Report
