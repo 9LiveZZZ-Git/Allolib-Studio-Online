@@ -6,7 +6,7 @@
 
 ## Layer 0: Summary
 
-Browser-based creative coding IDE for AlloLib C++ framework. Users write C++ in Monaco Editor, server compiles via Emscripten to WASM, executes in browser with WebGL2/WebGPU graphics + Web Audio. Features: multi-file projects, polyphonic synth system, clip-based sequencer with tone lattice, unified 4-category timeline with keyframe animation, parameter GUI, PBR materials, HDR environments, video recording. Stack: Vue 3 + Pinia frontend, Node/Express + Redis/BullMQ backend, Docker-containerized Emscripten 3.1.73 compiler. 70+ examples. Targets modern browsers (Chrome/Edge/Firefox/Safari). Desktop app via Electron.
+Browser-based creative coding IDE for AlloLib C++ framework. Users write C++ in Monaco Editor, server compiles via Emscripten to WASM, executes in browser with WebGL2/WebGPU graphics + Web Audio. Features: multi-file projects, polyphonic synth system, clip-based sequencer with tone lattice, unified 4-category timeline with keyframe animation, parameter GUI, PBR materials, HDR environments, video recording. Stack: Vue 3 + Pinia frontend, Node/Express + Redis/BullMQ backend, Docker-containerized Emscripten 3.1.73 compiler. 107 examples. Targets modern browsers (Chrome/Edge/Firefox/Safari). Desktop app via Electron.
 
 ---
 
@@ -118,28 +118,33 @@ npx playwright test --ui       # Run with UI for debugging
 allolib-studio-online/
 ├── frontend/                 # Vue 3 SPA (editor, viewer, sequencer, timeline)
 │   ├── src/
-│   │   ├── components/       # Vue components (42 files)
+│   │   ├── components/       # Vue components (46 files)
 │   │   │   ├── timeline/     # Unified timeline (17 components)
 │   │   │   ├── sequencer/    # Audio clip sequencer (10 components)
 │   │   │   └── inputs/       # Custom controls (Vec3, ColorPicker)
 │   │   ├── stores/           # Pinia state (18 files, 17k LOC)
 │   │   │   └── sequencer/    # Sub-stores (tracks, clips, playback, editing)
-│   │   ├── services/         # Runtime, compiler, websocket (10 files, 4.8k LOC)
+│   │   ├── services/         # Runtime, compiler, websocket (11+ files, 5k LOC)
 │   │   │   └── transpiler/   # Code generation (5 files)
 │   │   ├── composables/      # Vue composables (keyframes, shortcuts, virtual timeline)
-│   │   ├── data/             # Examples (70+), glossary (330 terms), synth data
+│   │   ├── data/             # Examples (107), glossary (330 terms), synth data
 │   │   └── utils/            # Helpers (synth detection, lattice math, error parser)
 │   └── public/assets/        # Textures, meshes, HDR environments
 ├── backend/                  # Node.js compilation server
 │   ├── src/                  # Express routes, compiler service, WS manager
 │   └── docker/               # Emscripten container, compile.sh, build-allolib.sh
 ├── allolib-wasm/             # C++ WASM compatibility layer
-│   ├── include/              # Header patches (30+ files) - OVERRIDES AlloLib headers
+│   ├── include/              # Header patches (43 files) - OVERRIDES AlloLib headers
 │   ├── src/                  # Web-specific implementations (18 files)
 │   ├── shaders/              # GLSL + WGSL shaders
 │   └── CMakeLists.txt        # Emscripten build configuration
 ├── desktop/                  # Electron wrapper
 │   └── src/                  # Main process, menu, preload, backend-runner
+├── docs/                     # Project documentation (generated docs, guides)
+├── tests/                    # E2E and integration tests
+│   ├── e2e/                  # Playwright browser tests
+│   ├── scripts/              # Test utilities (compilation tests)
+│   └── reporters/            # Custom test reporters
 ├── allolib/                  # AlloLib core (external, read-only)
 ├── al_ext/                   # AlloLib extensions (external)
 └── docker-compose.yml        # Redis + Compiler + Backend services
@@ -549,7 +554,7 @@ _al_obj_delete(const char* id)
 | **Editor** | Monaco with C++ highlighting | ✅ |
 | | Multi-file projects | ✅ |
 | | Error diagnostics | ✅ |
-| | Example library (70+) | ✅ |
+| | Example library (107) | ✅ |
 | **Recording** | WebM video recording | ✅ |
 | | Screenshot (PNG/JPEG/WebP) | ✅ |
 | | Social media presets | ✅ |
@@ -572,7 +577,7 @@ _al_obj_delete(const char* id)
 
 ---
 
-## Layer 5: Examples Catalog (70+)
+## Layer 5: Examples Catalog (107)
 
 ### AlloLib Core Examples
 - **Basics (9)**: Hello Sphere, Hello Audio, Hello Audio-Visual, Shape Gallery, Custom Mesh, HSV Colors, Vertex Colors
@@ -650,6 +655,8 @@ _al_obj_delete(const char* id)
 | `components/timeline/CurveEditor.vue` | Bezier easing editor | 534 |
 | `components/sequencer/ClipTimeline.vue` | Clip note editor | 1460 |
 | `components/sequencer/ToneLattice.vue` | Just intonation grid | 1073 |
+| `components/ExportDialog.vue` | Project export (ZIP, native) | ~300 |
+| `components/ImportDialog.vue` | Project import (ZIP, native) | ~250 |
 | `stores/project.ts` | Project/file state | 724 |
 | `stores/app.ts` | Compile/run state | 312 |
 | `stores/sequencer.ts` (facade) | Sequencer state facade | 456 |
@@ -664,6 +671,7 @@ _al_obj_delete(const char* id)
 | `services/compiler.ts` | Compile API client | 102 |
 | `services/objectManager.ts` | JS→C++ object bridge | 234 |
 | `services/transpiler/mainCodeGen.ts` | Generate main.cpp | 456 |
+| `services/unifiedProject.ts` | Unified project format handling | ~400 |
 | `data/examples.ts` | Example programs | 12k |
 
 ### Backend (backend/src/)
@@ -705,6 +713,17 @@ _al_obj_delete(const char* id)
 | `Dockerfile` | Emscripten 3.1.73 image |
 | `compile.sh` | User code compilation |
 | `build-allolib.sh` | Pre-build AlloLib library |
+
+### Tests (tests/)
+
+| Path | Purpose |
+|------|---------|
+| `e2e/rendering-tests.spec.ts` | WebGL2/WebGPU rendering verification |
+| `e2e/visual-regression.spec.ts` | Screenshot comparison tests |
+| `e2e/example-compatibility.spec.ts` | Tests all 107 examples compile |
+| `scripts/test-compilation.ts` | Headless compilation test suite |
+| `scripts/test-all-examples.ts` | Batch example compilation verification |
+| `playwright.config.ts` | Playwright test configuration |
 
 ---
 
@@ -751,7 +770,7 @@ tests/
 ├── e2e/
 │   ├── rendering-tests.spec.ts     # Core WebGL2/WebGPU rendering tests
 │   ├── visual-regression.spec.ts   # Screenshot comparison tests
-│   └── example-compatibility.spec.ts # Tests all 70+ examples compile
+│   └── example-compatibility.spec.ts # Tests all 107 examples compile
 ├── screenshots/
 │   ├── baseline/                   # Reference images
 │   ├── actual/                     # Current run captures
@@ -788,7 +807,7 @@ WORKERS=1 npx playwright test
   workers: process.env.WORKERS ? parseInt(process.env.WORKERS) : (process.env.CI ? 2 : 3),
   timeout: 120000,  // 2 minutes per test (compilation is slow)
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:3000',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
   }
@@ -951,7 +970,11 @@ WebGPU requires the **DirectX Shader Compiler (DXC)** for device creation:
 ## Verification Notes
 
 - **Checked**: All paths exist in `git ls-files` output
-- **Total tracked files**: ~263
+- **Total tracked files**: ~280+ (including tests, docs)
 - **Total LOC**: ~194k (includes examples, data files)
 - **Core source**: ~50k LOC (frontend + backend + wasm)
-- **Last updated**: 2026-02-03 (WebGL2 rendering fix + test infrastructure)
+- **Components**: 46 Vue components
+- **Services**: 11+ frontend services
+- **WASM headers**: 43 header patches
+- **Examples**: 107 examples in catalog
+- **Last updated**: 2026-02-03 (Manifest verification and corrections)
