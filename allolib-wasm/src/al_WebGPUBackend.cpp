@@ -217,11 +217,220 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4f {
 }
 )";
 
+// ─── Lighting Shader (Phase 2) ───────────────────────────────────────────────
+// Full Phong/Blinn lighting with up to 8 lights
+
+static const char* kLightingVertexShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    normalMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3f,
+    @location(1) color: vec4f,
+    @location(2) texcoord: vec2f,
+    @location(3) normal: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) viewPos: vec3f,
+    @location(1) viewNormal: vec3f,
+    @location(2) color: vec4f,
+    @location(3) texcoord: vec2f,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    let viewPos = uniforms.modelViewMatrix * vec4f(in.position, 1.0);
+    out.viewPos = viewPos.xyz;
+
+    var clipPos = uniforms.projectionMatrix * viewPos;
+    clipPos.z = clipPos.z * 0.5 + clipPos.w * 0.5;
+    out.position = clipPos;
+
+    // Transform normal to view space using normal matrix
+    let normalMat = mat3x3f(
+        uniforms.normalMatrix[0].xyz,
+        uniforms.normalMatrix[1].xyz,
+        uniforms.normalMatrix[2].xyz
+    );
+    out.viewNormal = normalize(normalMat * in.normal);
+
+    out.color = in.color;
+    out.texcoord = in.texcoord;
+
+    return out;
+}
+)";
+
+static const char* kLightingFragmentShader = R"(
+const MAX_LIGHTS: u32 = 8u;
+
+struct Light {
+    position: vec4f,
+    ambient: vec4f,
+    diffuse: vec4f,
+    specular: vec4f,
+    attenuation: vec3f,
+    enabled: f32,
+}
+
+struct Material {
+    ambient: vec4f,
+    diffuse: vec4f,
+    specular: vec4f,
+    emission: vec4f,
+    shininess: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+}
+
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    normalMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+struct LightingUniforms {
+    globalAmbient: vec4f,
+    numLights: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    lights: array<Light, 8>,
+    material: Material,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<uniform> lighting: LightingUniforms;
+
+struct FragmentInput {
+    @location(0) viewPos: vec3f,
+    @location(1) viewNormal: vec3f,
+    @location(2) color: vec4f,
+    @location(3) texcoord: vec2f,
+}
+
+fn calculateLight(lightIndex: u32, N: vec3f, V: vec3f, fragPos: vec3f) -> vec3f {
+    let light = lighting.lights[lightIndex];
+
+    if (light.enabled < 0.5) {
+        return vec3f(0.0);
+    }
+
+    // Direction from fragment to light
+    var L: vec3f;
+    var attenuation: f32 = 1.0;
+
+    if (light.position.w < 0.5) {
+        // Directional light
+        L = normalize(light.position.xyz);
+    } else {
+        // Point light
+        L = normalize(light.position.xyz - fragPos);
+        let distance = length(light.position.xyz - fragPos);
+        attenuation = 1.0 / (light.attenuation.x +
+                            light.attenuation.y * distance +
+                            light.attenuation.z * distance * distance);
+    }
+
+    // Halfway vector for Blinn-Phong
+    let H = normalize(L + V);
+
+    // Ambient
+    let ambient = light.ambient.rgb * lighting.material.ambient.rgb;
+
+    // Diffuse
+    let diff = max(dot(N, L), 0.0);
+    let diffuse = light.diffuse.rgb * diff * lighting.material.diffuse.rgb;
+
+    // Specular (Blinn-Phong)
+    let spec = pow(max(dot(N, H), 0.0), lighting.material.shininess);
+    let specular = light.specular.rgb * spec * lighting.material.specular.rgb;
+
+    return (ambient + diffuse + specular) * attenuation;
+}
+
+@fragment
+fn fs_main(in: FragmentInput) -> @location(0) vec4f {
+    let N = normalize(in.viewNormal);
+    let V = normalize(-in.viewPos);
+
+    // Start with global ambient and emission
+    var result = lighting.globalAmbient.rgb * lighting.material.ambient.rgb;
+    result += lighting.material.emission.rgb;
+
+    // Accumulate light contributions
+    for (var i = 0u; i < min(lighting.numLights, MAX_LIGHTS); i++) {
+        result += calculateLight(i, N, V, in.viewPos);
+    }
+
+    // Apply vertex color and tint
+    let finalColor = vec4f(result, 1.0) * in.color * uniforms.tint;
+
+    return finalColor;
+}
+)";
+
 // ─── Constructor / Destructor ────────────────────────────────────────────────
 
 WebGPUBackend::WebGPUBackend() {
     // Reserve space for uniform data (typical size)
     mUniformData.resize(256, 0);
+
+    // Initialize lighting data with sensible defaults
+    mGlobalAmbient[0] = 0.1f; mGlobalAmbient[1] = 0.1f;
+    mGlobalAmbient[2] = 0.1f; mGlobalAmbient[3] = 1.0f;
+
+    // Initialize default material (white diffuse)
+    mMaterial.ambient[0] = 0.2f; mMaterial.ambient[1] = 0.2f;
+    mMaterial.ambient[2] = 0.2f; mMaterial.ambient[3] = 1.0f;
+    mMaterial.diffuse[0] = 0.8f; mMaterial.diffuse[1] = 0.8f;
+    mMaterial.diffuse[2] = 0.8f; mMaterial.diffuse[3] = 1.0f;
+    mMaterial.specular[0] = 1.0f; mMaterial.specular[1] = 1.0f;
+    mMaterial.specular[2] = 1.0f; mMaterial.specular[3] = 1.0f;
+    mMaterial.emission[0] = 0.0f; mMaterial.emission[1] = 0.0f;
+    mMaterial.emission[2] = 0.0f; mMaterial.emission[3] = 1.0f;
+    mMaterial.shininess = 32.0f;
+    mMaterial._pad[0] = mMaterial._pad[1] = mMaterial._pad[2] = 0.0f;
+
+    // Initialize default light (white from above-right)
+    for (int i = 0; i < 8; i++) {
+        mLights[i].position[0] = 1.0f; mLights[i].position[1] = 1.0f;
+        mLights[i].position[2] = 1.0f; mLights[i].position[3] = 0.0f; // Directional
+        mLights[i].ambient[0] = 0.1f; mLights[i].ambient[1] = 0.1f;
+        mLights[i].ambient[2] = 0.1f; mLights[i].ambient[3] = 1.0f;
+        mLights[i].diffuse[0] = 1.0f; mLights[i].diffuse[1] = 1.0f;
+        mLights[i].diffuse[2] = 1.0f; mLights[i].diffuse[3] = 1.0f;
+        mLights[i].specular[0] = 1.0f; mLights[i].specular[1] = 1.0f;
+        mLights[i].specular[2] = 1.0f; mLights[i].specular[3] = 1.0f;
+        mLights[i].attenuation[0] = 1.0f; mLights[i].attenuation[1] = 0.0f;
+        mLights[i].attenuation[2] = 0.0f;
+        mLights[i].enabled = (i == 0) ? 1.0f : 0.0f; // Only first light enabled
+    }
+
+    // Initialize normal matrix to identity
+    for (int i = 0; i < 16; i++) {
+        mNormalMatrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    }
 }
 
 WebGPUBackend::~WebGPUBackend() {
@@ -316,6 +525,10 @@ bool WebGPUBackend::init(int width, int height) {
     printf("[WebGPUBackend] Creating textured shader...\n");
     createTexturedShader();
 
+    // Create lighting shader (Phase 2)
+    printf("[WebGPUBackend] Creating lighting shader...\n");
+    createLightingShader();
+
     printf("[WebGPUBackend] Initialized %dx%d successfully\n", width, height);
     return true;
 }
@@ -343,6 +556,16 @@ void WebGPUBackend::shutdown() {
     if (mTexturedBindGroup) {
         wgpuBindGroupRelease(mTexturedBindGroup);
         mTexturedBindGroup = nullptr;
+    }
+
+    // Release lighting resources (Phase 2)
+    if (mLitBindGroup) {
+        wgpuBindGroupRelease(mLitBindGroup);
+        mLitBindGroup = nullptr;
+    }
+    if (mLightingUniformBuffer) {
+        wgpuBufferRelease(mLightingUniformBuffer);
+        mLightingUniformBuffer = nullptr;
     }
 
     // Clear bound texture references
@@ -556,10 +779,12 @@ void WebGPUBackend::endFrame() {
         mCommandEncoder = nullptr;
     }
 
-    if (mCurrentSwapChainView) {
-        wgpuTextureViewRelease(mCurrentSwapChainView);
-        mCurrentSwapChainView = nullptr;
-    }
+    // Note: Don't release mCurrentSwapChainView here - Chrome's compositor
+    // may still need the texture for presentation. The view will be
+    // overwritten on the next beginFrame() call.
+    // The JavaScript side keeps a reference in Module._currentFrameTexture
+    // which prevents garbage collection until the next frame.
+    mCurrentSwapChainView = nullptr;  // Just clear our handle
 
     // Note: Emscripten SwapChain doesn't need explicit present
 }
@@ -1258,6 +1483,64 @@ void WebGPUBackend::setUniformMat3(const char* name, const float* value) {
     mUniformsDirty = true;
 }
 
+// ─── Lighting API (Phase 2) ──────────────────────────────────────────────────
+
+void WebGPUBackend::setLightingEnabled(bool enabled) {
+    if (mLightingEnabled != enabled) {
+        mLightingEnabled = enabled;
+        mLightingDirty = true;
+    }
+}
+
+void WebGPUBackend::setLight(int index, const float* pos, const float* ambient,
+                             const float* diffuse, const float* specular,
+                             const float* attenuation, bool enabled) {
+    if (index < 0 || index >= 8) return;
+
+    memcpy(mLights[index].position, pos, 16);
+    memcpy(mLights[index].ambient, ambient, 16);
+    memcpy(mLights[index].diffuse, diffuse, 16);
+    memcpy(mLights[index].specular, specular, 16);
+    memcpy(mLights[index].attenuation, attenuation, 12);
+    mLights[index].enabled = enabled ? 1.0f : 0.0f;
+
+    // Update numLights to include this light
+    if (enabled && (uint32_t)(index + 1) > mNumLights) {
+        mNumLights = index + 1;
+    }
+
+    mLightingDirty = true;
+}
+
+void WebGPUBackend::setMaterial(const float* ambient, const float* diffuse,
+                                const float* specular, const float* emission,
+                                float shininess) {
+    memcpy(mMaterial.ambient, ambient, 16);
+    memcpy(mMaterial.diffuse, diffuse, 16);
+    memcpy(mMaterial.specular, specular, 16);
+    memcpy(mMaterial.emission, emission, 16);
+    mMaterial.shininess = shininess;
+    mLightingDirty = true;
+}
+
+void WebGPUBackend::setGlobalAmbient(float r, float g, float b, float a) {
+    mGlobalAmbient[0] = r;
+    mGlobalAmbient[1] = g;
+    mGlobalAmbient[2] = b;
+    mGlobalAmbient[3] = a;
+    mLightingDirty = true;
+}
+
+void WebGPUBackend::setNormalMatrix(const float* mat3x3) {
+    // Store as 4x4 matrix for WGSL (each row padded to vec4)
+    // Input is 3x3 row-major, output is 4x4 for WGSL mat4x4f
+    mNormalMatrix[0] = mat3x3[0]; mNormalMatrix[1] = mat3x3[1]; mNormalMatrix[2] = mat3x3[2]; mNormalMatrix[3] = 0.0f;
+    mNormalMatrix[4] = mat3x3[3]; mNormalMatrix[5] = mat3x3[4]; mNormalMatrix[6] = mat3x3[5]; mNormalMatrix[7] = 0.0f;
+    mNormalMatrix[8] = mat3x3[6]; mNormalMatrix[9] = mat3x3[7]; mNormalMatrix[10] = mat3x3[8]; mNormalMatrix[11] = 0.0f;
+    mNormalMatrix[12] = 0.0f; mNormalMatrix[13] = 0.0f; mNormalMatrix[14] = 0.0f; mNormalMatrix[15] = 1.0f;
+    mUniformsDirty = true;
+}
+
 void WebGPUBackend::setTexture(const char* name, TextureHandle handle, int unit) {
     (void)name;  // We use unit-based binding, name is for compatibility
 
@@ -1304,13 +1587,16 @@ void WebGPUBackend::draw(
     // Flush uniforms
     flushUniforms();
 
-    // Check if we should use textured shader
+    // Check rendering modes
     bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+    bool useLighting = mLightingEnabled && mLitShader.valid();
 
-    // Use current shader, or textured shader if texture is bound, or fall back to default
+    // Shader selection priority: custom > lighting > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
+    } else if (useLighting) {
+        shaderToUse = mLitShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -1334,7 +1620,16 @@ void WebGPUBackend::draw(
     wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
 
     // Bind appropriate bind group
-    if (useTextured && !mCurrentShader.valid()) {
+    if (useLighting && !mCurrentShader.valid()) {
+        // Update lighting bind group if needed
+        if (mLightingDirty || !mLitBindGroup) {
+            updateLightingBindGroup();
+        }
+        if (mLitBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else if (useTextured && !mCurrentShader.valid()) {
         // Update textured bind group if needed
         if (mTextureBindingDirty || !mTexturedBindGroup) {
             updateTexturedBindGroup();
@@ -1370,13 +1665,16 @@ void WebGPUBackend::drawIndexed(
 
     flushUniforms();
 
-    // Check if we should use textured shader
+    // Check rendering modes
     bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+    bool useLighting = mLightingEnabled && mLitShader.valid();
 
-    // Use current shader, or textured shader if texture is bound, or fall back to default
+    // Shader selection priority: custom > lighting > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
+    } else if (useLighting) {
+        shaderToUse = mLitShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -1400,7 +1698,15 @@ void WebGPUBackend::drawIndexed(
     wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
 
     // Bind appropriate bind group
-    if (useTextured && !mCurrentShader.valid()) {
+    if (useLighting && !mCurrentShader.valid()) {
+        if (mLightingDirty || !mLitBindGroup) {
+            updateLightingBindGroup();
+        }
+        if (mLitBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else if (useTextured && !mCurrentShader.valid()) {
         if (mTextureBindingDirty || !mTexturedBindGroup) {
             updateTexturedBindGroup();
         }
@@ -1679,9 +1985,17 @@ void WebGPUBackend::createSwapChain() {
 
     // Configure the canvas WebGPU context from JavaScript
     // Note: In MODULARIZE mode, we need to be careful about Module access
+    // IMPORTANT: JavaScript runtime.ts may have already configured the context
+    // We should reuse that configuration if available
     int success = EM_ASM_INT({
         try {
             console.log('[WebGPUBackend] Starting JS canvas configuration...');
+
+            // Check if JavaScript already configured the context
+            if (Module._webgpuCanvasContext) {
+                console.log('[WebGPUBackend] Context already configured by JavaScript, reusing...');
+                return 1;
+            }
 
             // Try multiple methods to find the canvas
             var canvas = null;
@@ -1774,7 +2088,7 @@ void WebGPUBackend::createSwapChain() {
             context.configure({
                 device: device,
                 format: format,
-                alphaMode: 'opaque',
+                alphaMode: 'premultiplied',
             });
 
             // Store context and format for later use
@@ -2113,6 +2427,234 @@ void WebGPUBackend::updateTexturedBindGroup() {
     mTextureBindingDirty = false;
 }
 
+void WebGPUBackend::createLightingShader() {
+    // Lighting shader with 2 uniform bindings: main uniforms + lighting uniforms
+    ShaderResource resource;
+    resource.name = "lit_mesh";
+
+    // Create vertex shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescVert = {};
+    wgslDescVert.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescVert.code = kLightingVertexShader;
+
+    WGPUShaderModuleDescriptor moduleDescVert = {};
+    moduleDescVert.nextInChain = &wgslDescVert.chain;
+    moduleDescVert.label = "lighting_vert";
+    resource.vertModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescVert);
+
+    // Create fragment shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescFrag = {};
+    wgslDescFrag.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescFrag.code = kLightingFragmentShader;
+
+    WGPUShaderModuleDescriptor moduleDescFrag = {};
+    moduleDescFrag.nextInChain = &wgslDescFrag.chain;
+    moduleDescFrag.label = "lighting_frag";
+    resource.fragModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescFrag);
+
+    if (!resource.vertModule || !resource.fragModule) {
+        printf("[WebGPUBackend] ERROR: Failed to create lighting shader modules!\n");
+        return;
+    }
+
+    // Create bind group layout with 2 uniform buffers
+    WGPUBindGroupLayoutEntry layoutEntries[2] = {};
+
+    // Binding 0: Main uniform buffer (includes normalMatrix - 224 bytes)
+    layoutEntries[0].binding = 0;
+    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[0].buffer.minBindingSize = 224;  // mat4x4 * 3 + vec4 + 4 floats
+    layoutEntries[0].buffer.hasDynamicOffset = true;
+
+    // Binding 1: Lighting uniform buffer (752 bytes)
+    // Layout: globalAmbient(16) + numLights+pad(16) + lights[8](80*8=640) + material(80) = 752
+    layoutEntries[1].binding = 1;
+    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[1].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[1].buffer.minBindingSize = 752;
+    layoutEntries[1].buffer.hasDynamicOffset = false;
+
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = 2;
+    layoutDesc.entries = layoutEntries;
+    resource.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
+
+    // Create lighting uniform buffer
+    WGPUBufferDescriptor lightBufDesc = {};
+    lightBufDesc.size = 752;
+    lightBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    lightBufDesc.mappedAtCreation = false;
+    mLightingUniformBuffer = wgpuDeviceCreateBuffer(mDevice, &lightBufDesc);
+
+    // Create pipeline layout
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
+    resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
+
+    // Resource doesn't own the lighting buffer - it's shared
+    resource.uniformBuffer = nullptr;
+    resource.bindGroup = nullptr;
+
+    // Create default render pipeline (TriangleList)
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = resource.pipelineLayout;
+
+    // Vertex state - must match InterleavedVertex layout
+    WGPUVertexAttribute vertexAttrs[4] = {};
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;  // sizeof(InterleavedVertex)
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    WGPUVertexState vertexState = {};
+    vertexState.module = resource.vertModule;
+    vertexState.entryPoint = "vs_main";
+    vertexState.bufferCount = 1;
+    vertexState.buffers = &vertexBufferLayout;
+    pipelineDesc.vertex = vertexState;
+
+    // Primitive state
+    WGPUPrimitiveState primitiveState = {};
+    primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
+    primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
+    primitiveState.frontFace = WGPUFrontFace_CCW;
+    primitiveState.cullMode = WGPUCullMode_None;
+    pipelineDesc.primitive = primitiveState;
+
+    // Fragment state with blending
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = resource.fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    // Depth state
+    WGPUDepthStencilState depthState = {};
+    depthState.format = WGPUTextureFormat_Depth24Plus;
+    depthState.depthWriteEnabled = true;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    pipelineDesc.depthStencil = &depthState;
+
+    // Multisample
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    resource.defaultPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (!resource.defaultPipeline) {
+        printf("[WebGPUBackend] ERROR: Failed to create lighting shader pipeline!\n");
+        wgpuPipelineLayoutRelease(resource.pipelineLayout);
+        wgpuBindGroupLayoutRelease(resource.bindGroupLayout);
+        wgpuShaderModuleRelease(resource.fragModule);
+        wgpuShaderModuleRelease(resource.vertModule);
+        return;
+    }
+
+    resource.pipelines[static_cast<int>(PrimitiveType::Triangles)] = resource.defaultPipeline;
+
+    uint64_t id = generateHandleId();
+    mShaders[id] = std::move(resource);
+    mLitShader = ShaderHandle{id};
+
+    printf("[WebGPUBackend] Lighting shader created successfully\n");
+}
+
+void WebGPUBackend::updateLightingBindGroup() {
+    // Create/update bind group for lit rendering
+    if (!mLitShader.valid() || !mLightingUniformBuffer) return;
+
+    auto shaderIt = mShaders.find(mLitShader.id);
+    if (shaderIt == mShaders.end()) return;
+
+    // Release old bind group
+    if (mLitBindGroup) {
+        wgpuBindGroupRelease(mLitBindGroup);
+        mLitBindGroup = nullptr;
+    }
+
+    // Pack lighting data into buffer
+    // Buffer layout: globalAmbient(16) + numLights+pad(16) + lights[8](80*8) + material(80)
+    std::vector<uint8_t> lightingData(752, 0);
+
+    // Global ambient (16 bytes)
+    memcpy(lightingData.data(), mGlobalAmbient, 16);
+
+    // numLights + padding (16 bytes)
+    memcpy(lightingData.data() + 16, &mNumLights, 4);
+    // padding at 20-31 is already zero
+
+    // Lights array at offset 32 (80 bytes per light)
+    for (int i = 0; i < 8; i++) {
+        size_t offset = 32 + i * 80;
+        memcpy(lightingData.data() + offset, mLights[i].position, 16);      // position
+        memcpy(lightingData.data() + offset + 16, mLights[i].ambient, 16);  // ambient
+        memcpy(lightingData.data() + offset + 32, mLights[i].diffuse, 16);  // diffuse
+        memcpy(lightingData.data() + offset + 48, mLights[i].specular, 16); // specular
+        memcpy(lightingData.data() + offset + 64, mLights[i].attenuation, 12); // attenuation
+        memcpy(lightingData.data() + offset + 76, &mLights[i].enabled, 4);  // enabled
+    }
+
+    // Material at offset 672 (32 + 8*80 = 672)
+    size_t matOffset = 672;
+    memcpy(lightingData.data() + matOffset, &mMaterial, sizeof(MaterialData));
+
+    // Upload to GPU
+    wgpuQueueWriteBuffer(mQueue, mLightingUniformBuffer, 0,
+                         lightingData.data(), lightingData.size());
+
+    // Create bind group entries
+    WGPUBindGroupEntry entries[2] = {};
+
+    // Binding 0: Main uniform buffer (using ring buffer)
+    entries[0].binding = 0;
+    entries[0].buffer = mUniformRingBuffer;
+    entries[0].offset = 0;
+    entries[0].size = 256;
+
+    // Binding 1: Lighting uniform buffer
+    entries[1].binding = 1;
+    entries[1].buffer = mLightingUniformBuffer;
+    entries[1].offset = 0;
+    entries[1].size = 752;
+
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.layout = shaderIt->second.bindGroupLayout;
+    bindGroupDesc.entryCount = 2;
+    bindGroupDesc.entries = entries;
+
+    mLitBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    mLightingDirty = false;
+}
+
 void WebGPUBackend::beginRenderPass() {
     if (mRenderPassEncoder) return; // Already in render pass
 
@@ -2190,6 +2732,30 @@ void WebGPUBackend::flushUniforms() {
 
     auto it = mShaders.find(shaderToUse.id);
     if (it == mShaders.end()) return;
+
+    // For lighting shader, we need to include normalMatrix in uniform buffer
+    // Layout for lighting: modelView(64) + proj(64) + normal(64) + tint(16) + params(16) = 224 bytes
+    // Layout for default:  modelView(64) + proj(64) + tint(16) + params(16) = 160 bytes
+    if (mLightingEnabled && mLitShader.valid()) {
+        // Ensure uniform data is large enough for lighting uniforms (224 bytes)
+        if (mUniformData.size() < 224) {
+            mUniformData.resize(256, 0);
+        }
+
+        // IMPORTANT: Save tint and params BEFORE writing normalMatrix
+        // Default layout has tint at 128, params at 144
+        // Lighting layout moves them to 192 and 208 to make room for normalMatrix
+        float tint[4], params[4];
+        memcpy(tint, mUniformData.data() + 128, 16);   // Save tint from offset 128
+        memcpy(params, mUniformData.data() + 144, 16); // Save params from offset 144
+
+        // Now copy normalMatrix at offset 128 (overwrites old tint/params location)
+        memcpy(mUniformData.data() + 128, mNormalMatrix, 64);
+
+        // Copy saved tint/params to their new locations after normalMatrix
+        memcpy(mUniformData.data() + 192, tint, 16);
+        memcpy(mUniformData.data() + 208, params, 16);
+    }
 
 #ifdef __EMSCRIPTEN__
     static int flushLogCount = 0;
@@ -2401,6 +2967,11 @@ void WebGPUBackend::dispatch(ComputePipelineHandle, int, int, int) {}
 void WebGPUBackend::computeBarrier() {}
 void WebGPUBackend::readBuffer(BufferHandle, void*, size_t, size_t) {}
 void WebGPUBackend::copyBuffer(BufferHandle, BufferHandle, size_t, size_t, size_t) {}
+void WebGPUBackend::setLightingEnabled(bool) {}
+void WebGPUBackend::setLight(int, const float*, const float*, const float*, const float*, const float*, bool) {}
+void WebGPUBackend::setMaterial(const float*, const float*, const float*, const float*, float) {}
+void WebGPUBackend::setGlobalAmbient(float, float, float, float) {}
+void WebGPUBackend::setNormalMatrix(const float*) {}
 
 } // namespace al
 

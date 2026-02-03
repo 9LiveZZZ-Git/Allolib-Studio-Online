@@ -243,6 +243,12 @@ public:
   ColoringMode coloringMode() const { return mColoringMode; }
   bool lightingEnabled() const { return mLightingEnabled; }
 
+  // Lighting accessors for WebGPU backend
+  int numLights() const { return num_lights; }
+  Light const& getLight(int idx) const { return mLights[idx]; }
+  bool isLightOn(int idx) const { return mLightOn[idx]; }
+  Material const& getMaterial() const { return mMaterial; }
+
 private:
   bool initialized = false;
 

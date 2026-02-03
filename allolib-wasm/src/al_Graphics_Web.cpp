@@ -9,8 +9,12 @@
 
 #include "al/graphics/al_Graphics.hpp"
 #include "al_WebGraphicsBackend.hpp"
+#ifdef ALLOLIB_WEBGPU
+#include "al_WebGPUBackend.hpp"
+#endif
 #include "al_WebMeshAdapter.hpp"
 #include <utility>
+#include <cmath>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -631,7 +635,95 @@ bool Graphics::omni() { return is_omni; }
 
 // ─── WebGPU Backend Draw Routing ─────────────────────────────────────────────
 
-// Helper to draw mesh through WebGPU backend
+#ifdef ALLOLIB_WEBGPU
+// Helper: compute 3x3 matrix inverse for normal matrix
+static bool invert3x3(const float* m, float* inv) {
+    // m is column-major 3x3 stored as m[col*3 + row]
+    float det = m[0] * (m[4] * m[8] - m[7] * m[5])
+              - m[3] * (m[1] * m[8] - m[7] * m[2])
+              + m[6] * (m[1] * m[5] - m[4] * m[2]);
+
+    if (std::abs(det) < 1e-10f) return false;
+
+    float invDet = 1.0f / det;
+
+    inv[0] = (m[4] * m[8] - m[7] * m[5]) * invDet;
+    inv[1] = (m[7] * m[2] - m[1] * m[8]) * invDet;
+    inv[2] = (m[1] * m[5] - m[4] * m[2]) * invDet;
+    inv[3] = (m[6] * m[5] - m[3] * m[8]) * invDet;
+    inv[4] = (m[0] * m[8] - m[6] * m[2]) * invDet;
+    inv[5] = (m[3] * m[2] - m[0] * m[5]) * invDet;
+    inv[6] = (m[3] * m[7] - m[6] * m[4]) * invDet;
+    inv[7] = (m[6] * m[1] - m[0] * m[7]) * invDet;
+    inv[8] = (m[0] * m[4] - m[3] * m[1]) * invDet;
+
+    return true;
+}
+
+// Helper: sync lighting state from Graphics to WebGPU backend
+static void syncLightingToBackend(Graphics& g, const Mat4f& mv) {
+    auto* backend = dynamic_cast<WebGPUBackend*>(sGraphicsBackend);
+    if (!backend) return;
+
+    bool lightingOn = g.lightingEnabled();
+    backend->setLightingEnabled(lightingOn);
+
+    if (!lightingOn) return;
+
+    // Compute normal matrix = transpose(inverse(upper-left 3x3 of modelView))
+    // Extract upper-left 3x3 from modelView (column-major)
+    const float* mvElems = mv.elems();
+    float mv3x3[9] = {
+        mvElems[0], mvElems[1], mvElems[2],   // column 0
+        mvElems[4], mvElems[5], mvElems[6],   // column 1
+        mvElems[8], mvElems[9], mvElems[10]   // column 2
+    };
+
+    float invMv3x3[9];
+    if (invert3x3(mv3x3, invMv3x3)) {
+        // Transpose the inverse to get normal matrix
+        float normalMat[9] = {
+            invMv3x3[0], invMv3x3[3], invMv3x3[6],
+            invMv3x3[1], invMv3x3[4], invMv3x3[7],
+            invMv3x3[2], invMv3x3[5], invMv3x3[8]
+        };
+        backend->setNormalMatrix(normalMat);
+    } else {
+        // Fallback: use upper-left 3x3 directly (works for rotation-only transforms)
+        backend->setNormalMatrix(mv3x3);
+    }
+
+    // Sync global ambient
+    Color globalAmb = Light::globalAmbient();
+    backend->setGlobalAmbient(globalAmb.r, globalAmb.g, globalAmb.b, globalAmb.a);
+
+    // Sync lights
+    int numLights = g.numLights();
+    for (int i = 0; i < numLights && i < 8; i++) {
+        const Light& light = g.getLight(i);
+        bool enabled = g.isLightOn(i);
+
+        float pos[4] = {light.pos()[0], light.pos()[1], light.pos()[2], light.pos()[3]};
+        float amb[4] = {light.ambient().r, light.ambient().g, light.ambient().b, light.ambient().a};
+        float diff[4] = {light.diffuse().r, light.diffuse().g, light.diffuse().b, light.diffuse().a};
+        float spec[4] = {light.specular().r, light.specular().g, light.specular().b, light.specular().a};
+        // AlloLib Light doesn't expose attenuation, use default (no attenuation)
+        float atten[3] = {1.0f, 0.0f, 0.0f};  // constant=1, linear=0, quadratic=0
+
+        backend->setLight(i, pos, amb, diff, spec, atten, enabled);
+    }
+
+    // Sync material
+    const Material& mat = g.getMaterial();
+    float matAmb[4] = {mat.ambient().r, mat.ambient().g, mat.ambient().b, mat.ambient().a};
+    float matDiff[4] = {mat.diffuse().r, mat.diffuse().g, mat.diffuse().b, mat.diffuse().a};
+    float matSpec[4] = {mat.specular().r, mat.specular().g, mat.specular().b, mat.specular().a};
+    // AlloLib Material doesn't expose emission, use default (black/none)
+    float matEmis[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    backend->setMaterial(matAmb, matDiff, matSpec, matEmis, mat.shininess());
+}
+#endif // ALLOLIB_WEBGPU
+
 static void drawMeshWithWebGPU(Graphics& g, const Mesh& m) {
     // Sync matrices
     Mat4f model = g.modelMatrix();
@@ -677,6 +769,11 @@ static void drawMeshWithWebGPU(Graphics& g, const Mesh& m) {
     sGraphicsBackend->setUniform("pointSize", gl::getPointSize());
     sGraphicsBackend->setUniform("eyeSep", static_cast<float>(g.lens().eyeSep() * g.eye() / 2.0f));
     sGraphicsBackend->setUniform("focLen", static_cast<float>(g.lens().focalLength()));
+
+#ifdef ALLOLIB_WEBGPU
+    // Sync lighting state (Phase 2)
+    syncLightingToBackend(g, mv);
+#endif
 
     // Prepare and draw mesh
     if (sMeshAdapter.prepareMesh(m)) {

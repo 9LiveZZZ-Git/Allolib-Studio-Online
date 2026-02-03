@@ -85,6 +85,9 @@ export default defineConfig({
             '--enable-features=WebGPU',
             '--ignore-gpu-blocklist',
             '--disable-gpu-sandbox',
+            '--disable-features=SharedImageSwapChainFactory',
+            '--use-gl=angle',
+            '--use-angle=d3d11',
           ],
           // Add DXC to PATH for WebGPU shader compilation
           env: {

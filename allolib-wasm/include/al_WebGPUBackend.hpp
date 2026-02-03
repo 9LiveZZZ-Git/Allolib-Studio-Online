@@ -195,6 +195,27 @@ public:
     int getWidth() const override { return mWidth; }
     int getHeight() const override { return mHeight; }
 
+    // ── Lighting (Phase 2) ───────────────────────────────────────────────
+
+    /// Enable or disable lighting
+    void setLightingEnabled(bool enabled);
+
+    /// Set light data at specified index (0-7)
+    void setLight(int index, const float* pos, const float* ambient,
+                  const float* diffuse, const float* specular,
+                  const float* attenuation, bool enabled);
+
+    /// Set material properties
+    void setMaterial(const float* ambient, const float* diffuse,
+                     const float* specular, const float* emission,
+                     float shininess);
+
+    /// Set global ambient light
+    void setGlobalAmbient(float r, float g, float b, float a);
+
+    /// Set normal matrix (inverse transpose of modelView 3x3)
+    void setNormalMatrix(const float* mat3x3);
+
 #ifdef __EMSCRIPTEN__
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
@@ -283,6 +304,38 @@ private:
     ShaderHandle mCurrentShader;
     ShaderHandle mDefaultShader;    // Default mesh shader for fallback
     ShaderHandle mTexturedShader;   // Textured mesh shader
+    ShaderHandle mLitShader;        // Lighting shader (Phase 2)
+
+    // Lighting state (Phase 2)
+    bool mLightingEnabled = false;
+    WGPUBuffer mLightingUniformBuffer = nullptr;
+    WGPUBindGroup mLitBindGroup = nullptr;
+    bool mLightingDirty = true;
+
+    // Lighting data storage (matches WGSL struct layout)
+    struct LightData {
+        float position[4];    // w=0 for directional, w=1 for point
+        float ambient[4];
+        float diffuse[4];
+        float specular[4];
+        float attenuation[3]; // constant, linear, quadratic
+        float enabled;        // 1.0 = enabled, 0.0 = disabled
+    };
+
+    struct MaterialData {
+        float ambient[4];
+        float diffuse[4];
+        float specular[4];
+        float emission[4];
+        float shininess;
+        float _pad[3];
+    };
+
+    float mGlobalAmbient[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+    uint32_t mNumLights = 1;
+    LightData mLights[8];
+    MaterialData mMaterial;
+    float mNormalMatrix[16];  // Stored as 4x4 for WGSL padding
     BufferHandle mCurrentVertexBuffer;
     BufferHandle mCurrentIndexBuffer;
     bool mIndexBuffer32Bit = false;
@@ -333,7 +386,9 @@ private:
     void createDepthBuffer();
     void createDefaultShader();
     void createTexturedShader();
+    void createLightingShader();     // Phase 2: Lighting
     void updateTexturedBindGroup();
+    void updateLightingBindGroup();  // Phase 2: Lighting
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();

@@ -71,16 +71,25 @@ These examples use **custom GLSL shaders** which cannot be automatically transpi
 
 **Lines added:** ~250
 
+**Playwright tests:** ✅ COMPLETE
+- [x] Add "WebGPU Phase 1: Textures" test suite to `webgpu-features.spec.ts`
+- [x] Test texture loading and display (WebGL2 + WebGPU)
+- [x] Test UV coordinate mapping
+- [x] Test multiple texture binding
+- [x] Generate visual baseline: `webgpu-phase1-texture-quad.png`
+
 ---
 
-### Phase 2: Full Lighting System (Enables ~10 examples) ⚠️ NEEDS REDO
-**Status:** Initial implementation complete but requires rework. The WebGL2 lighting was fixed (bypassing GLAD for Emscripten GL calls), but WebGPU lighting pipeline needs to be reimplemented to match.
+### Phase 2: Full Lighting System (Enables ~10 examples) ✅ COMPLETE
+**Status:** Fully implemented with multi-light support, materials, and normal matrix computation.
 
-**TODO:**
-- [ ] Reimplement WebGPU lighting uniforms and bind groups
-- [ ] Ensure normal matrix is properly computed and passed
-- [ ] Test multi-light scenarios
-- [ ] Verify material properties work correctly
+**Completed:**
+- [x] Reimplemented WebGPU lighting uniforms and bind groups
+- [x] Normal matrix computed (inverse transpose of modelView 3x3)
+- [x] Multi-light support (up to 8 lights)
+- [x] Material properties (ambient, diffuse, specular, emission, shininess)
+- [x] Global ambient light support
+- [x] Shader selection logic (lighting > textured > default)
 
 **Files modified:**
 - `al_WebGPUBackend.hpp` - Added LightData, MaterialData, LightingUniforms structs; lighting shader handle; API methods
@@ -94,7 +103,7 @@ These examples use **custom GLSL shaders** which cannot be automatically transpi
 - Normal matrix computed from modelView inverse transpose
 - Uniform buffer layout dynamically adjusts offsets when lighting is enabled
 
-**Lines added:** ~350
+**Lines added:** ~450 (includes shader, uniforms, API methods, sync code)
 
 **Uniform buffer layout (matches existing WGSL shader):**
 ```wgsl
@@ -250,7 +259,7 @@ LOD switching is done on CPU based on distance. The GPU just renders whichever m
 | Phase | Feature | Examples Enabled | Est. Lines | Cumulative | Status |
 |-------|---------|------------------|------------|------------|--------|
 | 1 | 2D Textures | 15 | 250 | 250 | ✅ DONE |
-| 2 | Full Lighting | 10 | 350 | 600 | ⚠️ NEEDS REDO |
+| 2 | Full Lighting | 10 | 350 | 600 | ✅ DONE |
 | 3 | EasyFBO | 5 | 150 | 650 | Pending |
 | 4 | Cubemaps/Skybox | 8 | 180 | 830 | Pending |
 | 5 | WebPBR | 12 | 300 | 1130 | Pending |
@@ -505,6 +514,17 @@ ShaderHandle shader = mShaderManager.getShader(shaderType);
 - [ ] Lighting example works in WebGL2 mode
 - [ ] Lighting example works in WebGPU mode (if available)
 
+**Playwright tests:** ✅ COMPLETE
+- [x] Add "WebGPU Phase 2: Lighting" test suite to `webgpu-features.spec.ts`
+- [x] Test single directional light (WebGL2 + WebGPU)
+- [x] Test single point light (WebGL2 + WebGPU)
+- [x] Test multiple lights (3 colored lights) (WebGL2 + WebGPU)
+- [x] Test material properties (ambient/diffuse/specular/shininess) (WebGL2 + WebGPU)
+- [x] Test lighting + textures combined (WebGL2 + WebGPU)
+- [x] Generate visual baseline: `webgpu-phase2-lighting-sphere.png`
+- [x] Cross-backend comparison test (WebGL2 vs WebGPU)
+- Run: `npx playwright test webgpu-features.spec.ts -g "Phase 2"`
+
 ### Phase 3: EasyFBO / Render-to-Texture
 
 **⚠️ HIGH RISK - This broke both pipelines before**
@@ -552,6 +572,15 @@ public:
 - [ ] EasyFBO test renders correctly in WebGPU
 - [ ] Multiple nested FBOs work
 - [ ] Viewport correctly restored after popFramebuffer
+
+**Playwright tests to create:**
+- [ ] Add "WebGPU Phase 3: EasyFBO" test suite to `webgpu-features.spec.ts`
+- [ ] Test render-to-texture basic functionality
+- [ ] Test FBO color attachment is readable as texture
+- [ ] Test nested FBOs (2 levels deep)
+- [ ] Test viewport save/restore after FBO operations
+- [ ] Generate visual baseline: `webgpu-fbo-mirror.png`
+- [ ] Run: `npx playwright test webgpu-features.spec.ts -g "Phase 3"`
 
 ---
 
@@ -605,6 +634,185 @@ npx playwright test --project=chromium-webgl2
 
 ---
 
+## Playwright Testing Requirements
+
+### Testing Strategy
+
+**CRITICAL: Every completed phase MUST have corresponding Playwright tests.**
+
+After implementing any phase:
+1. Create tests in `tests/e2e/webgpu-features.spec.ts`
+2. Run full test suite to ensure no regressions
+3. Generate visual baselines if applicable
+
+### Test File Structure
+
+```
+tests/
+├── e2e/
+│   ├── rendering-tests.spec.ts      # Core WebGL2/WebGPU rendering (existing)
+│   ├── visual-regression.spec.ts    # Screenshot comparisons (existing)
+│   ├── webgpu-features.spec.ts      # NEW: WebGPU feature-specific tests
+│   └── example-compatibility.spec.ts # Example compilation (existing)
+└── screenshots/
+    └── baseline/
+        ├── webgpu-texture-*.png      # Phase 1 baselines
+        ├── webgpu-lighting-*.png     # Phase 2 baselines
+        ├── webgpu-fbo-*.png          # Phase 3 baselines
+        └── ...
+```
+
+### Phase-Specific Test Requirements
+
+#### Phase 1: Textures ✅ COMPLETE
+- [ ] Test: Texture loads and displays correctly
+- [ ] Test: UV coordinates work properly
+- [ ] Test: Multiple textures can be bound
+- [ ] Visual baseline: Simple textured quad
+
+#### Phase 2: Full Lighting (REDO)
+- [ ] Test: Single directional light
+- [ ] Test: Single point light
+- [ ] Test: Multiple lights (up to 8)
+- [ ] Test: Material ambient/diffuse/specular
+- [ ] Test: Lighting + textures combined
+- [ ] Visual baseline: Lit sphere with 3 lights
+
+#### Phase 3: EasyFBO
+- [ ] Test: Render to texture works
+- [ ] Test: FBO color attachment readable
+- [ ] Test: Nested FBOs work correctly
+- [ ] Test: Viewport restored after FBO pop
+- [ ] Visual baseline: Render-to-texture mirror effect
+
+#### Phase 4: Cubemaps/Skybox
+- [ ] Test: Cubemap loads all 6 faces
+- [ ] Test: Skybox renders behind scene
+- [ ] Test: Environment mapping on reflective surface
+- [ ] Visual baseline: Scene with skybox
+
+#### Phase 5: WebPBR
+- [ ] Test: PBR material properties apply
+- [ ] Test: Metallic/roughness affects appearance
+- [ ] Test: PBR + textures combined
+- [ ] Visual baseline: PBR material showcase
+
+#### Phase 6: WebEnvironment/HDRI
+- [ ] Test: HDR environment loads
+- [ ] Test: IBL lighting affects scene
+- [ ] Test: Environment rotation works
+- [ ] Visual baseline: HDRI-lit sphere
+
+#### Phase 7: ProceduralTexture
+- [ ] Test: Procedural texture generates correctly
+- [ ] Test: Different noise types work
+- [ ] Visual baseline: Procedural noise pattern
+
+#### Phase 8: LOD System
+- [ ] Test: LOD switches at correct distances
+- [ ] Test: No visual pop on transition
+- [ ] Visual baseline: Multi-LOD object
+
+### Test Template
+
+```typescript
+// tests/e2e/webgpu-features.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('WebGPU Phase X: [Feature Name]', () => {
+  test.beforeEach(async ({ page }) => {
+    // Clear localStorage to ensure clean state
+    await page.evaluate(() => {
+      localStorage.removeItem('allolib-project');
+      localStorage.removeItem('allolib-code');
+      localStorage.removeItem('unified-project');
+    });
+  });
+
+  test('should [test description]', async ({ page }) => {
+    await page.goto('/');
+
+    const testCode = `
+#include "al/app/al_App.hpp"
+using namespace al;
+
+class TestApp : public App {
+  void onCreate() override {
+    // Configure WebGPU backend
+    configureBackend(BackendType::WebGPU);
+  }
+  void onDraw(Graphics& g) override {
+    g.clear(0.1, 0.1, 0.1);
+    // Test-specific drawing code
+  }
+};
+
+ALLOLIB_WEB_MAIN(TestApp)
+`;
+
+    // Set code and compile
+    await page.evaluate((code) => {
+      const store = (window as any).__pinia?.state?.value?.project;
+      if (store?.files?.[0]) {
+        store.files[0].content = code;
+      }
+    }, testCode);
+
+    // Click run and wait for canvas
+    await page.locator('[data-testid="run-button"]').first().click();
+    await page.waitForSelector('[data-testid="canvas"]', { state: 'visible', timeout: 60000 });
+
+    // Wait for rendering
+    await page.waitForTimeout(2000);
+
+    // Capture and compare (for visual tests)
+    const canvas = page.locator('[data-testid="canvas"]');
+    const screenshot = await canvas.screenshot();
+    expect(screenshot).toMatchSnapshot('webgpu-feature-name.png', { threshold: 0.1 });
+  });
+});
+```
+
+### Running WebGPU Tests
+
+```bash
+cd tests
+
+# Run all WebGPU feature tests
+npx playwright test webgpu-features.spec.ts
+
+# Run specific phase tests
+npx playwright test webgpu-features.spec.ts -g "Phase 2"
+
+# Update baselines after visual changes
+UPDATE_BASELINES=true npx playwright test webgpu-features.spec.ts
+
+# Run with headed mode (required for WebGPU)
+npx playwright test webgpu-features.spec.ts --headed
+```
+
+### CI/CD Integration
+
+WebGPU tests should be tagged to allow conditional execution:
+
+```typescript
+test.describe('WebGPU Phase 2: Lighting @webgpu', () => {
+  // Tests here
+});
+```
+
+Run only WebGPU tests:
+```bash
+npx playwright test --grep @webgpu
+```
+
+Skip WebGPU tests in environments without GPU:
+```bash
+npx playwright test --grep-invert @webgpu
+```
+
+---
+
 ## Success Criteria
 
 After all phases:
@@ -614,3 +822,5 @@ After all phases:
 - ✅ Backend selection is transparent to example code
 - ✅ WebGL2 tests pass after every WebGPU change
 - ✅ No shared state corruption between backends
+- ✅ **Playwright tests exist for every implemented phase**
+- ✅ **Visual regression baselines captured for each feature**

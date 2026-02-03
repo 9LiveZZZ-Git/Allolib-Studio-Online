@@ -623,11 +623,13 @@ export class AllolibRuntime {
       const format = navigator.gpu.getPreferredCanvasFormat()
       this.onPrint(`[WebGPU] Using format: ${format}`)
 
-      // Configure the context
+      // Configure the context with explicit usage flags
+      // This helps work around Chrome/Dawn SharedTextureMemory issues on Windows
       context.configure({
         device: device,
         format: format,
         alphaMode: 'premultiplied',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       })
 
       // Store the context in Module for the WASM WebGPU backend to use
