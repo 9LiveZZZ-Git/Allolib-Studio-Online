@@ -1,6 +1,35 @@
 # Claude Code Context
 
-## Quick Start
+## Quick Start - Build & Run
+
+**To start the app, run these commands in order:**
+
+```bash
+# 1. Start Docker container (if not running)
+docker start allolib-compiler redis
+
+# 2. Start backend (new terminal)
+cd "C:/Allolib Studio Online/backend" && npm run dev
+
+# 3. Start frontend (new terminal)
+cd "C:/Allolib Studio Online/frontend" && npm run dev
+
+# 4. Open http://localhost:3000
+```
+
+**If Docker container doesn't exist, create it:**
+```bash
+cd "C:/Allolib Studio Online/backend"
+docker build -t allolib-compiler ./docker
+docker run -d --name allolib-compiler \
+  -v "C:/Allolib Studio Online/backend/source:/app/source" \
+  -v "C:/Allolib Studio Online/backend/compiled:/app/output" \
+  -v "C:/Allolib Studio Online/allolib-wasm:/app/allolib-wasm" \
+  -v "C:/Allolib Studio Online/allolib:/app/allolib" \
+  -v "C:/Allolib Studio Online/al_ext:/app/al_ext" \
+  allolib-compiler sleep infinity
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+```
 
 Read `PROJECT.md` for full architecture documentation.
 

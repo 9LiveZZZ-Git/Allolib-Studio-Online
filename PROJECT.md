@@ -10,6 +10,107 @@ Browser-based creative coding IDE for AlloLib C++ framework. Users write C++ in 
 
 ---
 
+## Quick Start - Build & Run
+
+### Prerequisites
+- **Node.js 18+** and npm
+- **Docker Desktop** (must be running)
+- **Redis** (via Docker or local install)
+
+### Step 1: Start Docker Compiler Container
+
+```bash
+# Build the Emscripten compiler image (first time only, takes ~10 min)
+cd backend
+docker build -t allolib-compiler ./docker
+
+# Start the compiler container with volume mounts
+docker run -d --name allolib-compiler \
+  -v "C:/Allolib Studio Online/backend/source:/app/source" \
+  -v "C:/Allolib Studio Online/backend/compiled:/app/output" \
+  -v "C:/Allolib Studio Online/allolib-wasm:/app/allolib-wasm" \
+  -v "C:/Allolib Studio Online/allolib:/app/allolib" \
+  -v "C:/Allolib Studio Online/al_ext:/app/al_ext" \
+  allolib-compiler sleep infinity
+
+# Verify container is running
+docker ps | grep allolib-compiler
+```
+
+**If container already exists but stopped:**
+```bash
+docker start allolib-compiler
+```
+
+### Step 2: Start Redis
+
+```bash
+# Option A: Via Docker (recommended)
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+
+# Option B: If using docker-compose
+cd "C:/Allolib Studio Online"
+docker-compose up -d redis
+```
+
+### Step 3: Start Backend Server
+
+```bash
+cd "C:/Allolib Studio Online/backend"
+npm install        # First time only
+npm run dev        # Starts on http://localhost:4000
+```
+
+**Verify backend is running:**
+```bash
+curl http://localhost:4000/health
+# Should return: {"status":"ok",...}
+```
+
+### Step 4: Start Frontend Dev Server
+
+```bash
+cd "C:/Allolib Studio Online/frontend"
+npm install        # First time only
+npm run dev        # Starts on http://localhost:3000
+```
+
+### Step 5: Open in Browser
+
+Navigate to **http://localhost:3000**
+
+### All-in-One Command (after initial setup)
+
+```bash
+# Start everything (run from project root)
+docker start allolib-compiler redis 2>/dev/null || true
+cd backend && npm run dev &
+cd frontend && npm run dev &
+```
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "Cannot connect to Docker" | Start Docker Desktop |
+| "Redis connection refused" | Run `docker start redis` or `docker run -d --name redis -p 6379:6379 redis:7-alpine` |
+| "Compilation failed" | Check `docker logs allolib-compiler` |
+| "CORS error in browser" | Backend not running on :4000 |
+| "WebSocket error" | Restart backend server |
+| Container volumes wrong | Remove container (`docker rm -f allolib-compiler`) and recreate with correct paths |
+
+### Running Tests
+
+```bash
+cd "C:/Allolib Studio Online/tests"
+npm install                    # First time only
+npx playwright install         # Install browsers (first time only)
+npx playwright test            # Run all tests
+npx playwright test --ui       # Run with UI for debugging
+```
+
+---
+
 ## Layer 1: Architecture Map
 
 ### Directory Tree (git-tracked, depth 2)
