@@ -12,6 +12,16 @@
       @scroll="handleScroll"
     >
       <div class="tracks-content" :style="contentStyle">
+        <!-- Grid overlay -->
+        <div v-if="showGrid" class="grid-overlay" :style="gridOverlayStyle">
+          <div
+            v-for="line in gridLines"
+            :key="line.time"
+            class="grid-line"
+            :class="{ bar: line.isBar, beat: !line.isBar }"
+            :style="{ left: `${line.x}px` }"
+          />
+        </div>
         <slot />
       </div>
     </div>
@@ -29,13 +39,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   duration: number
   zoom: number
   scrollX: number
   scrollY: number
   headerWidth?: number
-}>()
+  bpm?: number
+  showGrid?: boolean
+}>(), {
+  bpm: 120,
+  showGrid: true,
+})
 
 const emit = defineEmits<{
   (e: 'scroll', x: number, y: number): void
@@ -52,6 +67,43 @@ const contentStyle = computed(() => ({
   width: `${headerW.value + (props.duration * props.zoom)}px`,
   minHeight: '100%',
 }))
+
+// Grid overlay positioning
+const gridOverlayStyle = computed(() => ({
+  left: `${headerW.value}px`,
+  width: `${props.duration * props.zoom}px`,
+}))
+
+// Calculate grid lines based on BPM and zoom
+const gridLines = computed(() => {
+  const lines: Array<{ time: number; x: number; isBar: boolean }> = []
+  const beatDuration = 60 / props.bpm
+  const barDuration = beatDuration * 4
+
+  // Determine grid interval based on zoom level
+  let interval = beatDuration
+  if (props.zoom * beatDuration < 15) {
+    interval = barDuration  // Show only bars when zoomed out
+  } else if (props.zoom * beatDuration > 80) {
+    interval = beatDuration / 4  // Show 16th notes when zoomed in
+  }
+
+  // Calculate visible range
+  const viewportWidth = containerRef.value?.clientWidth ?? 800
+  const visibleStart = Math.max(0, props.scrollX / props.zoom)
+  const visibleEnd = visibleStart + (viewportWidth / props.zoom) + interval
+
+  // Generate lines
+  const startTime = Math.floor(visibleStart / interval) * interval
+  for (let t = startTime; t <= Math.min(visibleEnd, props.duration); t += interval) {
+    if (t < 0) continue
+    const x = t * props.zoom
+    const isBar = Math.abs(t % barDuration) < 0.001
+    lines.push({ time: t, x, isBar })
+  }
+
+  return lines
+})
 
 const scrollThumbStyle = computed(() => {
   if (!containerRef.value || !scrollRef.value) return {}
@@ -163,6 +215,31 @@ defineExpose({
 .tracks-content {
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* Grid overlay */
+.grid-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.grid-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.grid-line.bar {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.grid-line.beat {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* Custom scroll indicator (optional) */

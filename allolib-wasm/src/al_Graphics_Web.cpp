@@ -747,26 +747,12 @@ void Graphics::draw(EasyVAO& vao) {
 }
 
 void Graphics::clear(float r, float g, float b, float a) {
-#ifdef __EMSCRIPTEN__
-    EM_ASM({ console.log('[Graphics::clear] Entry: r=' + $0 + ', g=' + $1 + ', b=' + $2 + ', a=' + $3 + ', WebGPU=' + $4); },
-           r, g, b, a, sWebGPUMode ? 1 : 0);
-#endif
-
     if (sWebGPUMode && sGraphicsBackend) {
-#ifdef __EMSCRIPTEN__
-        EM_ASM({ console.log('[Graphics::clear] Calling backend->clear...'); });
-#endif
         sGraphicsBackend->clear(r, g, b, a);
-#ifdef __EMSCRIPTEN__
-        EM_ASM({ console.log('[Graphics::clear] backend->clear done'); });
-#endif
         return;
     }
 
     // Standard WebGL2 path
-#ifdef __EMSCRIPTEN__
-    EM_ASM({ console.log('[Graphics::clear] Using WebGL2 path'); });
-#endif
     gl::clearColor(r, g, b, a);
     gl::clearDepth(1.f);
 }

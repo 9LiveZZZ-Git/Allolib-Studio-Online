@@ -61,12 +61,17 @@ export interface EnvironmentState {
 
 // ─── Keyframe Types ──────────────────────────────────────────────────────────
 
-export type EasingType = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'step'
+export type EasingType =
+  | 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
+  | 'easeOutBack' | 'bounce' | 'elastic' | 'step' | 'bezier'
+
+export type BezierPoints = [number, number, number, number]
 
 export interface Keyframe<T> {
   time: number
   value: T
   easing: EasingType
+  bezierPoints?: BezierPoints
 }
 
 export interface KeyframeCurve<T> {
@@ -297,7 +302,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     const kf2 = keyframes[i + 1]
     const t = (time - kf1.time) / (kf2.time - kf1.time)
 
-    return interpolate(kf1.value, kf2.value, applyEasing(t, kf1.easing))
+    return interpolate(kf1.value, kf2.value, applyEasing(t, kf1.easing, kf1.bezierPoints))
   }
 
   // ─── WASM Sync ───────────────────────────────────────────────────────────
@@ -407,15 +412,61 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
 // ─── Utility Functions ───────────────────────────────────────────────────────
 
-function applyEasing(t: number, easing: EasingType): number {
+function applyEasing(t: number, easing: EasingType, bezierPoints?: BezierPoints): number {
   switch (easing) {
     case 'linear': return t
     case 'easeIn': return t * t
     case 'easeOut': return 1 - (1 - t) * (1 - t)
     case 'easeInOut': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+    case 'easeOutBack': {
+      const c1 = 1.70158
+      const c3 = c1 + 1
+      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+    }
+    case 'bounce': {
+      const n1 = 7.5625, d1 = 2.75
+      if (t < 1 / d1) return n1 * t * t
+      if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75
+      if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375
+      return n1 * (t -= 2.625 / d1) * t + 0.984375
+    }
+    case 'elastic': {
+      const c4 = (2 * Math.PI) / 3
+      return t === 0 ? 0 : t === 1 ? 1
+        : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1
+    }
     case 'step': return t < 1 ? 0 : 1
+    case 'bezier': {
+      if (bezierPoints) {
+        return bezierEase(t, bezierPoints)
+      }
+      return t
+    }
     default: return t
   }
+}
+
+function bezierEase(t: number, points: BezierPoints): number {
+  const [x1, y1, x2, y2] = points
+  // Newton-Raphson to find t from x
+  let guessT = t
+  for (let i = 0; i < 8; i++) {
+    const currentX = cubicBezier(guessT, 0, x1, x2, 1)
+    const slope = cubicBezierDerivative(guessT, 0, x1, x2, 1)
+    if (Math.abs(slope) < 1e-6) break
+    guessT -= (currentX - t) / slope
+  }
+  return cubicBezier(guessT, 0, y1, y2, 1)
+}
+
+function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
+  const mt = 1 - t
+  return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3
+}
+
+function cubicBezierDerivative(t: number, p0: number, p1: number, p2: number, p3: number): number {
+  const mt = 1 - t
+  return 3 * mt * mt * (p1 - p0) + 6 * mt * t * (p2 - p1) + 3 * t * t * (p3 - p2)
 }
 
 function interpolate(a: any, b: any, t: number): any {

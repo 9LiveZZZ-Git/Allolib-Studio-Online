@@ -3983,7 +3983,7 @@ public:
     void onCreate() override {
         fbo.init(800, 600);
         addSphere(sphere, 1.0, 32, 32); sphere.generateNormals();
-        addCube(cube, 0.8); cube.generateNormals();
+        addCube(cube, false, 0.8f); cube.generateNormals();
 
         screenQuad.primitive(Mesh::TRIANGLES);
         screenQuad.vertex(-1,-1,0); screenQuad.texCoord(0,0);
@@ -4004,7 +4004,7 @@ public:
         // Pass 1: Render to FBO
         g.pushFramebuffer(fbo);
         g.pushViewport(fbo.width(), fbo.height());
-        g.pushCamera(nav().view());
+        g.pushCamera();
         g.clear(0.1f, 0.1f, 0.2f);
         g.depthTesting(true);
         g.lighting(true);
@@ -4029,15 +4029,15 @@ public:
         g.popViewport();
         g.popFramebuffer();
 
-        // Pass 2: Post-process
+        // Pass 2: Post-process (custom shader - no g.texture() needed)
         g.clear(0, 0, 0);
         g.depthTesting(false);
+        g.lighting(false);
         g.shader(postShader);
         postShader.uniform("effect", effectMode);
-        fbo.colorTexture().bind(0);
-        g.texture();
+        fbo.tex().bind(0);
         g.draw(screenQuad);
-        fbo.colorTexture().unbind(0);
+        fbo.tex().unbind(0);
     }
 
     bool onKeyDown(const Keyboard& k) override {

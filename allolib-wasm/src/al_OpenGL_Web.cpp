@@ -17,6 +17,23 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// In Emscripten, GLAD function pointers don't get loaded properly via eglGetProcAddress.
+// WebGL2 functions are directly available as symbols from Emscripten's WebGL implementation.
+// We save the GLAD function pointers and use them only if they're valid,
+// otherwise we call the real GL functions directly.
+
+// Declare the real GL functions from Emscripten (before GLAD macros are evaluated)
+// We use unique names to avoid macro conflicts
+extern "C" {
+    void emscripten_glClearDepthf(float d);
+    void emscripten_glClearColor(float r, float g, float b, float a);
+    void emscripten_glClear(unsigned int mask);
+}
+#endif
+
 // Forward declaration to check WebGPU mode
 namespace al {
     bool Graphics_isWebGPU();
@@ -227,14 +244,30 @@ void lineWidth(float size) {
 
 void clearColor(float r, float g, float b, float a) {
   WEBGPU_NOOP_CHECK();
+
+#ifdef __EMSCRIPTEN__
+  // In Emscripten, GLAD function pointers may be NULL.
+  // Use Emscripten's direct GL functions instead.
+  emscripten_glClearColor(r, g, b, a);
+  emscripten_glClear(GL_COLOR_BUFFER_BIT);
+#else
   glClearColor(r, g, b, a);
   glClear(GL_COLOR_BUFFER_BIT);
+#endif
 }
 
 void clearDepth(float d) {
   WEBGPU_NOOP_CHECK();
+
+#ifdef __EMSCRIPTEN__
+  // In Emscripten, GLAD function pointers may be NULL.
+  // Use Emscripten's direct GL functions instead.
+  emscripten_glClearDepthf(d);
+  emscripten_glClear(GL_DEPTH_BUFFER_BIT);
+#else
   glClearDepthf(d);
   glClear(GL_DEPTH_BUFFER_BIT);
+#endif
 }
 
 void clearBuffer(int buffer, float r, float g, float b, float a) {

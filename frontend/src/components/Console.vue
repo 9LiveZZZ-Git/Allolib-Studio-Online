@@ -19,6 +19,7 @@ watch(() => props.output.length, async () => {
 <template>
   <div
     ref="consoleRef"
+    data-testid="console-output"
     class="h-full overflow-auto p-3 font-mono text-sm bg-editor-bg"
   >
     <div v-if="output.length === 0" class="text-gray-500">

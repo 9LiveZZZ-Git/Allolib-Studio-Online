@@ -134,6 +134,7 @@
             :categoryColor="cat.color"
             :selected="obj.id === objectsStore.selectedObjectId"
             @select="objectsStore.selectObject(obj.id)"
+            @delete="handleDeleteObject(obj.id)"
           />
           <div v-if="objectsStore.objectList.length === 0" class="empty-section">
             No objects. Click + to add one.
@@ -396,6 +397,28 @@ const activeClipName = computed(() => {
 // Sync object selection with Parameter Panel
 watch(() => objectsStore.selectedObjectId, (objectId) => {
   if (objectId) {
+    // Get the object and register its parameters
+    const obj = objectsStore.getObject(objectId)
+    if (obj) {
+      // Register object with parameter system so it shows in the panel
+      parameterSystem.registerObject(objectId, {
+        objectId: obj.id,
+        objectName: obj.name,
+        transform: {
+          position: obj.transform.position as [number, number, number],
+          rotation: obj.transform.rotation as [number, number, number, number],
+          scale: obj.transform.scale as [number, number, number],
+        },
+        uniforms: {
+          colorR: { type: 'float', value: obj.material.color?.[0] ?? 1, min: 0, max: 1 },
+          colorG: { type: 'float', value: obj.material.color?.[1] ?? 1, min: 0, max: 1 },
+          colorB: { type: 'float', value: obj.material.color?.[2] ?? 1, min: 0, max: 1 },
+          colorA: { type: 'float', value: obj.material.color?.[3] ?? 1, min: 0, max: 1 },
+          metallic: { type: 'float', value: obj.material.metallic ?? 0.5, min: 0, max: 1 },
+          roughness: { type: 'float', value: obj.material.roughness ?? 0.5, min: 0, max: 1 },
+        }
+      })
+    }
     // Notify parameter system that an object is selected
     parameterSystem.setSelectedObject(objectId)
     console.log(`[Timeline] Object selected: ${objectId}`)
@@ -445,6 +468,18 @@ function handleAddTrack(category: TrackCategory) {
 
 function handleDeleteEventTrack(trackId: string) {
   eventsStore.removeTrack(trackId)
+}
+
+function handleDeleteObject(objectId: string) {
+  // Deselect if this is the selected object
+  if (objectsStore.selectedObjectId === objectId) {
+    objectsStore.selectObject(null)
+  }
+  // Unregister from parameter system
+  parameterSystem.unregisterObject(objectId)
+  // Remove from objects store
+  objectsStore.deleteObject(objectId)
+  console.log(`[Timeline] Deleted object: ${objectId}`)
 }
 
 function handleAddEvent(trackId: string, time: number) {

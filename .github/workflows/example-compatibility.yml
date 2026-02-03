@@ -1,0 +1,415 @@
+# AlloLib Studio Online - Example Compatibility Testing
+#
+# Tests ALL 150+ examples against both WebGL2 and WebGPU backends.
+# Generates detailed compatibility reports with error analysis.
+#
+# This workflow runs:
+# - On schedule (weekly)
+# - On manual dispatch
+# - On pushes that modify examples
+
+name: Example Compatibility
+
+on:
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: 'Backend to test'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - webgl2
+          - webgpu
+      filter:
+        description: 'Filter examples by regex (e.g., "particle|audio")'
+        required: false
+        type: string
+      parallel:
+        description: 'Number of parallel workers'
+        required: false
+        default: '1'
+        type: string
+
+  push:
+    branches: [main, develop]
+    paths:
+      - 'frontend/src/data/**'
+      - 'allolib-wasm/**'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================================================
+  # Setup and Build
+  # ============================================================================
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      example-count: ${{ steps.count.outputs.count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            tests/package-lock.json
+
+      - name: Count Examples
+        id: count
+        run: |
+          # Count unique example IDs from the examples files
+          count=$(grep -h "id: '" frontend/src/data/*.ts | wc -l)
+          echo "count=$count" >> $GITHUB_OUTPUT
+          echo "Found approximately $count examples"
+
+  # ============================================================================
+  # WebGL2 Compatibility Test
+  # ============================================================================
+  test-webgl2:
+    name: WebGL2 Examples
+    needs: setup
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.backend != 'webgpu' }}
+    timeout-minutes: 180 # 3 hours for 150+ examples
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+            tests/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          cd frontend && npm ci
+          cd ../backend && npm ci
+          cd ../tests && npm ci
+
+      - name: Install Playwright
+        working-directory: tests
+        run: npx playwright install chromium --with-deps
+
+      - name: Start Backend
+        working-directory: backend
+        run: |
+          npm run dev &
+          sleep 10
+        env:
+          REDIS_URL: redis://localhost:6379
+          PORT: 4000
+
+      - name: Start Frontend
+        working-directory: frontend
+        run: |
+          npm run dev &
+          sleep 10
+
+      - name: Wait for Services
+        run: |
+          timeout 60 bash -c 'until curl -s http://localhost:5173 > /dev/null; do sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:4000/health > /dev/null; do sleep 2; done'
+
+      - name: Run WebGL2 Example Tests
+        working-directory: tests
+        run: |
+          npx ts-node scripts/test-all-examples.ts \
+            --backend webgl2 \
+            --parallel ${{ github.event.inputs.parallel || '1' }} \
+            ${{ github.event.inputs.filter && format('--filter "{0}"', github.event.inputs.filter) || '' }}
+        env:
+          TEST_URL: http://localhost:5173
+          BACKEND_URL: http://localhost:4000
+
+      - name: Upload WebGL2 Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgl2-example-report
+          path: |
+            test-results/examples/webgl2-*.json
+            test-results/examples/webgl2-*.md
+            test-results/examples/screenshots/webgl2/
+          retention-days: 30
+
+  # ============================================================================
+  # WebGPU Compatibility Test
+  # ============================================================================
+  test-webgpu:
+    name: WebGPU Examples
+    needs: setup
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.backend != 'webgl2' }}
+    timeout-minutes: 180
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Dependencies
+        run: |
+          cd frontend && npm ci
+          cd ../backend && npm ci
+          cd ../tests && npm ci
+
+      - name: Install Playwright
+        working-directory: tests
+        run: npx playwright install chromium --with-deps
+
+      - name: Start Services
+        run: |
+          cd backend && npm run dev &
+          cd frontend && npm run dev &
+          sleep 15
+        env:
+          REDIS_URL: redis://localhost:6379
+
+      - name: Run WebGPU Example Tests
+        working-directory: tests
+        run: |
+          npx ts-node scripts/test-all-examples.ts \
+            --backend webgpu \
+            --parallel 1
+        env:
+          TEST_URL: http://localhost:5173
+        continue-on-error: true # WebGPU may have failures
+
+      - name: Upload WebGPU Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgpu-example-report
+          path: |
+            test-results/examples/webgpu-*.json
+            test-results/examples/webgpu-*.md
+            test-results/examples/screenshots/webgpu/
+          retention-days: 30
+
+  # ============================================================================
+  # Generate Combined Report
+  # ============================================================================
+  report:
+    name: Generate Report
+    needs: [test-webgl2, test-webgpu]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Generate Combined Report
+        run: |
+          node << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
+
+          const reportsDir = 'reports';
+          const outputDir = 'combined-report';
+          fs.mkdirSync(outputDir, { recursive: true });
+
+          let webgl2Report = null;
+          let webgpuReport = null;
+
+          // Find and load reports
+          function findReports(dir) {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                findReports(fullPath);
+              } else if (entry.name === 'webgl2-compatibility.json') {
+                webgl2Report = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+              } else if (entry.name === 'webgpu-compatibility.json') {
+                webgpuReport = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+              }
+            }
+          }
+          findReports(reportsDir);
+
+          // Generate summary
+          const lines = [];
+          lines.push('# Example Compatibility Summary');
+          lines.push('');
+          lines.push(`Generated: ${new Date().toISOString()}`);
+          lines.push('');
+
+          lines.push('## Overall Results');
+          lines.push('');
+          lines.push('| Backend | Total | Passed | Failed | Pass Rate |');
+          lines.push('|---------|-------|--------|--------|-----------|');
+
+          if (webgl2Report) {
+            lines.push(`| WebGL2 | ${webgl2Report.totalExamples} | ${webgl2Report.passed} | ${webgl2Report.failed} | ${webgl2Report.passRate} |`);
+          }
+          if (webgpuReport) {
+            lines.push(`| WebGPU | ${webgpuReport.totalExamples} | ${webgpuReport.passed} | ${webgpuReport.failed} | ${webgpuReport.passRate} |`);
+          }
+          lines.push('');
+
+          // Failure comparison
+          if (webgl2Report && webgpuReport) {
+            const webgl2Failed = new Set(webgl2Report.results.filter(r => r.status !== 'passed').map(r => r.id));
+            const webgpuFailed = new Set(webgpuReport.results.filter(r => r.status !== 'passed').map(r => r.id));
+
+            const failBoth = [...webgl2Failed].filter(x => webgpuFailed.has(x));
+            const failWebgl2Only = [...webgl2Failed].filter(x => !webgpuFailed.has(x));
+            const failWebgpuOnly = [...webgpuFailed].filter(x => !webgl2Failed.has(x));
+
+            lines.push('## Failure Analysis');
+            lines.push('');
+            lines.push(`- **Fail on both backends:** ${failBoth.length} examples`);
+            lines.push(`- **Fail WebGL2 only:** ${failWebgl2Only.length} examples`);
+            lines.push(`- **Fail WebGPU only:** ${failWebgpuOnly.length} examples`);
+            lines.push('');
+
+            if (failBoth.length > 0) {
+              lines.push('### Examples failing on both backends');
+              lines.push('');
+              lines.push('These need the most attention:');
+              lines.push('');
+              for (const id of failBoth.slice(0, 20)) {
+                const r = webgl2Report.results.find(r => r.id === id);
+                lines.push(`- **${id}**: ${r?.failureCategory || 'Unknown'}`);
+              }
+              if (failBoth.length > 20) {
+                lines.push(`- ... and ${failBoth.length - 20} more`);
+              }
+              lines.push('');
+            }
+          }
+
+          lines.push('---');
+          lines.push('');
+          lines.push('See individual backend reports for detailed results.');
+
+          fs.writeFileSync(path.join(outputDir, 'summary.md'), lines.join('\n'));
+          console.log('Combined report generated');
+          EOF
+
+      - name: Upload Combined Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-compatibility-report
+          path: combined-report/
+          retention-days: 90
+
+      - name: Post Summary to Job
+        run: |
+          if [ -f combined-report/summary.md ]; then
+            cat combined-report/summary.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ============================================================================
+  # Create Issue for Failures
+  # ============================================================================
+  create-issue:
+    name: Track Failures
+    needs: report
+    runs-on: ubuntu-latest
+    if: failure()
+
+    steps:
+      - name: Download Report
+        uses: actions/download-artifact@v4
+        with:
+          name: example-compatibility-report
+          path: report
+
+      - name: Create or Update Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let summary = 'Example compatibility test failed. Check workflow artifacts for details.';
+            try {
+              summary = fs.readFileSync('report/summary.md', 'utf8');
+            } catch (e) {}
+
+            const title = `📊 Example Compatibility Report - ${new Date().toISOString().split('T')[0]}`;
+
+            // Check for existing issue
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'example-compatibility'
+            });
+
+            const body = `## Automated Example Compatibility Report\n\n${summary}\n\n---\n*Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+
+            if (issues.length > 0) {
+              // Update existing issue
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                body: body
+              });
+              console.log(`Updated issue #${issues[0].number}`);
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['example-compatibility', 'automated']
+              });
+              console.log('Created new issue');
+            }

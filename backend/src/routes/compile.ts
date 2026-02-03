@@ -6,6 +6,7 @@ import {
   getJob,
   getCompiledFile,
   cleanupJob,
+  BackendType,
 } from '../services/compiler.js'
 
 export const compileRouter = Router()
@@ -20,16 +21,21 @@ const FileSchema = z.object({
   content: z.string().max(100000),
 })
 
+// Backend type schema
+const BackendSchema = z.enum(['webgl2', 'webgpu']).default('webgl2')
+
 // New multi-file request schema
 const MultiFileRequestSchema = z.object({
   files: z.array(FileSchema).min(1).max(20),
   mainFile: z.string().default('main.cpp'),
+  backend: BackendSchema,
 })
 
 // Legacy single-file request schema (for backward compatibility)
 const LegacyRequestSchema = z.object({
   source: z.string().min(1).max(100000),
   filename: z.string().default('main.cpp'),
+  backend: BackendSchema,
 })
 
 // Submit compilation request
@@ -37,6 +43,7 @@ compileRouter.post('/', async (req: Request, res: Response) => {
   try {
     let files: Array<{ name: string; content: string }>
     let mainFile: string
+    let backend: BackendType
 
     // Check if this is a multi-file or legacy request
     if (req.body.files) {
@@ -44,21 +51,24 @@ compileRouter.post('/', async (req: Request, res: Response) => {
       const parsed = MultiFileRequestSchema.parse(req.body)
       files = parsed.files
       mainFile = parsed.mainFile
-      logger.info(`Multi-file compilation requested: ${files.length} files, main: ${mainFile}`)
+      backend = parsed.backend as BackendType
+      logger.info(`Multi-file compilation requested: ${files.length} files, main: ${mainFile}, backend: ${backend}`)
     } else {
       // Legacy single-file request
       const parsed = LegacyRequestSchema.parse(req.body)
       files = [{ name: parsed.filename, content: parsed.source }]
       mainFile = parsed.filename
-      logger.info(`Single-file compilation requested: ${mainFile}`)
+      backend = parsed.backend as BackendType
+      logger.info(`Single-file compilation requested: ${mainFile}, backend: ${backend}`)
     }
 
-    const job = await createCompilationJob(files, mainFile)
+    const job = await createCompilationJob(files, mainFile, backend)
 
     res.json({
       success: true,
       jobId: job.id,
       status: job.status,
+      backend: job.backend,
       message: 'Compilation started',
     })
   } catch (error) {
@@ -96,6 +106,7 @@ compileRouter.get('/status/:jobId', (req: Request, res: Response) => {
     success: true,
     jobId: job.id,
     status: job.status,
+    backend: job.backend,
     createdAt: job.createdAt,
     completedAt: job.completedAt,
     result: job.result,

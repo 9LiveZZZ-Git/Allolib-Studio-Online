@@ -11,11 +11,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { parameterSystem, ParameterType, type Parameter, type ParameterGroup } from '@/utils/parameter-system'
 import { useProjectStore } from '@/stores/project'
 import { useSequencerStore } from '@/stores/sequencer'
-import SequencerToolbar from './sequencer/SequencerToolbar.vue'
-import SequencerSidebar from './sequencer/SequencerSidebar.vue'
-import ClipTimeline from './sequencer/ClipTimeline.vue'
-import SequencerTimeline from './sequencer/SequencerTimeline.vue'
-import ToneLattice from './sequencer/ToneLattice.vue'
+import TimelinePanel from './timeline/TimelinePanel.vue'
 
 const props = defineProps<{
   isRunning: boolean
@@ -105,29 +101,7 @@ const hasParameters = computed(() => parameterSystem.count > 0)
 let paramUnsubscribe: (() => void) | null = null
 
 // Main tab state - switches to 'params' when parameters appear
-const activeTab = ref<'audio' | 'video' | 'params' | 'sequencer'>('audio')
-
-const sequencerStore = useSequencerStore()
-const projectStore2 = useProjectStore()
-const showSeqSidebar = ref(false)
-
-// Sequencer file operations (for inline toolbar)
-function handleSeqOpenFile(filePath: string) {
-  const file = projectStore2.project.files.find(f => f.path === filePath)
-  if (file) {
-    sequencerStore.loadFromSynthSequence(file.content, filePath)
-  }
-}
-function handleSeqSaveFile() {
-  if (!sequencerStore.currentFilePath) return
-  const content = sequencerStore.exportToSynthSequence()
-  const file = projectStore2.project.files.find(f => f.path === sequencerStore.currentFilePath)
-  if (file) {
-    file.content = content
-    file.isDirty = true
-    file.updatedAt = Date.now()
-  }
-}
+const activeTab = ref<'audio' | 'video' | 'params' | 'timeline'>('audio')
 
 // Audio sub-view state
 const audioView = ref<'waveform' | 'spectrum' | 'stereo'>('stereo')
@@ -1336,15 +1310,15 @@ onBeforeUnmount(() => {
             <span v-if="hasParameters" class="ml-1 text-[10px] opacity-70">({{ parameterSystem.count }})</span>
           </button>
           <button
-            @click="activeTab = 'sequencer'"
+            @click="activeTab = 'timeline'"
             :class="[
               'px-2 py-0.5 text-xs rounded transition-colors',
-              activeTab === 'sequencer'
+              activeTab === 'timeline'
                 ? 'bg-allolib-blue text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-700'
             ]"
           >
-            Sequencer
+            Timeline
           </button>
           <button
             @click="activeTab = 'audio'"
@@ -1761,25 +1735,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Sequencer Content -->
-    <div v-show="activeTab === 'sequencer'" class="flex-1 flex flex-col overflow-hidden">
-      <SequencerToolbar
-        :show-sidebar="showSeqSidebar"
-        @toggle-sidebar="showSeqSidebar = !showSeqSidebar"
-        @open-file="handleSeqOpenFile"
-        @save-file="handleSeqSaveFile"
-      />
-      <div class="flex-1 flex min-h-0 overflow-hidden">
-        <ClipTimeline v-if="sequencerStore.viewMode === 'clipTimeline'" class="flex-1 min-w-0" />
-        <SequencerTimeline v-else-if="sequencerStore.viewMode === 'frequencyRoll'" class="flex-1 min-w-0" />
-        <ToneLattice v-else class="flex-1 min-w-0" />
-
-        <SequencerSidebar
-          v-if="showSeqSidebar"
-          class="w-52 shrink-0 border-l border-editor-border"
-        />
-      </div>
+    <!-- Timeline Content (Unified Timeline) -->
+    <div v-show="activeTab === 'timeline'" class="flex-1 flex flex-col overflow-hidden">
+      <TimelinePanel class="flex-1" />
     </div>
+
   </div>
 </template>
 

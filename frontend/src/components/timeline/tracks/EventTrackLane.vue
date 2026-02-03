@@ -40,18 +40,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useTimelineStore } from '@/stores/timeline'
-
-interface EventTrack {
-  id: string
-  name: string
-  type: string
-  events?: Array<{
-    id: string
-    time: number
-    duration?: number
-    data?: any
-  }>
-}
+import { useSequencerStore } from '@/stores/sequencer'
+import type { EventTrack, TimelineEvent } from '@/stores/events'
 
 const props = defineProps<{
   track: EventTrack
@@ -67,6 +57,7 @@ const emit = defineEmits<{
 }>()
 
 const timeline = useTimelineStore()
+const sequencer = useSequencerStore()
 
 const contentRef = ref<HTMLElement>()
 const canvasRef = ref<HTMLCanvasElement>()
@@ -91,7 +82,13 @@ function handleDoubleClick(e: MouseEvent) {
   if (!rect) return
 
   const x = e.clientX - rect.left
-  const time = (x + props.scrollX) / props.zoom
+  let time = (x + props.scrollX) / props.zoom
+
+  // Apply snap if not 'none'
+  if (sequencer.snapMode !== 'none') {
+    time = timeline.snapTime(time)
+  }
+
   emit('add-event', Math.max(0, Math.min(time, timeline.duration)))
 }
 

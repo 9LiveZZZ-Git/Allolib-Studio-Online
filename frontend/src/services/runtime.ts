@@ -178,33 +178,73 @@ export class AllolibRuntime {
       let gl: WebGL2RenderingContext | null = null
 
       if (useWebGPU) {
-        // For WebGPU, we need a fresh canvas without any GL context
-        // Replace the existing canvas with a new one to ensure it's clean
-        this.onPrint('[Backend] Creating fresh canvas for WebGPU...')
-        const parent = this.canvas.parentElement
-        const oldCanvas = this.canvas
+        // For WebGPU, we need a canvas without any GL context
+        // Replace if this canvas has a GL context (switching from WebGL2)
+        const hasGLContext = !!(this.canvas as any).__hasGLContext
 
-        // Create new canvas with same attributes
-        const newCanvas = document.createElement('canvas')
-        // Ensure we always have an ID for the canvas (fallback to 'canvas' if none)
-        newCanvas.id = oldCanvas.id || 'canvas'
-        newCanvas.className = oldCanvas.className
-        newCanvas.style.cssText = oldCanvas.style.cssText
-        newCanvas.width = oldCanvas.width
-        newCanvas.height = oldCanvas.height
+        if (hasGLContext) {
+          this.onPrint('[Backend] Canvas has GL context, creating fresh canvas for WebGPU...')
+          const parent = this.canvas.parentElement
+          const oldCanvas = this.canvas
 
-        // Replace old canvas in DOM
-        if (parent) {
-          parent.replaceChild(newCanvas, oldCanvas)
-          this.canvas = newCanvas
+          // Create new canvas with same attributes
+          const newCanvas = document.createElement('canvas')
+          newCanvas.id = oldCanvas.id || 'canvas'
+          newCanvas.className = oldCanvas.className
+          newCanvas.style.cssText = oldCanvas.style.cssText
+          newCanvas.width = oldCanvas.width
+          newCanvas.height = oldCanvas.height
 
-          // Also update any global references
-          // This ensures Emscripten's Module.canvas points to the new canvas
-          ;(window as any).__alloCanvas = newCanvas
+          // Clear flags on old canvas
+          ;(oldCanvas as any).__hasGLContext = false
 
-          this.onPrint(`[Backend] Fresh canvas created for WebGPU (id=${newCanvas.id})`)
+          // Replace old canvas in DOM
+          if (parent) {
+            parent.replaceChild(newCanvas, oldCanvas)
+            this.canvas = newCanvas
+            ;(window as any).__alloCanvas = newCanvas
+            this.onPrint(`[Backend] Fresh canvas created for WebGPU (id=${newCanvas.id})`)
+          }
+        } else {
+          this.onPrint('[Backend] Reusing existing canvas for WebGPU')
         }
+        // Mark canvas as WebGPU
+        ;(this.canvas as any).__hasGLContext = false
+        ;(this.canvas as any).__isWebGPU = true
+        ;(window as any).__canvasIsWebGPU = this.canvas
       } else {
+        // For WebGL2, we need a canvas without WebGPU context
+        // Replace if this canvas was used for WebGPU
+        const isWebGPUCanvas = !!(this.canvas as any).__isWebGPU
+
+        if (isWebGPUCanvas) {
+          this.onPrint('[Backend] Canvas has WebGPU context, creating fresh canvas for WebGL2...')
+          const parent = this.canvas.parentElement
+          const oldCanvas = this.canvas
+
+          // Create new canvas with same attributes
+          const newCanvas = document.createElement('canvas')
+          newCanvas.id = oldCanvas.id || 'canvas'
+          newCanvas.className = oldCanvas.className
+          newCanvas.style.cssText = oldCanvas.style.cssText
+          newCanvas.width = oldCanvas.width
+          newCanvas.height = oldCanvas.height
+
+          // Clear flags on old canvas
+          ;(oldCanvas as any).__isWebGPU = false
+
+          // Replace old canvas in DOM
+          if (parent) {
+            parent.replaceChild(newCanvas, oldCanvas)
+            this.canvas = newCanvas
+            ;(window as any).__alloCanvas = newCanvas
+            this.onPrint(`[Backend] Fresh canvas created for WebGL2 (id=${newCanvas.id})`)
+          }
+        }
+        // Mark canvas as WebGL2
+        ;(this.canvas as any).__hasGLContext = true
+        ;(this.canvas as any).__isWebGPU = false
+        ;(window as any).__canvasIsWebGPU = null
         gl = this.canvas.getContext('webgl2', {
           preserveDrawingBuffer: true,  // Required for toDataURL() screenshots
           alpha: true,
@@ -274,6 +314,12 @@ export class AllolibRuntime {
       window.Module = this.module
       // Also store for other systems that need it
       ;(window as any).__alloWasmModule = this.module
+
+      // Configure WebGPU canvas context AFTER module loads
+      // The WebGPU backend expects Module._webgpuCanvasContext to be set
+      if (useWebGPU && webgpuDevice) {
+        await this.configureWebGPUCanvas(webgpuDevice)
+      }
 
       this.onPrint('[SUCCESS] AlloLib WASM module loaded')
     } catch (error) {
@@ -550,6 +596,60 @@ export class AllolibRuntime {
     }
   }
 
+  /**
+   * Configure the WebGPU canvas context for rendering.
+   * This MUST be called after the WASM module loads but before rendering starts.
+   * The WebGPU backend's beginFrame() expects Module._webgpuCanvasContext to be set.
+   */
+  private async configureWebGPUCanvas(device: GPUDevice): Promise<void> {
+    try {
+      this.onPrint('[WebGPU] Configuring canvas context...')
+
+      // Get the canvas element
+      const canvas = this.canvas
+      if (!canvas) {
+        this.onError('[WebGPU] No canvas element available!')
+        return
+      }
+
+      // Get WebGPU context from canvas
+      const context = canvas.getContext('webgpu') as GPUCanvasContext | null
+      if (!context) {
+        this.onError('[WebGPU] Failed to get WebGPU context from canvas!')
+        return
+      }
+
+      // Get preferred canvas format
+      const format = navigator.gpu.getPreferredCanvasFormat()
+      this.onPrint(`[WebGPU] Using format: ${format}`)
+
+      // Configure the context
+      context.configure({
+        device: device,
+        format: format,
+        alphaMode: 'premultiplied',
+      })
+
+      // Store the context in Module for the WASM WebGPU backend to use
+      // The backend's beginFrame() calls Module._webgpuCanvasContext.getCurrentTexture()
+      if (this.module) {
+        ;(this.module as any)._webgpuCanvasContext = context
+        ;(this.module as any)._webgpuDevice = device
+        ;(this.module as any)._webgpuFormat = format
+      }
+
+      // Also store globally for debugging
+      ;(window as any).__webgpuCanvasContext = context
+      ;(window as any).__webgpuDevice = device
+
+      this.onPrint('[WebGPU] Canvas context configured successfully!')
+      console.log('[WebGPU] Context stored in Module._webgpuCanvasContext')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onError(`[WebGPU] Failed to configure canvas: ${message}`)
+    }
+  }
+
   start(): void {
     if (!this.module) {
       this.onError('[ERROR] No module loaded')
@@ -673,11 +773,15 @@ export class AllolibRuntime {
       window.alloWorkletNode = null
     }
 
-    // Clear the canvas
-    const gl = this.canvas.getContext('webgl2')
-    if (gl) {
-      gl.clearColor(0.1, 0.1, 0.1, 1.0)
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    // Clear the canvas (only for WebGL2 mode)
+    // Don't try to get WebGL2 context on a WebGPU canvas
+    const isWebGPU = !!(this.canvas as any).__isWebGPU
+    if (!isWebGPU && (this.canvas as any).__hasGLContext) {
+      const gl = this.canvas.getContext('webgl2')
+      if (gl) {
+        gl.clearColor(0.1, 0.1, 0.1, 1.0)
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+      }
     }
 
     this.onPrint('[INFO] Application stopped')
@@ -706,11 +810,19 @@ export class AllolibRuntime {
       this.canvas.width = width
       this.canvas.height = height
 
-      // Update viewport if we have a context
-      const gl = this.canvas.getContext('webgl2')
-      if (gl) {
-        gl.viewport(0, 0, width, height)
+      // Only update GL viewport if we're running and NOT in WebGPU mode
+      // IMPORTANT: Don't call getContext() before load() - it would create a
+      // WebGL context and prevent WebGPU from working on this canvas
+      if (this.isRunning) {
+        const isWebGPU = !!(this.canvas as any).__isWebGPU
+        if (!isWebGPU && (this.canvas as any).__hasGLContext) {
+          const gl = this.canvas.getContext('webgl2')
+          if (gl) {
+            gl.viewport(0, 0, width, height)
+          }
+        }
       }
+      // For WebGPU, the backend handles viewport via the resize callback
     }
   }
 
@@ -758,6 +870,13 @@ export class AllolibRuntime {
 
   getModule(): WasmModule | null {
     return this.module
+  }
+
+  /**
+   * Get the current canvas element (may differ from original if replaced for WebGPU)
+   */
+  getCanvas(): HTMLCanvasElement {
+    return this.canvas
   }
 
   /**

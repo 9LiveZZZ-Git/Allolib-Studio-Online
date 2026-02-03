@@ -360,14 +360,6 @@ void WebApp::tick(double dt) {
         // Clear the screen
         mGraphics->clear(0.1f, 0.1f, 0.1f);
 
-        // Set point size uniform for WebGL2 (glPointSize doesn't work)
-        // This needs to be set on active shaders - done via gl::pointSize storing the value
-        // The shader reads al_PointSize uniform which defaults to stored value
-        float pointSize = gl::getPointSize();
-        if (pointSize > 0.0f) {
-            mGraphics->shader().uniform("al_PointSize", pointSize);
-        }
-
         // Call user's onDraw
         onDraw(*mGraphics);
     }

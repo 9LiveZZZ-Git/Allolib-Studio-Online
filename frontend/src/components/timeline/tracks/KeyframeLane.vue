@@ -93,6 +93,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useTimelineStore } from '@/stores/timeline'
+import { useSequencerStore } from '@/stores/sequencer'
 
 export type EasingType =
   | 'linear'
@@ -136,6 +138,9 @@ const emit = defineEmits<{
   (e: 'edit-curve', keyframe: Keyframe, nextKeyframe: Keyframe | null): void
 }>()
 
+const timeline = useTimelineStore()
+const sequencer = useSequencerStore()
+
 const laneRef = ref<HTMLElement>()
 const curveCanvas = ref<HTMLCanvasElement>()
 const selectedTimes = ref<Set<number>>(new Set())
@@ -177,7 +182,11 @@ function timeFromX(clientX: number): number {
 }
 
 function handleDoubleClick(e: MouseEvent) {
-  const time = timeFromX(e.clientX)
+  let time = timeFromX(e.clientX)
+  // Apply snap if not 'none'
+  if (sequencer.snapMode !== 'none') {
+    time = timeline.snapTime(time)
+  }
   emit('add', time)
 }
 
@@ -233,7 +242,12 @@ function stopDragKeyframe(e: MouseEvent) {
   if (draggingKeyframe.value) {
     const deltaX = e.clientX - dragStartX.value
     const deltaTime = deltaX / props.zoom
-    const newTime = Math.max(0, Math.min(dragStartTime.value + deltaTime, props.duration))
+    let newTime = Math.max(0, Math.min(dragStartTime.value + deltaTime, props.duration))
+
+    // Apply snap if not 'none'
+    if (sequencer.snapMode !== 'none') {
+      newTime = timeline.snapTime(newTime)
+    }
 
     if (Math.abs(newTime - dragStartTime.value) > 0.01) {
       emit('move', dragStartTime.value, newTime)

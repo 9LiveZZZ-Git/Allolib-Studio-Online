@@ -1,5 +1,7 @@
 const API_BASE = '/api/compile'
 
+export type BackendType = 'webgl2' | 'webgpu'
+
 export interface ProjectFile {
   name: string
   content: string
@@ -8,12 +10,14 @@ export interface ProjectFile {
 export interface CompilationRequest {
   files: ProjectFile[]
   mainFile?: string
+  backend?: BackendType
 }
 
 export interface CompilationResponse {
   success: boolean
   jobId: string
   status: string
+  backend?: BackendType
   message?: string
   error?: string
 }
@@ -22,6 +26,7 @@ export interface JobStatusResponse {
   success: boolean
   jobId: string
   status: 'pending' | 'compiling' | 'completed' | 'failed'
+  backend?: BackendType
   createdAt: string
   completedAt?: string
   result?: {
@@ -31,6 +36,7 @@ export interface JobStatusResponse {
     errors?: string[]
     warnings?: string[]
     duration?: number
+    backend?: BackendType
   }
 }
 
@@ -46,6 +52,7 @@ export async function submitCompilation(request: CompilationRequest): Promise<Co
     body: JSON.stringify({
       files: request.files,
       mainFile: request.mainFile || 'main.cpp',
+      backend: request.backend || 'webgl2',
     }),
   })
 

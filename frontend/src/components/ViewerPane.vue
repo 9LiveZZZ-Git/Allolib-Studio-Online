@@ -9,6 +9,20 @@ import PopoutVisualizer from './PopoutVisualizer.vue'
 const settings = useSettingsStore()
 const isStudioFocus = computed(() => settings.display.studioFocus)
 
+// Get the active graphics backend (from runtime if available, otherwise from settings)
+const activeBackend = computed(() => {
+  // Check if runtime has set the actual backend (set by runtime.ts)
+  const runtimeBackend = (window as any).alloBackendType
+  if (runtimeBackend) {
+    return runtimeBackend === 'webgpu' ? 'WebGPU' : 'WebGL2'
+  }
+  // Fall back to settings
+  const setting = settings.graphics.backendType
+  if (setting === 'webgpu') return 'WebGPU'
+  if (setting === 'auto') return 'Auto'
+  return 'WebGL2'
+})
+
 const props = defineProps<{
   status: AppStatus
   jsUrl: string | null
@@ -127,6 +141,17 @@ watch(() => props.jsUrl, async (newUrl) => {
       // Load and start
       await runtime.load(newUrl)
       runtime.start()
+
+      // Expose runtime for E2E testing
+      ;(window as any).__alloRuntime = runtime
+
+      // Update canvas ref in case it was replaced (WebGPU mode)
+      const currentCanvas = runtime.getCanvas()
+      if (currentCanvas !== canvasRef.value) {
+        console.log('[ViewerPane] Canvas was replaced, updating ref')
+        canvasRef.value = currentCanvas
+      }
+
       emit('started', runtime)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -337,7 +362,7 @@ function setupPopoutWindow(win: Window) {
       <div class="flex items-center gap-3">
         <span class="text-xs flex items-center gap-1">
           <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
-          WebGL2
+          {{ activeBackend }}
         </span>
         <span class="text-xs flex items-center gap-1">
           <span class="w-2 h-2 rounded-full" :class="status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
@@ -403,6 +428,7 @@ function setupPopoutWindow(win: Window) {
       <div ref="containerRef" class="flex-1 relative overflow-hidden">
       <canvas
         id="canvas"
+        data-testid="canvas"
         ref="canvasRef"
         class="absolute inset-0 w-full h-full cursor-pointer"
       />

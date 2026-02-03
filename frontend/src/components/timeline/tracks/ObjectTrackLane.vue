@@ -53,6 +53,16 @@
             />
           </svg>
         </button>
+        <button
+          class="ctrl-btn delete-btn"
+          @click.stop="$emit('delete')"
+          title="Delete object"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <line x1="3" y1="3" x2="9" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <line x1="9" y1="3" x2="3" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -79,6 +89,7 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'select'): void
+  (e: 'delete'): void
 }>()
 
 const objectsStore = useObjectsStore()
@@ -330,6 +341,12 @@ watch([
   background: rgba(99, 179, 237, 0.3);
   border-color: rgba(99, 179, 237, 0.5);
   color: #63B3ED;
+}
+
+.ctrl-btn.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #EF4444;
 }
 
 .track-content {

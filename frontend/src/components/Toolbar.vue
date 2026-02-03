@@ -543,6 +543,7 @@ function getPlatformBadgeClass(platform: string) {
     <!-- Run/Stop Button with dropdown -->
     <div class="relative flex" v-if="status === 'idle' || status === 'error'">
       <button
+        data-testid="run-button"
         class="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded-l text-sm font-medium transition-colors flex items-center gap-2"
         @click="emit('run')"
       >

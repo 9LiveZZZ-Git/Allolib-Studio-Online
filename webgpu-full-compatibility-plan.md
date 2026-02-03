@@ -73,12 +73,28 @@ These examples use **custom GLSL shaders** which cannot be automatically transpi
 
 ---
 
-### Phase 2: Full Lighting System (Enables ~10 examples)
-**Files to modify:**
-- `al_WebGPUBackend.hpp` - Add light uniform buffer
-- `al_WebGPUBackend.cpp` - Implement light management
-- `shaders/wgsl/lighting.vert.wgsl` - Already exists
-- `shaders/wgsl/lighting.frag.wgsl` - Already exists
+### Phase 2: Full Lighting System (Enables ~10 examples) ⚠️ NEEDS REDO
+**Status:** Initial implementation complete but requires rework. The WebGL2 lighting was fixed (bypassing GLAD for Emscripten GL calls), but WebGPU lighting pipeline needs to be reimplemented to match.
+
+**TODO:**
+- [ ] Reimplement WebGPU lighting uniforms and bind groups
+- [ ] Ensure normal matrix is properly computed and passed
+- [ ] Test multi-light scenarios
+- [ ] Verify material properties work correctly
+
+**Files modified:**
+- `al_WebGPUBackend.hpp` - Added LightData, MaterialData, LightingUniforms structs; lighting shader handle; API methods
+- `al_WebGPUBackend.cpp` - Implemented createLightingShader(), updateLightingBindGroup(), flushLightingUniforms(); lighting API; shader selection in draw()
+- `al_Graphics_Web.cpp` - Added syncLightingToBackend() helper; modified drawMeshWithWebGPU() to pass lighting data
+- `al/graphics/al_Graphics.hpp` (patched) - Added numLights(), getLight(), isLightOn(), getMaterial() accessors
+
+**Implementation approach:**
+- Lighting shader uses two bind groups: uniforms (with normalMatrix) + lighting uniforms
+- Graphics bridge syncs Light/Material data to WebGPU backend before each draw
+- Normal matrix computed from modelView inverse transpose
+- Uniform buffer layout dynamically adjusts offsets when lighting is enabled
+
+**Lines added:** ~350
 
 **Uniform buffer layout (matches existing WGSL shader):**
 ```wgsl
@@ -234,7 +250,7 @@ LOD switching is done on CPU based on distance. The GPU just renders whichever m
 | Phase | Feature | Examples Enabled | Est. Lines | Cumulative | Status |
 |-------|---------|------------------|------------|------------|--------|
 | 1 | 2D Textures | 15 | 250 | 250 | ✅ DONE |
-| 2 | Full Lighting | 10 | 250 | 500 | Pending |
+| 2 | Full Lighting | 10 | 350 | 600 | ⚠️ NEEDS REDO |
 | 3 | EasyFBO | 5 | 150 | 650 | Pending |
 | 4 | Cubemaps/Skybox | 8 | 180 | 830 | Pending |
 | 5 | WebPBR | 12 | 300 | 1130 | Pending |
@@ -242,7 +258,7 @@ LOD switching is done on CPU based on distance. The GPU just renders whichever m
 | 7 | ProceduralTexture | 4 | 100 | 1430 | Pending |
 | 8 | LOD System | 4 | 50 | 1480 | Pending |
 
-**Total: ~1,480 lines of new code (250 complete)**
+**Total: ~1,480 lines of new code (600 complete)**
 
 ---
 

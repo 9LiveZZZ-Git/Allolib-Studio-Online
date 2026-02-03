@@ -12,9 +12,12 @@ import { useTimelineStore } from '@/stores/timeline'
 // ─── WASM Function Types ─────────────────────────────────────────────────────
 
 interface ObjectManagerWasm {
+  // Object creation/removal (JS → WASM)
   _al_obj_create: (idPtr: number, namePtr: number, primitivePtr: number) => number
   _al_obj_remove: (idPtr: number) => number
   _al_obj_clear: () => void
+
+  // Transform setters (JS → WASM)
   _al_obj_set_position: (idPtr: number, x: number, y: number, z: number) => void
   _al_obj_set_rotation: (idPtr: number, x: number, y: number, z: number, w: number) => void
   _al_obj_set_scale: (idPtr: number, x: number, y: number, z: number) => void
@@ -28,8 +31,38 @@ interface ObjectManagerWasm {
   _al_obj_count: () => number
   _al_obj_visible_count: () => number
 
+  // Object enumeration (WASM → JS) - for syncing C++ objects to timeline
+  _al_obj_get_id_by_index: (index: number) => number  // returns char*
+  _al_obj_get_name: (idPtr: number) => number         // returns char*
+  _al_obj_get_primitive: (idPtr: number) => number    // returns char*
+  _al_obj_get_material_type: (idPtr: number) => number // returns char*
+
+  // Transform getters (WASM → JS)
+  _al_obj_get_pos_x: (idPtr: number) => number
+  _al_obj_get_pos_y: (idPtr: number) => number
+  _al_obj_get_pos_z: (idPtr: number) => number
+  _al_obj_get_scale_x: (idPtr: number) => number
+  _al_obj_get_scale_y: (idPtr: number) => number
+  _al_obj_get_scale_z: (idPtr: number) => number
+  _al_obj_get_rot_x: (idPtr: number) => number
+  _al_obj_get_rot_y: (idPtr: number) => number
+  _al_obj_get_rot_z: (idPtr: number) => number
+  _al_obj_get_rot_w: (idPtr: number) => number
+
+  // Material getters (WASM → JS)
+  _al_obj_get_color_r: (idPtr: number) => number
+  _al_obj_get_color_g: (idPtr: number) => number
+  _al_obj_get_color_b: (idPtr: number) => number
+  _al_obj_get_color_a: (idPtr: number) => number
+  _al_obj_get_metallic: (idPtr: number) => number
+  _al_obj_get_roughness: (idPtr: number) => number
+  _al_obj_get_visible: (idPtr: number) => number
+  _al_obj_get_spawn_time: (idPtr: number) => number
+  _al_obj_get_destroy_time: (idPtr: number) => number
+
   // String helpers
   allocateUTF8: (str: string) => number
+  UTF8ToString: (ptr: number) => string
   _free: (ptr: number) => void
 }
 
@@ -55,19 +88,30 @@ class ObjectManagerBridge {
    * Connect to WASM module and stores
    */
   connect(wasmModule: any): void {
-    // Check if object manager functions are available
+    this.objectsStore = useObjectsStore()
+    this.timelineStore = useTimelineStore()
+
+    // Set up callback for C++ object registration (for future registrations)
+    this.setupObjectRegistrationCallback()
+
+    // ALWAYS process pending objects - these come from C++ registerTimelineObject()
+    // even if the full ObjectManager WASM bridge isn't available
+    this.processPendingObjects()
+
+    // Check if full object manager functions are available
     if (!this.hasObjectManagerFunctions(wasmModule)) {
-      console.log('[ObjectManagerBridge] WASM object manager not available (expected for basic apps)')
+      console.log('[ObjectManagerBridge] Full WASM object manager not available, but pending objects processed')
       return
     }
 
     this.wasmModule = wasmModule as ObjectManagerWasm
-    this.objectsStore = useObjectsStore()
-    this.timelineStore = useTimelineStore()
+    console.log('[ObjectManagerBridge] Connected to WASM with full ObjectManager support')
 
-    console.log('[ObjectManagerBridge] Connected to WASM')
+    // Also sync any objects FROM WASM to the store (C++ created objects)
+    // This populates the timeline with objects created in C++ code
+    this.syncFromWasmToStore()
 
-    // Initial sync of all existing objects
+    // Then sync any objects FROM store to WASM (UI created objects)
     this.syncAllObjects()
 
     // Watch for object changes
@@ -78,12 +122,112 @@ class ObjectManagerBridge {
   }
 
   /**
+   * Process objects that were registered during module initialization
+   * These are captured by the pre-init callback before we're connected
+   */
+  private processPendingObjects(): void {
+    if (!this.objectsStore) return
+
+    const pending = (window as any).__pendingTimelineObjects as Array<{
+      id: string
+      name: string
+      primitive: string
+      position: [number, number, number]
+      scale: [number, number, number]
+      color: [number, number, number, number]
+    }> | undefined
+
+    if (!pending || pending.length === 0) {
+      console.log('[ObjectManagerBridge] No pending objects to process')
+      return
+    }
+
+    console.log(`[ObjectManagerBridge] Processing ${pending.length} pending objects from onCreate()`)
+
+    for (const info of pending) {
+      this.addObjectToStore(info)
+    }
+
+    // Clear the pending list
+    ;(window as any).__pendingTimelineObjects = []
+  }
+
+  /**
+   * Add an object to the store (shared by pending and callback)
+   */
+  private addObjectToStore(info: {
+    id: string
+    name: string
+    primitive: string
+    position: [number, number, number]
+    scale: [number, number, number]
+    color: [number, number, number, number]
+  }): void {
+    if (!this.objectsStore) return
+
+    // Check if object already exists in store
+    if (this.objectsStore.objects.has(info.id)) {
+      console.log(`[ObjectManagerBridge] Object already in store: ${info.id}`)
+      return
+    }
+
+    // Add to store (this makes it appear in the timeline)
+    const sceneObject: SceneObject = {
+      id: info.id,
+      name: info.name,
+      visible: true,
+      locked: false,
+      transform: {
+        position: info.position,
+        rotation: [0, 0, 0, 1],  // Identity quaternion
+        scale: info.scale,
+      },
+      mesh: {
+        primitive: info.primitive as any || 'sphere',
+      },
+      material: {
+        type: 'basic',
+        color: info.color,
+        metallic: 0.0,
+        roughness: 0.5,
+      },
+    }
+
+    this.objectsStore.objects.set(info.id, sceneObject)
+    this.syncedObjects.add(info.id)
+
+    console.log(`[ObjectManagerBridge] Added to timeline: ${info.name} (${info.id})`)
+  }
+
+  /**
+   * Set up callback for when C++ code registers objects
+   * This handles objects registered AFTER module init (e.g., dynamically created)
+   */
+  private setupObjectRegistrationCallback(): void {
+    // Ensure window.allolib exists
+    if (typeof window !== 'undefined') {
+      (window as any).allolib = (window as any).allolib || {}
+
+      // Called when C++ code uses registerTimelineObject() after init
+      ;(window as any).allolib.onObjectRegistered = (info: {
+        id: string
+        name: string
+        primitive: string
+        position: [number, number, number]
+        scale: [number, number, number]
+        color: [number, number, number, number]
+      }) => {
+        console.log(`[ObjectManagerBridge] C++ registered object (post-init): ${info.name} (${info.id})`)
+        this.addObjectToStore(info)
+      }
+    }
+  }
+
+  /**
    * Disconnect from WASM
+   * This is called when loading a new project - clears all objects
    */
   disconnect(): void {
-    // Only do cleanup if we were actually connected
-    if (!this.wasmModule) return
-
     this.stopLifecycleLoop()
 
     for (const unwatch of this.unwatchFns) {
@@ -91,8 +235,28 @@ class ObjectManagerBridge {
     }
     this.unwatchFns = []
 
-    if (this.wasmModule._al_obj_clear) {
+    // Clear the object registration callback
+    if (typeof window !== 'undefined' && (window as any).allolib) {
+      (window as any).allolib.onObjectRegistered = null
+    }
+
+    // Clear pending objects queue
+    if (typeof window !== 'undefined') {
+      (window as any).__pendingTimelineObjects = []
+    }
+
+    // Clear WASM objects (if WASM bridge was connected)
+    if (this.wasmModule?._al_obj_clear) {
       this.wasmModule._al_obj_clear()
+    }
+
+    // Clear the objects store (timeline) - this resets for new project
+    // Do this even if wasmModule wasn't available
+    if (this.objectsStore) {
+      this.objectsStore.objects.clear()
+      this.objectsStore.keyframeCurves.clear()
+      this.objectsStore.selectObject(null)
+      console.log('[ObjectManagerBridge] Cleared objects store for new project')
     }
 
     this.wasmModule = null
@@ -104,21 +268,120 @@ class ObjectManagerBridge {
   }
 
   /**
+   * Sync objects FROM WASM to the ObjectsStore
+   * This populates the timeline with objects created in C++ code
+   */
+  private syncFromWasmToStore(): void {
+    if (!this.objectsStore || !this.wasmModule) return
+
+    // Check if enumeration functions are available
+    if (!this.wasmModule._al_obj_get_id_by_index) {
+      console.log('[ObjectManagerBridge] Object enumeration not available')
+      return
+    }
+
+    const count = this.wasmModule._al_obj_count()
+    if (count === 0) return
+
+    console.log(`[ObjectManagerBridge] Found ${count} C++ objects to sync to timeline`)
+
+    for (let i = 0; i < count; i++) {
+      const idPtr = this.wasmModule._al_obj_get_id_by_index(i)
+      const id = this.wasmModule.UTF8ToString(idPtr)
+
+      if (!id || this.objectsStore.objects.has(id)) {
+        // Skip empty IDs or objects already in store
+        continue
+      }
+
+      // Allocate ID string for subsequent calls
+      const idStrPtr = this.allocString(id)
+
+      // Get object info from WASM
+      const namePtr = this.wasmModule._al_obj_get_name(idStrPtr)
+      const name = this.wasmModule.UTF8ToString(namePtr)
+
+      const primitivePtr = this.wasmModule._al_obj_get_primitive(idStrPtr)
+      const primitive = this.wasmModule.UTF8ToString(primitivePtr)
+
+      const materialTypePtr = this.wasmModule._al_obj_get_material_type(idStrPtr)
+      const materialType = this.wasmModule.UTF8ToString(materialTypePtr)
+
+      // Get transform
+      const posX = this.wasmModule._al_obj_get_pos_x(idStrPtr)
+      const posY = this.wasmModule._al_obj_get_pos_y(idStrPtr)
+      const posZ = this.wasmModule._al_obj_get_pos_z(idStrPtr)
+
+      const scaleX = this.wasmModule._al_obj_get_scale_x(idStrPtr)
+      const scaleY = this.wasmModule._al_obj_get_scale_y(idStrPtr)
+      const scaleZ = this.wasmModule._al_obj_get_scale_z(idStrPtr)
+
+      const rotX = this.wasmModule._al_obj_get_rot_x(idStrPtr)
+      const rotY = this.wasmModule._al_obj_get_rot_y(idStrPtr)
+      const rotZ = this.wasmModule._al_obj_get_rot_z(idStrPtr)
+      const rotW = this.wasmModule._al_obj_get_rot_w(idStrPtr)
+
+      // Get material
+      const colorR = this.wasmModule._al_obj_get_color_r(idStrPtr)
+      const colorG = this.wasmModule._al_obj_get_color_g(idStrPtr)
+      const colorB = this.wasmModule._al_obj_get_color_b(idStrPtr)
+      const colorA = this.wasmModule._al_obj_get_color_a(idStrPtr)
+      const metallic = this.wasmModule._al_obj_get_metallic(idStrPtr)
+      const roughness = this.wasmModule._al_obj_get_roughness(idStrPtr)
+
+      // Get lifecycle
+      const visible = this.wasmModule._al_obj_get_visible(idStrPtr) !== 0
+      const spawnTime = this.wasmModule._al_obj_get_spawn_time(idStrPtr)
+      const destroyTime = this.wasmModule._al_obj_get_destroy_time(idStrPtr)
+
+      this.freeString(idStrPtr)
+
+      // Create object in store (this adds it to the timeline)
+      const sceneObject: SceneObject = {
+        id,
+        name: name || `Object ${i}`,
+        visible,
+        locked: false,
+        transform: {
+          position: [posX, posY, posZ],
+          rotation: [rotX, rotY, rotZ, rotW],
+          scale: [scaleX, scaleY, scaleZ],
+        },
+        mesh: {
+          primitive: primitive as any || 'cube',
+        },
+        material: {
+          type: materialType as any || 'basic',
+          color: [colorR, colorG, colorB, colorA],
+          metallic,
+          roughness,
+        },
+        spawnTime: spawnTime >= 0 ? spawnTime : undefined,
+        destroyTime: destroyTime >= 0 ? destroyTime : undefined,
+      }
+
+      // Add to store without syncing back to WASM (we already have it there)
+      this.objectsStore.objects.set(id, sceneObject)
+      this.syncedObjects.add(id)
+
+      console.log(`[ObjectManagerBridge] Synced C++ object to timeline: ${name} (${id})`)
+    }
+  }
+
+  /**
    * Sync all objects from store to WASM
    */
   private syncAllObjects(): void {
     if (!this.objectsStore || !this.wasmModule) return
 
-    // Clear WASM objects first
-    this.wasmModule._al_obj_clear()
-    this.syncedObjects.clear()
-
-    // Create all objects
+    // Only sync objects that aren't already in WASM
     for (const obj of this.objectsStore.objectList) {
-      this.createWasmObject(obj)
+      if (!this.syncedObjects.has(obj.id)) {
+        this.createWasmObject(obj)
+      }
     }
 
-    console.log(`[ObjectManagerBridge] Synced ${this.syncedObjects.size} objects`)
+    console.log(`[ObjectManagerBridge] Total synced objects: ${this.syncedObjects.size}`)
   }
 
   /**

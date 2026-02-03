@@ -5,7 +5,11 @@
   Contains the section header and a slot for track content.
 -->
 <template>
-  <div class="track-section" :class="{ collapsed, hidden: !visible }">
+  <div
+    class="track-section"
+    :class="{ collapsed, hidden: !visible, active }"
+    :style="{ '--section-color': color }"
+  >
     <SectionHeader
       :category="category"
       :label="label"
@@ -38,7 +42,7 @@ import { computed } from 'vue'
 import SectionHeader from './SectionHeader.vue'
 import type { TrackCategory } from '@/stores/timeline'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   category: TrackCategory
   label: string
   icon: string
@@ -49,7 +53,10 @@ const props = defineProps<{
   visible: boolean
   trackCount: number
   showAddButton?: boolean
-}>()
+  active?: boolean
+}>(), {
+  active: false,
+})
 
 defineEmits<{
   (e: 'toggle-collapse'): void
@@ -71,6 +78,10 @@ const contentStyle = computed(() => ({
 
 .track-section.hidden {
   display: none;
+}
+
+.track-section.active {
+  box-shadow: inset 3px 0 0 var(--section-color, #63B3ED);
 }
 
 .section-content {

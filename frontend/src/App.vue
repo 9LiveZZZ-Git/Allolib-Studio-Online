@@ -9,8 +9,10 @@ import Toolbar from './components/Toolbar.vue'
 import EditorPane from './components/EditorPane.vue'
 import ViewerPane from './components/ViewerPane.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
-import SequencerPanel from './components/SequencerPanel.vue'
+// SequencerPanel removed - sequencer is now integrated into Timeline tab
 import AssetLoadingTest from './components/AssetLoadingTest.vue'
+import ExportDialog from './components/ExportDialog.vue'
+import ImportDialog from './components/ImportDialog.vue'
 import { defaultCode } from '@/utils/monaco-config'
 import { isMultiFileExample, type AnyExample } from '@/data/examples'
 import { wsService } from '@/services/websocket'
@@ -25,12 +27,22 @@ import {
   type TranspileResult
 } from '@/services/transpiler'
 import JSZip from 'jszip'
+import { loadUnifiedProject, saveUnifiedProject, hasUnifiedProject, scheduleAutoSave } from '@/services/unifiedProject'
+import { initKeyboardShortcuts, destroyKeyboardShortcuts } from '@/services/keyboardShortcuts'
+import { useObjectsStore } from '@/stores/objects'
+import { useEnvironmentStore } from '@/stores/environment'
+import { useEventsStore } from '@/stores/events'
+import { useTimelineStore } from '@/stores/timeline'
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
 const projectStore = useProjectStore()
 const terminalStore = useTerminalStore()
 const sequencerStore = useSequencerStore()
+const objectsStore = useObjectsStore()
+const environmentStore = useEnvironmentStore()
+const eventsStore = useEventsStore()
+const timelineStore = useTimelineStore()
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const currentFileName = ref('main.cpp')
 
@@ -39,6 +51,10 @@ const showTranspileModal = ref(false)
 const transpileResult = ref<TranspileResult | null>(null)
 const transpileTarget = ref<'native' | 'web'>('native')
 const pendingTranspiledCode = ref('')
+
+// Native export/import dialog state
+const showExportNativeDialog = ref(false)
+const showImportNativeDialog = ref(false)
 
 // Computed console height style
 const consoleHeightStyle = computed(() => ({
@@ -239,15 +255,6 @@ const handleAnalysisResize = (height: number) => {
   settingsStore.display.analysisPanelHeight = height
 }
 
-const handleSequencerResize = (height: number) => {
-  settingsStore.display.sequencerHeight = height
-}
-
-const sequencerHeightStyle = computed(() => ({
-  height: `${settingsStore.display.sequencerHeight}px`,
-  minHeight: `${settingsStore.display.sequencerHeight}px`,
-}))
-
 // Transpiler handlers
 const handleImportNative = () => {
   const input = document.createElement('input')
@@ -346,6 +353,19 @@ const handleClearConsole = () => {
   appStore.clearConsole()
 }
 
+// Native project export/import handlers
+const handleShowExportNativeDialog = () => {
+  showExportNativeDialog.value = true
+}
+
+const handleShowImportNativeDialog = () => {
+  showImportNativeDialog.value = true
+}
+
+const handleProjectImported = () => {
+  appStore.log('[INFO] Native project imported successfully')
+}
+
 // Runtime started handler - connects runtime to sequencer for voice triggering
 const handleRuntimeStarted = (runtime: AllolibRuntime) => {
   appStore.setRunning()
@@ -384,12 +404,40 @@ onMounted(() => {
   wsService.connect()
   wsService.on('compile:output', onCompileOutput)
   window.addEventListener('terminal:compile', onTerminalCompile)
+
+  // Load unified project (includes timeline, objects, environment, events)
+  if (hasUnifiedProject()) {
+    loadUnifiedProject()
+    console.log('[App] Loaded unified project from localStorage')
+  } else {
+    // Initialize default event tracks
+    eventsStore.initDefaults()
+  }
+
+  // Set up auto-save for all stores
+  watch(
+    [
+      () => projectStore.project,
+      () => objectsStore.objects,
+      () => environmentStore.state,
+      () => eventsStore.tracks,
+      () => timelineStore.duration,
+    ],
+    () => {
+      scheduleAutoSave()
+    },
+    { deep: true }
+  )
+
+  // Initialize keyboard shortcuts
+  initKeyboardShortcuts()
 })
 
 onBeforeUnmount(() => {
   wsService.off('compile:output', onCompileOutput)
   wsService.disconnect()
   window.removeEventListener('terminal:compile', onTerminalCompile)
+  destroyKeyboardShortcuts()
 })
 
 // Mirror console output to the terminal
@@ -421,6 +469,8 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
       @file-export-zip="handleFileExportZip"
       @import-native="handleImportNative"
       @export-native="handleExportNative"
+      @show-export-native-dialog="handleShowExportNativeDialog"
+      @show-import-native-dialog="handleShowImportNativeDialog"
     />
 
     <!-- Main Content -->
@@ -454,15 +504,6 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
         />
       </div>
     </div>
-
-    <!-- Sequencer Panel -->
-    <SequencerPanel
-      v-if="settingsStore.display.showSequencer"
-      :height="settingsStore.display.sequencerHeight"
-      :style="sequencerHeightStyle"
-      class="shrink-0"
-      @resize="handleSequencerResize"
-    />
 
     <!-- Transpile Modal -->
     <div v-if="showTranspileModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -536,5 +577,14 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
 
     <!-- Asset Loading Test Panel (for development) -->
     <AssetLoadingTest />
+
+    <!-- Native Project Export Dialog -->
+    <ExportDialog v-model="showExportNativeDialog" />
+
+    <!-- Native Project Import Dialog -->
+    <ImportDialog
+      v-model="showImportNativeDialog"
+      @imported="handleProjectImported"
+    />
   </div>
 </template>

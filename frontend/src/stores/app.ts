@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { submitCompilation, pollJobCompletion, cleanupJob, type ProjectFile } from '@/services/compiler'
+import { submitCompilation, pollJobCompletion, cleanupJob, type ProjectFile, type BackendType } from '@/services/compiler'
 import { parseCompilerOutput, type CompilerDiagnostic } from '@/utils/error-parser'
+import { useSettingsStore } from '@/stores/settings'
 
 export type AppStatus = 'idle' | 'compiling' | 'loading' | 'running' | 'error'
 
@@ -130,8 +131,12 @@ export const useAppStore = defineStore('app', () => {
           : file.content
       }))
 
-      // Submit compilation request
-      const response = await submitCompilation({ files: preprocessedFiles, mainFile })
+      // Get backend setting
+      const settings = useSettingsStore()
+      const backend = (settings.graphics.backendType || 'webgl2') as BackendType
+
+      // Submit compilation request with backend selection
+      const response = await submitCompilation({ files: preprocessedFiles, mainFile, backend })
 
       if (!response.success) {
         throw new Error(response.error || 'Compilation failed')
