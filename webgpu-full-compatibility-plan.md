@@ -323,6 +323,288 @@ These examples MUST be recreated for WebGPU (cannot auto-convert):
 
 ---
 
+## CRITICAL: Pipeline Separation Guidelines
+
+### Why This Matters
+**Previous FBO implementation broke BOTH WebGL2 and WebGPU pipelines.** This section documents the architecture to prevent that.
+
+### Current Backend Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     al_Graphics_Web.cpp                         │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  GLOBAL STATE (DANGER ZONE)                              │   │
+│  │  - sGraphicsBackend: GraphicsBackend*                    │   │
+│  │  - sWebGPUMode: bool                                     │   │
+│  │  - sTextureBridge: map<GLuint, TextureBridgeEntry>       │   │
+│  │  - sMeshAdapter: WebMeshAdapter                          │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│         ┌────────────────────┴────────────────────┐              │
+│         ▼                                         ▼              │
+│  ┌──────────────┐                         ┌──────────────┐       │
+│  │  WebGL2      │                         │  WebGPU      │       │
+│  │  Backend     │                         │  Backend     │       │
+│  │  (GL calls)  │                         │  (WGPU calls)│       │
+│  └──────────────┘                         └──────────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Golden Rules
+
+1. **NEVER modify shared global state without guards**
+   - `sTextureBridge` - affects both backends
+   - `sMeshAdapter` - caches are backend-specific
+
+2. **ALWAYS check `sWebGPUMode` before GL or WebGPU calls**
+   ```cpp
+   if (sWebGPUMode && sGraphicsBackend) {
+       // WebGPU path
+       return;
+   }
+   // WebGL2 path
+   ```
+
+3. **NEVER assume GL IDs work in WebGPU context**
+   - GLuint (32-bit) ≠ Handle.id (64-bit)
+   - FBO IDs created by GL are meaningless to WebGPU
+
+4. **ALWAYS use abstract handles above the backend layer**
+   - `TextureHandle`, `RenderTargetHandle`, `ShaderHandle`
+   - Not `GLuint`, `WGPUTexture`, etc.
+
+5. **ISOLATE backend-specific code with preprocessor guards**
+   ```cpp
+   #ifdef ALLOLIB_WEBGPU
+   // WebGPU-only code
+   #endif
+   ```
+
+### Critical Shared Resources
+
+| Resource | WebGL2 | WebGPU | Risk |
+|----------|--------|--------|------|
+| Texture IDs | `GLuint` | `uint64_t handle` | **HIGH** - Bridge map keys are GLuint |
+| FBO IDs | `GLuint` | `uint64_t handle` | **CRITICAL** - Stack stores unsigned int |
+| Mesh Cache | Shared `sMeshAdapter` | Same | **HIGH** - Not invalidated on switch |
+| Depth Formats | Flexible | Strict validation | **HIGH** - WebGPU rejects invalid |
+| Viewport State | Implicit | Explicit | **MEDIUM** - Must coordinate |
+
+### Key Files & Line Numbers
+
+| File | Critical Sections |
+|------|-------------------|
+| `al_Graphics_Web.cpp:26-128` | Global state, backend registration |
+| `al_Graphics_Web.cpp:632-720` | Draw routing (WebGL2 vs WebGPU) |
+| `al_Graphics_Web.cpp:32-111` | Texture bridge (shared state!) |
+| `al_WebGL2Backend.cpp:300-400` | RenderTarget implementation |
+| `al_WebGPUBackend.cpp:1307-1318` | Shader selection (hardcoded) |
+| `al_WebApp.cpp:688-784` | Backend initialization/selection |
+
+---
+
+## Automatic Shader Selection System
+
+### Current State (Limited)
+The WebGPU backend currently has **hardcoded shader selection**:
+```cpp
+// al_WebGPUBackend.cpp:1307-1318
+if (mCurrentShader.valid()) {
+    shaderToUse = mCurrentShader;      // User override
+} else if (texture_bound) {
+    shaderToUse = mTexturedShader;     // Auto-texture
+} else {
+    shaderToUse = mDefaultShader;      // Fallback
+}
+```
+
+**Only handles**: textured vs non-textured. No lighting, PBR, etc.
+
+### Existing WGSL Shaders (Ready to Use)
+
+| Shader | Files | Current Status |
+|--------|-------|----------------|
+| Mesh | `mesh.vert/frag.wgsl` | ✅ Default shader |
+| Color | `color.vert/frag.wgsl` | Ready, not integrated |
+| Textured | `textured.vert/frag.wgsl` | ✅ Auto-selected on texture bind |
+| Lighting | `lighting.vert/frag.wgsl` | Ready, not integrated |
+| PBR | `pbr.vert/frag.wgsl` | Ready, not integrated |
+| Skybox | `skybox.vert/frag.wgsl` | Ready, not integrated |
+
+### Proposed: Smart Shader Selection
+
+**Add rendering mode detection:**
+```cpp
+enum class RenderingMode {
+    Mesh,       // Per-vertex colors (default)
+    Color,      // Uniform color
+    Textured,   // 2D texture bound
+    Lit,        // Lighting enabled (g.lighting(true))
+    PBR,        // PBR material set
+    Skybox      // Skybox rendering
+};
+
+// In draw():
+RenderingMode mode = detectRenderingMode(
+    mBoundTextures,           // Any textures bound?
+    mCurrentMaterial,         // PBR material set?
+    mLightingEnabled,         // g.lighting(true) called?
+    currentMesh.hasNormals()  // Mesh has normals?
+);
+
+ShaderHandle shader = mShaderRegistry.getShader(mode);
+```
+
+**Implementation location:** `al_WebGPUBackend.cpp:1307` (replace hardcoded logic)
+
+### WebShaderManager Integration
+
+**Existing infrastructure** (al_WebShaders.hpp):
+```cpp
+class WebShaderManager {
+    ShaderHandle getShader(DefaultShader type);  // Already exists!
+    // Types: Mesh, Color, Textured, Lighting, PBR, Skybox
+};
+```
+
+**Enhancement needed:**
+```cpp
+// Add to WebGPUBackend
+WebShaderManager mShaderManager;
+
+// In initialization:
+mShaderManager.setBackend(this);
+
+// In draw():
+DefaultShader shaderType = mapModeToShader(mode);
+ShaderHandle shader = mShaderManager.getShader(shaderType);
+```
+
+---
+
+## Phase Implementation Checklists
+
+### Phase 2: Full Lighting (REDO)
+
+**Pre-implementation checklist:**
+- [ ] Read `al_WebGPUBackend.cpp:1870-1914` (current default shader)
+- [ ] Verify `lighting.vert/frag.wgsl` uniform layout matches
+- [ ] Check `al_Graphics_Web.cpp` lighting state forwarding
+
+**Implementation steps:**
+- [ ] Add `mLightingEnabled` flag to WebGPUBackend
+- [ ] Implement `setLight(index, Light&)` method
+- [ ] Implement `setMaterial(Material&)` method
+- [ ] Create lighting uniform buffer (matches WGSL layout)
+- [ ] Add lighting shader to selection logic
+- [ ] **TEST WebGL2 still works after changes**
+
+**Post-implementation verification:**
+- [ ] `npx playwright test --project=chromium-webgl2` passes
+- [ ] Lighting example works in WebGL2 mode
+- [ ] Lighting example works in WebGPU mode (if available)
+
+### Phase 3: EasyFBO / Render-to-Texture
+
+**⚠️ HIGH RISK - This broke both pipelines before**
+
+**Pre-implementation checklist:**
+- [ ] Read `al_WebGL2Backend.cpp:300-400` (current RenderTarget impl)
+- [ ] Read `allolib/src/graphics/al_FBO.cpp` (original GL impl)
+- [ ] Understand `RenderManager::FBOStack` (stores GLuint IDs)
+
+**Critical risks to address:**
+1. **FBO ID type mismatch** - GLuint vs uint64_t handles
+2. **Texture bridge doesn't sync depth textures** - Only RGBA/UBYTE
+3. **Viewport not coordinated** - FBO bind sets viewport, pop doesn't restore
+4. **Format validation** - WebGPU strict, WebGL2 flexible
+
+**Safe implementation approach:**
+
+```cpp
+// NEW: Abstract FBO that works with both backends
+class EasyFBOWeb {
+    GraphicsBackend* mBackend;
+    RenderTargetHandle mHandle;  // Abstract, not GLuint
+    TextureHandle mColorTex;
+    TextureHandle mDepthTex;
+
+public:
+    void init(GraphicsBackend* backend, int w, int h);
+    void begin();  // Bind + viewport
+    void end();    // Restore previous
+};
+```
+
+**Implementation steps:**
+- [ ] Create `EasyFBOWeb` class (NEW file, don't modify existing)
+- [ ] Add depth texture support to texture bridge
+- [ ] Create format validation for WebGPU
+- [ ] Add viewport save/restore coordination
+- [ ] **TEST WebGL2 EasyFBO still works**
+- [ ] **TEST WebGPU EasyFBO works**
+- [ ] **TEST switching backends doesn't break**
+
+**Post-implementation verification:**
+- [ ] All existing WebGL2 tests pass
+- [ ] EasyFBO test renders correctly in WebGL2
+- [ ] EasyFBO test renders correctly in WebGPU
+- [ ] Multiple nested FBOs work
+- [ ] Viewport correctly restored after popFramebuffer
+
+---
+
+## Risk Analysis: Cross-Pipeline Breakage
+
+### What Broke Last Time (FBO)
+
+1. **Type confusion**: Code assumed FBO IDs (GLuint) worked everywhere
+2. **Missing null checks**: WebGPU backend wasn't initialized
+3. **Shared state corruption**: Texture bridge got stale entries
+4. **Format mismatch**: WebGPU rejected depth formats WebGL2 accepted
+
+### Prevention Strategies
+
+**Strategy 1: Defensive mode checks**
+```cpp
+// ALWAYS check mode before backend calls
+void someFunction() {
+    if (!sGraphicsBackend) return;  // Null check first
+
+    if (sWebGPUMode) {
+        // WebGPU path - uses handles
+        sGraphicsBackend->doSomething(handle);
+        return;
+    }
+
+    // WebGL2 path - can use GL directly
+    glDoSomething(glId);
+}
+```
+
+**Strategy 2: Type-safe wrappers**
+```cpp
+// Don't store raw IDs in stacks
+struct FBOEntry {
+    enum class Type { GL, Handle } type;
+    uint64_t value;  // Big enough for both
+};
+```
+
+**Strategy 3: Test after every change**
+```bash
+# After ANY change to al_Graphics_Web.cpp or backends:
+npx playwright test --project=chromium-webgl2
+```
+
+**Strategy 4: Isolate new code**
+- Create NEW files for new features (e.g., `al_EasyFBOWeb.cpp`)
+- Don't modify existing working code paths
+- Use composition over modification
+
+---
+
 ## Success Criteria
 
 After all phases:
@@ -330,3 +612,5 @@ After all phases:
 - ✅ Shader examples have GPU-category equivalents
 - ✅ User code uses same API (`g.draw()`, `g.texture()`, etc.)
 - ✅ Backend selection is transparent to example code
+- ✅ WebGL2 tests pass after every WebGPU change
+- ✅ No shared state corruption between backends
