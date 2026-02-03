@@ -33,6 +33,25 @@ docker run -d --name redis -p 6379:6379 redis:7-alpine
 
 Read `PROJECT.md` for full architecture documentation.
 
+## Git Workflow
+
+**Always work on the `dev` branch, not `main`.**
+
+```bash
+# Check current branch
+git branch
+
+# Switch to dev branch
+git checkout dev
+
+# After completing a feature, merge to main via PR or:
+git checkout main && git merge dev && git push && git checkout dev
+```
+
+**Branches:**
+- `main` - Stable, production-ready code (protected)
+- `dev` - Active development (work here)
+
 ## Project Overview
 
 **AlloLib Studio Online** - Browser-based IDE for AlloLib C++ creative coding framework.
@@ -61,7 +80,7 @@ tests/e2e/             # Playwright tests
 
 ### Run Dev Servers
 ```bash
-# Frontend (port 5173)
+# Frontend (port 3000)
 cd frontend && npm run dev
 
 # Backend (port 4000)
