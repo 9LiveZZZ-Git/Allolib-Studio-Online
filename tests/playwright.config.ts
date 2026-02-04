@@ -40,10 +40,16 @@ export default defineConfig({
       // Allow WebGL/WebGPU
       permissions: [],
     },
+
+    // Ensure proper cleanup on test failure
+    actionTimeout: 30000,
   },
 
   // Global timeout
   timeout: 120000, // 2 minutes per test (compilation takes time)
+
+  // Global setup/teardown for cleanup
+  globalTeardown: './global-teardown.ts',
   expect: {
     timeout: 30000,
   },

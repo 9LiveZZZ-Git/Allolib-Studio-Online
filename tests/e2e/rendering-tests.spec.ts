@@ -5,7 +5,8 @@
  * Uses Playwright for browser automation with real GPU context.
  */
 
-import { test, expect, Page, ConsoleMessage } from '@playwright/test'
+import { test, expect, Page } from './fixtures'
+import { ConsoleMessage } from '@playwright/test'
 
 // Test configuration
 const BASE_URL = process.env.TEST_URL || 'http://localhost:3000'

@@ -216,6 +216,68 @@ public:
     /// Set normal matrix (inverse transpose of modelView 3x3)
     void setNormalMatrix(const float* mat3x3);
 
+    // ── Skybox/Environment (Phase 4) ────────────────────────────────────────
+
+    /// Set environment texture for skybox rendering
+    void setEnvironmentTexture(TextureHandle handle);
+
+    /// Set environment rendering parameters
+    void setEnvironmentParams(float exposure, float gamma);
+
+    /// Draw skybox with current environment texture
+    void drawSkybox(const float* viewMatrix, const float* projMatrix);
+
+    // ── PBR Rendering (Phase 5) ─────────────────────────────────────────────
+
+    /// Enable or disable PBR rendering mode
+    void setPBREnabled(bool enabled);
+
+    /// Check if PBR mode is enabled
+    bool isPBREnabled() const;
+
+    /// Set PBR material properties (metallic-roughness workflow)
+    void setPBRMaterial(const float* albedo, float metallic, float roughness,
+                        float ao, const float* emission);
+
+    /// Set IBL environment texture for PBR
+    void setPBREnvironment(TextureHandle envMap, TextureHandle irradianceMap,
+                           TextureHandle brdfLUT);
+
+    /// Set PBR rendering parameters
+    void setPBRParams(float envIntensity, float exposure, float gamma);
+
+    /// Set inverse view rotation matrix for environment sampling
+    void setPBRInvViewRotation(const float* mat3x3);
+
+    /// Begin PBR rendering pass (binds shader and resources)
+    void beginPBR(const float* cameraPos);
+
+    /// End PBR rendering pass
+    void endPBR();
+
+    /// Draw with PBR shader (upload transforms and draw)
+    /// Call after beginPBR() and setPBRMaterial()
+    void drawPBR(
+        const float* modelViewMatrix,
+        const float* projectionMatrix,
+        const float* normalMatrix,
+        BufferHandle vertexBuffer,
+        int vertexCount,
+        PrimitiveType primitive = PrimitiveType::Triangles
+    );
+
+    /// Draw indexed with PBR shader
+    void drawPBRIndexed(
+        const float* modelViewMatrix,
+        const float* projectionMatrix,
+        const float* normalMatrix,
+        BufferHandle vertexBuffer,
+        BufferHandle indexBuffer,
+        int indexCount,
+        bool use32BitIndices = false,
+        PrimitiveType primitive = PrimitiveType::Triangles
+    );
+
 #ifdef __EMSCRIPTEN__
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
@@ -260,6 +322,8 @@ private:
         TextureHandle depthAttachment;
         WGPUTextureView colorView = nullptr;
         WGPUTextureView depthView = nullptr;
+        int width = 0;   // For viewport management
+        int height = 0;  // For viewport management
     };
 
     struct ComputeResource {
@@ -311,6 +375,57 @@ private:
     WGPUBuffer mLightingUniformBuffer = nullptr;
     WGPUBindGroup mLitBindGroup = nullptr;
     bool mLightingDirty = true;
+
+    // Skybox/Environment state (Phase 4)
+    ShaderHandle mSkyboxShader;
+    BufferHandle mSkyboxVertexBuffer;
+    WGPUBuffer mSkyboxUniformBuffer = nullptr;
+    WGPUBindGroup mSkyboxBindGroup = nullptr;
+    WGPUBindGroupLayout mSkyboxBindGroupLayout = nullptr;
+    WGPURenderPipeline mSkyboxPipeline = nullptr;
+    TextureHandle mBoundEnvironmentTexture;
+    float mEnvExposure = 1.0f;
+    float mEnvGamma = 2.2f;
+    bool mSkyboxBindingDirty = true;
+
+    // PBR state (Phase 5)
+    ShaderHandle mPBRShader;
+    ShaderHandle mPBRFallbackShader;  // Analytical lighting fallback
+    WGPUBuffer mPBRUniformBuffer = nullptr;
+    WGPUBindGroup mPBRBindGroup = nullptr;
+    WGPUBindGroupLayout mPBRBindGroupLayout = nullptr;
+    WGPURenderPipeline mPBRPipeline = nullptr;
+    WGPURenderPipeline mPBRFallbackPipeline = nullptr;
+    bool mPBREnabled = false;
+    bool mPBRBindingDirty = true;
+
+    // PBR IBL textures (Phase 5)
+    TextureHandle mPBREnvMap;
+    TextureHandle mPBRIrradianceMap;
+    TextureHandle mPBRBrdfLUT;
+
+    // PBR material data (matches WGSL struct layout)
+    struct PBRMaterialData {
+        float albedo[4];      // RGB + padding
+        float metallic;
+        float roughness;
+        float ao;
+        float _pad1;
+        float emission[4];    // RGB + padding
+    };
+
+    // PBR params data (matches WGSL struct layout)
+    struct PBRParamsData {
+        float envIntensity;
+        float exposure;
+        float gamma;
+        float _pad;
+        float invViewRot[12]; // mat3 stored as 3x vec4 for WGSL alignment
+        float cameraPos[4];   // xyz + padding
+    };
+
+    PBRMaterialData mPBRMaterial;
+    PBRParamsData mPBRParams;
 
     // Lighting data storage (matches WGSL struct layout)
     struct LightData {
@@ -387,8 +502,14 @@ private:
     void createDefaultShader();
     void createTexturedShader();
     void createLightingShader();     // Phase 2: Lighting
+    void createSkyboxShader();       // Phase 4: Skybox
+    void createSkyboxMesh();         // Phase 4: Skybox
+    void createPBRShader();          // Phase 5: PBR
+    void createPBRFallbackShader();  // Phase 5: PBR fallback
     void updateTexturedBindGroup();
     void updateLightingBindGroup();  // Phase 2: Lighting
+    void updateSkyboxBindGroup();    // Phase 4: Skybox
+    void updatePBRBindGroup();       // Phase 5: PBR
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();

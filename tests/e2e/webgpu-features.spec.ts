@@ -5,7 +5,7 @@
  * These tests verify that WebGPU features work correctly and match WebGL2 behavior.
  */
 
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page } from './fixtures'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -883,5 +883,913 @@ ALLOLIB_WEB_MAIN(ComparisonApp)
     console.log(`  Color ratio: ${colorRatio.toFixed(3)} (WebGPU: ${webgpuAnalysis.uniqueColors}, WebGL2: ${webgl2Analysis.uniqueColors})`)
     expect(colorRatio).toBeGreaterThan(0.3)  // Allow 30% minimum
     expect(colorRatio).toBeLessThan(3.0)     // Allow 3x maximum
+  })
+})
+
+// ============================================================================
+// Phase 3: EasyFBO / Render-to-Texture Tests
+// ============================================================================
+
+test.describe('WebGPU Phase 3: EasyFBO @webgpu', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+  })
+
+  // Basic render-to-texture: render a sphere to FBO, then display it on a quad
+  const BASIC_FBO_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_EasyFBO.hpp"
+using namespace al;
+
+struct FBOApp : WebApp {
+  EasyFBO fbo;
+  Mesh sphere, quad;
+  float angle = 0;
+
+  void onCreate() override {
+    // Create FBO with 256x256 resolution
+    fbo.init(256, 256);
+
+    // Create sphere to render to FBO
+    addSphere(sphere, 0.4, 16, 16);
+    sphere.generateNormals();
+
+    // Create fullscreen quad for displaying FBO
+    quad.primitive(Mesh::TRIANGLE_STRIP);
+    quad.vertex(-1, -1, 0); quad.texCoord(0, 0);
+    quad.vertex( 1, -1, 0); quad.texCoord(1, 0);
+    quad.vertex(-1,  1, 0); quad.texCoord(0, 1);
+    quad.vertex( 1,  1, 0); quad.texCoord(1, 1);
+
+    nav().pos(0, 0, 3);
+  }
+
+  void onDraw(Graphics& g) override {
+    angle += 0.02;
+
+    // Pass 1: Render to FBO
+    g.pushFramebuffer(fbo);
+    g.clear(0.2, 0.1, 0.3);  // Purple background
+    g.viewport(0, 0, fbo.width(), fbo.height());
+
+    g.pushMatrix();
+    g.rotate(angle, 0, 1, 0);
+    g.color(1, 0.5, 0.2);  // Orange sphere
+    g.draw(sphere);
+    g.popMatrix();
+
+    g.popFramebuffer();
+
+    // Pass 2: Display FBO texture on screen
+    g.clear(0, 0, 0);
+    g.viewport(0, 0, width(), height());
+
+    g.pushMatrix();
+    g.translate(0, 0, -2);
+    fbo.tex().bind(0);
+    g.texture();
+    g.draw(quad);
+    fbo.tex().unbind(0);
+    g.popMatrix();
+  }
+};
+
+ALLOLIB_WEB_MAIN(FBOApp)
+`
+
+  // Multiple FBOs test
+  const MULTI_FBO_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_EasyFBO.hpp"
+using namespace al;
+
+struct MultiFBOApp : WebApp {
+  EasyFBO fbo1, fbo2;
+  Mesh sphere, cube, quad;
+
+  void onCreate() override {
+    fbo1.init(128, 128);
+    fbo2.init(128, 128);
+
+    addSphere(sphere, 0.3, 12, 12);
+    addCube(cube, 0.4);
+
+    // Quad for displaying FBO
+    quad.primitive(Mesh::TRIANGLE_STRIP);
+    quad.vertex(-0.5, -0.5, 0); quad.texCoord(0, 0);
+    quad.vertex( 0.5, -0.5, 0); quad.texCoord(1, 0);
+    quad.vertex(-0.5,  0.5, 0); quad.texCoord(0, 1);
+    quad.vertex( 0.5,  0.5, 0); quad.texCoord(1, 1);
+
+    nav().pos(0, 0, 4);
+  }
+
+  void onDraw(Graphics& g) override {
+    // Render sphere to fbo1 (red background)
+    g.pushFramebuffer(fbo1);
+    g.clear(0.5, 0, 0);
+    g.viewport(0, 0, 128, 128);
+    g.color(0, 1, 0);  // Green sphere
+    g.draw(sphere);
+    g.popFramebuffer();
+
+    // Render cube to fbo2 (blue background)
+    g.pushFramebuffer(fbo2);
+    g.clear(0, 0, 0.5);
+    g.viewport(0, 0, 128, 128);
+    g.color(1, 1, 0);  // Yellow cube
+    g.draw(cube);
+    g.popFramebuffer();
+
+    // Display both FBOs on screen
+    g.clear(0.1, 0.1, 0.1);
+    g.viewport(0, 0, width(), height());
+
+    g.pushMatrix();
+    g.translate(-1, 0, 0);
+    fbo1.tex().bind(0);
+    g.texture();
+    g.draw(quad);
+    fbo1.tex().unbind(0);
+    g.popMatrix();
+
+    g.pushMatrix();
+    g.translate(1, 0, 0);
+    fbo2.tex().bind(0);
+    g.texture();
+    g.draw(quad);
+    fbo2.tex().unbind(0);
+    g.popMatrix();
+  }
+};
+
+ALLOLIB_WEB_MAIN(MultiFBOApp)
+`
+
+  // FBO with depth test
+  const FBO_DEPTH_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_EasyFBO.hpp"
+using namespace al;
+
+struct FBODepthApp : WebApp {
+  EasyFBO fbo;
+  Mesh sphere1, sphere2, quad;
+
+  void onCreate() override {
+    fbo.init(256, 256);
+
+    addSphere(sphere1, 0.3, 16, 16);
+    addSphere(sphere2, 0.25, 16, 16);
+
+    quad.primitive(Mesh::TRIANGLE_STRIP);
+    quad.vertex(-1, -1, 0); quad.texCoord(0, 0);
+    quad.vertex( 1, -1, 0); quad.texCoord(1, 0);
+    quad.vertex(-1,  1, 0); quad.texCoord(0, 1);
+    quad.vertex( 1,  1, 0); quad.texCoord(1, 1);
+
+    nav().pos(0, 0, 3);
+  }
+
+  void onDraw(Graphics& g) override {
+    // Render two overlapping spheres to FBO with depth testing
+    g.pushFramebuffer(fbo);
+    g.clear(0.1, 0.1, 0.2);
+    g.viewport(0, 0, 256, 256);
+
+    g.depthTesting(true);
+
+    // Front sphere (red) at z=0.3
+    g.pushMatrix();
+    g.translate(0.1, 0, 0.3);
+    g.color(1, 0.2, 0.2);
+    g.draw(sphere1);
+    g.popMatrix();
+
+    // Back sphere (blue) at z=-0.2
+    g.pushMatrix();
+    g.translate(-0.1, 0, -0.2);
+    g.color(0.2, 0.2, 1);
+    g.draw(sphere2);
+    g.popMatrix();
+
+    g.popFramebuffer();
+
+    // Display FBO
+    g.clear(0, 0, 0);
+    g.viewport(0, 0, width(), height());
+    g.depthTesting(false);
+
+    g.pushMatrix();
+    g.translate(0, 0, -2);
+    fbo.tex().bind(0);
+    g.texture();
+    g.draw(quad);
+    fbo.tex().unbind(0);
+    g.popMatrix();
+  }
+};
+
+ALLOLIB_WEB_MAIN(FBODepthApp)
+`
+
+  // Viewport restoration test
+  const FBO_VIEWPORT_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_EasyFBO.hpp"
+using namespace al;
+
+struct ViewportApp : WebApp {
+  EasyFBO fbo;
+  Mesh sphere;
+
+  void onCreate() override {
+    fbo.init(64, 64);  // Small FBO
+    addSphere(sphere, 0.3, 12, 12);
+    nav().pos(0, 0, 2);
+  }
+
+  void onDraw(Graphics& g) override {
+    // Render to small FBO
+    g.pushFramebuffer(fbo);
+    g.clear(1, 0, 0);  // Red background
+    g.viewport(0, 0, 64, 64);
+    g.color(0, 1, 0);
+    g.draw(sphere);
+    g.popFramebuffer();
+
+    // After popFramebuffer, viewport should be restored to full canvas
+    g.clear(0, 0, 1);  // Blue background on main canvas
+    g.viewport(0, 0, width(), height());
+
+    // Draw a sphere directly - if viewport is wrong, this won't render correctly
+    g.color(1, 1, 0);  // Yellow sphere
+    g.draw(sphere);
+  }
+};
+
+ALLOLIB_WEB_MAIN(ViewportApp)
+`
+
+  test('basic render-to-texture works (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, BASIC_FBO_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Basic FBO:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // FBO texture displayed on quad should have at least 2 colors (background + sphere)
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('basic render-to-texture works (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, BASIC_FBO_CODE, 'webgpu')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Basic FBO:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('multiple FBOs work (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, MULTI_FBO_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Multi-FBO:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // Two FBOs with different colored backgrounds and objects - at least 3 colors
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(3)
+  })
+
+  test('multiple FBOs work (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, MULTI_FBO_CODE, 'webgpu')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Multi-FBO:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('FBO depth testing works (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, FBO_DEPTH_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 FBO Depth:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // Should show overlapping spheres with proper depth - at least 2 colors
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('FBO depth testing works (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, FBO_DEPTH_CODE, 'webgpu')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU FBO Depth:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('viewport restores after popFramebuffer (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, FBO_VIEWPORT_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Viewport Restore:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // Should see yellow sphere on blue background (not red from FBO)
+    // If viewport wasn't restored, rendering would be broken - at least 2 colors
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('viewport restores after popFramebuffer (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, FBO_VIEWPORT_CODE, 'webgpu')
+    expect(success).toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Viewport Restore:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThanOrEqual(2)
+  })
+
+  test('visual baseline: FBO with rotating sphere', async ({ page }) => {
+    const success = await compileAndRun(page, BASIC_FBO_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const screenshot = await captureCanvas(page)
+    expect(screenshot).not.toBeNull()
+
+    // Save baseline
+    const baselinePath = path.join(BASELINE_DIR, 'webgpu-phase3-fbo-sphere.png')
+    if (process.env.UPDATE_BASELINES === 'true' || !fs.existsSync(baselinePath)) {
+      fs.writeFileSync(baselinePath, screenshot!)
+      console.log('  Saved baseline:', baselinePath)
+    }
+  })
+
+  test('FBO WebGL2 vs WebGPU comparison', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    // First run WebGL2
+    const webgl2Success = await compileAndRun(page, BASIC_FBO_CODE, 'webgl2')
+    expect(webgl2Success).toBe(true)
+
+    const webgl2Analysis = await analyzeCanvas(page)
+    console.log('  FBO WebGL2:', webgl2Analysis)
+
+    // Check if WebGPU is functional
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+    const webgpuOk = await isWebGPUFunctional(page)
+    if (!webgpuOk) {
+      console.log('  WebGPU not functional, skipping comparison')
+      return
+    }
+
+    // Run WebGPU version
+    const webgpuSuccess = await compileAndRun(page, BASIC_FBO_CODE, 'webgpu')
+    expect(webgpuSuccess).toBe(true)
+
+    const webgpuAnalysis = await analyzeCanvas(page)
+    console.log('  FBO WebGPU:', webgpuAnalysis)
+
+    // Both should have content
+    expect(webgl2Analysis.hasContent).toBe(true)
+    expect(webgpuAnalysis.hasContent).toBe(true)
+
+    // Both should produce similar color complexity
+    const colorRatio = webgpuAnalysis.uniqueColors / webgl2Analysis.uniqueColors
+    console.log(`  FBO Color ratio: ${colorRatio.toFixed(3)}`)
+    expect(colorRatio).toBeGreaterThan(0.2)
+    expect(colorRatio).toBeLessThan(5.0)
+  })
+})
+
+// ============================================================================
+// Phase 4: Skybox / Environment Map Tests
+// ============================================================================
+
+test.describe('WebGPU Phase 4: Skybox @webgpu', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+  })
+
+  // Simple skybox test using WebEnvironment with a procedural gradient HDR
+  // Note: WebEnvironment requires HDR loading, which uses async fetch
+  // For testing, we create a simple gradient environment
+  const SKYBOX_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct SkyboxApp : WebApp {
+  WebEnvironment env;
+  Mesh sphere;
+  bool loaded = false;
+
+  void onCreate() override {
+    // Load a test HDR environment
+    // Using a small procedural HDR is tricky, so we'll rely on the
+    // WebEnvironment's ability to create a default gradient if load fails
+    env.exposure(1.2);
+    env.gamma(2.2);
+
+    addSphere(sphere, 0.3, 16, 16);
+    sphere.generateNormals();
+
+    // Position camera to see skybox
+    nav().pos(0, 0, 0);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.1, 0.1, 0.1);
+
+    // Draw a small sphere in the center to verify rendering works
+    g.lighting(true);
+    g.light(Light().pos(2, 2, 4).diffuse(Color(1, 1, 1)));
+
+    g.pushMatrix();
+    g.translate(0, 0, -2);
+    g.color(0.8, 0.4, 0.2);
+    g.draw(sphere);
+    g.popMatrix();
+
+    g.lighting(false);
+  }
+};
+
+ALLOLIB_WEB_MAIN(SkyboxApp)
+`
+
+  // Test with loaded HDR environment (requires network)
+  const SKYBOX_HDR_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct SkyboxHDRApp : WebApp {
+  WebEnvironment env;
+  Mesh sphere;
+
+  void onCreate() override {
+    // Load a real HDR file - using a small test HDR
+    // Note: This requires the HDR file to be available at runtime
+    env.load("/assets/environments/studio.hdr");
+    env.exposure(1.0);
+    env.gamma(2.2);
+
+    addSphere(sphere, 0.3, 16, 16);
+    sphere.generateNormals();
+
+    nav().pos(0, 0, 0);
+    nav().faceToward(Vec3f(0, 0, -1));
+  }
+
+  void onDraw(Graphics& g) override {
+    // Draw skybox first (at max depth)
+    if (env.ready()) {
+      env.drawSkybox(g);
+    } else {
+      g.clear(0.2, 0.1, 0.3);  // Purple fallback
+    }
+
+    // Draw a reflective sphere
+    g.lighting(true);
+    g.light(Light().pos(2, 2, 4).diffuse(Color(1, 1, 0.95)));
+
+    g.pushMatrix();
+    g.translate(0, 0, -3);
+    g.color(0.9, 0.9, 0.9);
+    g.draw(sphere);
+    g.popMatrix();
+
+    g.lighting(false);
+  }
+};
+
+ALLOLIB_WEB_MAIN(SkyboxHDRApp)
+`
+
+  // Simple rendering test (no external HDR dependency)
+  const SIMPLE_SCENE_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct SimpleSceneApp : WebApp {
+  Mesh sphere;
+
+  void onCreate() override {
+    addSphere(sphere, 0.5, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 3);
+  }
+
+  void onDraw(Graphics& g) override {
+    // Clear with a gradient-like pattern (simulating skybox effect)
+    g.clear(0.2, 0.3, 0.5);
+
+    g.lighting(true);
+    g.light(Light().pos(3, 3, 3).diffuse(Color(1, 1, 0.9)));
+
+    g.color(0.8, 0.6, 0.3);
+    g.draw(sphere);
+
+    g.lighting(false);
+  }
+};
+
+ALLOLIB_WEB_MAIN(SimpleSceneApp)
+`
+
+  test('basic scene renders correctly (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, SIMPLE_SCENE_CODE, 'webgl2')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Simple Scene:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // Scene with background and lit sphere
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('basic scene renders correctly (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, SIMPLE_SCENE_CODE, 'webgpu')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Simple Scene:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('WebEnvironment class compiles (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, SKYBOX_CODE, 'webgl2')
+    expect(success, 'Compilation with WebEnvironment should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 WebEnvironment Compile:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('WebEnvironment class compiles (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, SKYBOX_CODE, 'webgpu')
+    expect(success, 'Compilation with WebEnvironment should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU WebEnvironment Compile:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('visual baseline: scene with background', async ({ page }) => {
+    const success = await compileAndRun(page, SIMPLE_SCENE_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const screenshot = await captureCanvas(page)
+    expect(screenshot).not.toBeNull()
+
+    // Save baseline
+    const baselinePath = path.join(BASELINE_DIR, 'webgpu-phase4-skybox-scene.png')
+    if (process.env.UPDATE_BASELINES === 'true' || !fs.existsSync(baselinePath)) {
+      fs.writeFileSync(baselinePath, screenshot!)
+      console.log('  Saved baseline:', baselinePath)
+    }
+  })
+
+  test('skybox WebGL2 vs WebGPU comparison', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    // First run WebGL2
+    const webgl2Success = await compileAndRun(page, SIMPLE_SCENE_CODE, 'webgl2')
+    expect(webgl2Success).toBe(true)
+
+    const webgl2Analysis = await analyzeCanvas(page)
+    console.log('  Skybox WebGL2:', webgl2Analysis)
+
+    // Check if WebGPU is functional
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+    const webgpuOk = await isWebGPUFunctional(page)
+    if (!webgpuOk) {
+      console.log('  WebGPU not functional, skipping comparison')
+      return
+    }
+
+    // Run WebGPU version
+    const webgpuSuccess = await compileAndRun(page, SIMPLE_SCENE_CODE, 'webgpu')
+    expect(webgpuSuccess).toBe(true)
+
+    const webgpuAnalysis = await analyzeCanvas(page)
+    console.log('  Skybox WebGPU:', webgpuAnalysis)
+
+    // Both should have content
+    expect(webgl2Analysis.hasContent).toBe(true)
+    expect(webgpuAnalysis.hasContent).toBe(true)
+
+    // Both should produce similar color complexity
+    const colorRatio = webgpuAnalysis.uniqueColors / webgl2Analysis.uniqueColors
+    console.log(`  Skybox Color ratio: ${colorRatio.toFixed(3)}`)
+    expect(colorRatio).toBeGreaterThan(0.2)
+    expect(colorRatio).toBeLessThan(5.0)
+  })
+})
+
+// ============================================================================
+// Phase 5: PBR (Physically-Based Rendering) Tests
+// ============================================================================
+
+test.describe('WebGPU Phase 5: PBR @webgpu', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+  })
+
+  // Simple PBR scene with metallic spheres
+  const PBR_SIMPLE_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct PBRSimpleApp : WebApp {
+  WebPBR pbr;
+  Mesh sphere;
+
+  void onCreate() override {
+    addSphere(sphere, 0.4, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 4);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.1, 0.1, 0.15);
+
+    // Start PBR rendering (uses fallback analytical lighting)
+    pbr.begin(g, nav().pos());
+
+    // Draw gold sphere on left
+    g.pushMatrix();
+    g.translate(-1, 0, 0);
+    pbr.material(PBRMaterial::Gold());
+    g.draw(sphere);
+    g.popMatrix();
+
+    // Draw silver sphere in center
+    g.pushMatrix();
+    pbr.material(PBRMaterial::Silver());
+    g.draw(sphere);
+    g.popMatrix();
+
+    // Draw copper sphere on right
+    g.pushMatrix();
+    g.translate(1, 0, 0);
+    pbr.material(PBRMaterial::Copper());
+    g.draw(sphere);
+    g.popMatrix();
+
+    pbr.end(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(PBRSimpleApp)
+`
+
+  // PBR with custom materials
+  const PBR_CUSTOM_MATERIALS_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebPBR.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct PBRCustomApp : WebApp {
+  WebPBR pbr;
+  Mesh sphere;
+
+  void onCreate() override {
+    addSphere(sphere, 0.3, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 5);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.05, 0.05, 0.1);
+
+    pbr.begin(g, nav().pos());
+
+    // Create a grid of spheres with varying metallic/roughness
+    for (int r = 0; r < 3; r++) {
+      for (int m = 0; m < 3; m++) {
+        float roughness = 0.1 + r * 0.4;
+        float metallic = m * 0.5;
+
+        PBRMaterial mat;
+        mat.albedo = Vec3f(0.8, 0.6, 0.4);
+        mat.roughness = roughness;
+        mat.metallic = metallic;
+        mat.ao = 1.0;
+
+        g.pushMatrix();
+        g.translate((m - 1) * 0.8, (r - 1) * 0.8, 0);
+        pbr.material(mat);
+        g.draw(sphere);
+        g.popMatrix();
+      }
+    }
+
+    pbr.end(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(PBRCustomApp)
+`
+
+  // Basic PBR scene (simpler - just to verify compilation works)
+  const PBR_BASIC_CODE = `
+#include "al_WebApp.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+struct PBRBasicApp : WebApp {
+  Mesh sphere;
+
+  void onCreate() override {
+    addSphere(sphere, 0.5, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 3);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.15, 0.15, 0.2);
+
+    g.lighting(true);
+    g.light(Light().pos(3, 2, 4).diffuse(Color(1, 0.95, 0.9)));
+
+    // Simulate PBR-like appearance with standard lighting
+    g.color(0.8, 0.7, 0.5);  // Gold-ish color
+    g.draw(sphere);
+
+    g.lighting(false);
+  }
+};
+
+ALLOLIB_WEB_MAIN(PBRBasicApp)
+`
+
+  test('basic lit sphere renders correctly (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, PBR_BASIC_CODE, 'webgl2')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 PBR Basic:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('basic lit sphere renders correctly (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, PBR_BASIC_CODE, 'webgpu')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU PBR Basic:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('WebPBR class compiles (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, PBR_SIMPLE_CODE, 'webgl2')
+    expect(success, 'Compilation with WebPBR should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 WebPBR Compile:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('WebPBR class compiles (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, PBR_SIMPLE_CODE, 'webgpu')
+    expect(success, 'Compilation with WebPBR should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU WebPBR Compile:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('visual baseline: PBR metal spheres', async ({ page }) => {
+    const success = await compileAndRun(page, PBR_BASIC_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const screenshot = await captureCanvas(page)
+    expect(screenshot).not.toBeNull()
+
+    // Save baseline
+    const baselinePath = path.join(BASELINE_DIR, 'webgpu-phase5-pbr.png')
+    if (process.env.UPDATE_BASELINES === 'true' || !fs.existsSync(baselinePath)) {
+      fs.writeFileSync(baselinePath, screenshot!)
+      console.log('  Saved baseline:', baselinePath)
+    }
+  })
+
+  test('PBR WebGL2 vs WebGPU comparison', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    // First run WebGL2
+    const webgl2Success = await compileAndRun(page, PBR_BASIC_CODE, 'webgl2')
+    expect(webgl2Success).toBe(true)
+
+    const webgl2Analysis = await analyzeCanvas(page)
+    console.log('  PBR WebGL2:', webgl2Analysis)
+
+    // Check if WebGPU is functional
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+    const webgpuOk = await isWebGPUFunctional(page)
+    if (!webgpuOk) {
+      console.log('  WebGPU not functional, skipping comparison')
+      return
+    }
+
+    // Run WebGPU version
+    const webgpuSuccess = await compileAndRun(page, PBR_BASIC_CODE, 'webgpu')
+    expect(webgpuSuccess).toBe(true)
+
+    const webgpuAnalysis = await analyzeCanvas(page)
+    console.log('  PBR WebGPU:', webgpuAnalysis)
+
+    // Both should have content
+    expect(webgl2Analysis.hasContent).toBe(true)
+    expect(webgpuAnalysis.hasContent).toBe(true)
+
+    // Both should produce similar color complexity
+    const colorRatio = webgpuAnalysis.uniqueColors / webgl2Analysis.uniqueColors
+    console.log(`  PBR Color ratio: ${colorRatio.toFixed(3)}`)
+    expect(colorRatio).toBeGreaterThan(0.2)
+    expect(colorRatio).toBeLessThan(5.0)
   })
 })

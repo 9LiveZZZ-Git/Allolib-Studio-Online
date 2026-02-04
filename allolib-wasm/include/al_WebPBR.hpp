@@ -42,6 +42,17 @@
 #include "al/math/al_Vec.hpp"
 #include "al/math/al_Matrix4.hpp"
 
+// WebGPU backend support (Phase 5)
+#ifdef ALLOLIB_WEBGPU
+#include "al_WebGPUBackend.hpp"
+#endif
+
+// External functions for detecting rendering backend
+extern "C" {
+    bool Graphics_isWebGPU();
+    al::GraphicsBackend* Graphics_getBackend();
+}
+
 namespace al {
 
 /**
@@ -1455,6 +1466,16 @@ public:
      * Draw skybox
      */
     void drawSkybox(Graphics& g) {
+        // WebGPU path
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            if (!mCreated) create(g);
+            drawSkyboxWebGPU(g);
+#endif
+            return;
+        }
+
+        // WebGL2 path
         // Lazy initialization (always create resources)
         if (!mCreated) {
             create(g);
@@ -1495,6 +1516,16 @@ public:
      * Begin PBR rendering
      */
     void begin(Graphics& g, const Vec3f& cameraPos) {
+        // WebGPU path
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            if (!mCreated) create(g);
+            beginWebGPU(g, cameraPos);
+#endif
+            return;
+        }
+
+        // WebGL2 path
         // Lazy initialization (always create resources)
         if (!mCreated) {
             create(g);
@@ -1554,6 +1585,15 @@ public:
      * Set current material
      */
     void material(const PBRMaterial& mat) {
+        // WebGPU path
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            materialWebGPU(mat);
+#endif
+            return;
+        }
+
+        // WebGL2 path
         // Use the currently active shader (set in begin())
         ShaderProgram& shader = mActiveShader ? *mActiveShader : mFallbackPbrShader;
         shader.uniform("albedo", mat.albedo);
@@ -1739,6 +1779,15 @@ public:
      * prevents automatic shader selection. We need to reset this.
      */
     void end(Graphics& g) {
+        // WebGPU path
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            endWebGPU();
+#endif
+            return;
+        }
+
+        // WebGL2 path
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE1);
@@ -1757,6 +1806,15 @@ public:
      * Note: For proper shader restoration, use end(Graphics& g) instead
      */
     void end() {
+        // WebGPU path
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            endWebGPU();
+#endif
+            return;
+        }
+
+        // WebGL2 path
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE1);
@@ -2019,6 +2077,120 @@ private:
     float mGamma;
     float mEnvIntensity;
     LoadCallback mCallback;
+
+    // WebGPU state (Phase 5)
+#ifdef ALLOLIB_WEBGPU
+    TextureHandle mWebGPUEnvTexture;
+    TextureHandle mWebGPUIrradianceTexture;
+    TextureHandle mWebGPUBrdfLUT;
+    bool mWebGPUTexturesCreated = false;
+    PBRMaterial mCurrentMaterial;  // Track current material for WebGPU
+
+    void createWebGPUTextures() {
+        if (mWebGPUTexturesCreated || !mEnvLoaded) return;
+
+        auto* backend = dynamic_cast<WebGPUBackend*>(Graphics_getBackend());
+        if (!backend) return;
+
+        // Convert RGB to RGBA for WebGPU (prefers 4-component formats)
+        const float* hdrPixels = mHdr.pixels();
+        std::vector<float> rgbaData(mHdr.width() * mHdr.height() * 4);
+        for (int i = 0; i < mHdr.width() * mHdr.height(); i++) {
+            rgbaData[i * 4 + 0] = hdrPixels[i * 3 + 0];
+            rgbaData[i * 4 + 1] = hdrPixels[i * 3 + 1];
+            rgbaData[i * 4 + 2] = hdrPixels[i * 3 + 2];
+            rgbaData[i * 4 + 3] = 1.0f;
+        }
+
+        // Create environment texture
+        TextureDesc envDesc;
+        envDesc.width = mHdr.width();
+        envDesc.height = mHdr.height();
+        envDesc.format = PixelFormat::RGBA32F;
+        envDesc.minFilter = FilterMode::Linear;
+        envDesc.magFilter = FilterMode::Linear;
+        envDesc.wrapS = WrapMode::Repeat;
+        envDesc.wrapT = WrapMode::Repeat;
+        mWebGPUEnvTexture = backend->createTexture(envDesc, rgbaData.data());
+
+        // Create irradiance texture
+        std::vector<float> irrRgba(mIrradianceWidth * mIrradianceHeight * 4);
+        for (int i = 0; i < mIrradianceWidth * mIrradianceHeight; i++) {
+            irrRgba[i * 4 + 0] = mIrradianceData[i * 3 + 0];
+            irrRgba[i * 4 + 1] = mIrradianceData[i * 3 + 1];
+            irrRgba[i * 4 + 2] = mIrradianceData[i * 3 + 2];
+            irrRgba[i * 4 + 3] = 1.0f;
+        }
+
+        TextureDesc irrDesc;
+        irrDesc.width = mIrradianceWidth;
+        irrDesc.height = mIrradianceHeight;
+        irrDesc.format = PixelFormat::RGBA32F;
+        irrDesc.minFilter = FilterMode::Linear;
+        irrDesc.magFilter = FilterMode::Linear;
+        irrDesc.wrapS = WrapMode::Repeat;
+        irrDesc.wrapT = WrapMode::Repeat;
+        mWebGPUIrradianceTexture = backend->createTexture(irrDesc, irrRgba.data());
+
+        // Note: BRDF LUT needs to be created separately with RG16F format
+        // For now, we'll use the fallback shader which doesn't need BRDF LUT
+
+        mWebGPUTexturesCreated = true;
+        printf("[WebPBR] WebGPU textures created\n");
+    }
+
+    void drawSkyboxWebGPU(Graphics& g) {
+        auto* backend = dynamic_cast<WebGPUBackend*>(Graphics_getBackend());
+        if (!backend) return;
+
+        createWebGPUTextures();
+
+        if (mWebGPUEnvTexture.valid()) {
+            backend->setEnvironmentTexture(mWebGPUEnvTexture);
+            backend->setEnvironmentParams(mExposure, mGamma);
+            backend->drawSkybox(g.viewMatrix().elems(), g.projMatrix().elems());
+        }
+    }
+
+    void beginWebGPU(Graphics& g, const Vec3f& cameraPos) {
+        auto* backend = dynamic_cast<WebGPUBackend*>(Graphics_getBackend());
+        if (!backend) return;
+
+        createWebGPUTextures();
+
+        // Set up PBR mode
+        backend->setPBRParams(mEnvIntensity, mExposure, mGamma);
+
+        // Set inverse view rotation for environment sampling
+        float invViewRot[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};  // Identity for now
+        backend->setPBRInvViewRotation(invViewRot);
+
+        // Set environment textures if available
+        if (mWebGPUEnvTexture.valid() && mWebGPUIrradianceTexture.valid()) {
+            backend->setPBREnvironment(mWebGPUEnvTexture, mWebGPUIrradianceTexture, TextureHandle{0});
+        }
+
+        float camPosArray[3] = {cameraPos.x, cameraPos.y, cameraPos.z};
+        backend->beginPBR(camPosArray);
+    }
+
+    void materialWebGPU(const PBRMaterial& mat) {
+        auto* backend = dynamic_cast<WebGPUBackend*>(Graphics_getBackend());
+        if (!backend) return;
+
+        float albedo[3] = {mat.albedo.x, mat.albedo.y, mat.albedo.z};
+        float emission[3] = {mat.emission.x, mat.emission.y, mat.emission.z};
+        backend->setPBRMaterial(albedo, mat.metallic, mat.roughness, mat.ao, emission);
+        mCurrentMaterial = mat;
+    }
+
+    void endWebGPU() {
+        auto* backend = dynamic_cast<WebGPUBackend*>(Graphics_getBackend());
+        if (backend) {
+            backend->endPBR();
+        }
+    }
+#endif
 };
 
 } // namespace al

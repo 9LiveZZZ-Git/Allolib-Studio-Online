@@ -9,7 +9,7 @@
  * Generates a detailed compatibility report.
  */
 
-import { test, expect, Page, BrowserContext } from '@playwright/test'
+import { test, expect, Page, BrowserContext } from './fixtures'
 import * as fs from 'fs'
 import * as path from 'path'
 
