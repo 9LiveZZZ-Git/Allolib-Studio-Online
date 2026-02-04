@@ -486,6 +486,133 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4f {
 }
 )";
 
+// ─── Environment Reflection Shaders (Phase 6) ────────────────────────────────
+// Environment mapping with equirectangular HDR textures
+
+static const char* kEnvReflectVertexShader = R"(
+struct TransformUniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    normalMatrix: mat4x4f,
+}
+
+struct ReflectParams {
+    cameraPos: vec4f,
+    baseColor: vec4f,
+    exposure: f32,
+    gamma: f32,
+    reflectivity: f32,
+    envRotation: f32,
+}
+
+@group(0) @binding(0) var<uniform> transform: TransformUniforms;
+@group(0) @binding(1) var<uniform> params: ReflectParams;
+
+struct VertexInput {
+    @location(0) position: vec3f,
+    @location(1) texcoord: vec2f,
+    @location(2) color: vec4f,
+    @location(3) normal: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) worldPos: vec3f,
+    @location(1) normal: vec3f,
+    @location(2) viewDir: vec3f,
+}
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+
+    let worldPos = transform.modelViewMatrix * vec4f(input.position, 1.0);
+    output.position = transform.projectionMatrix * worldPos;
+    output.worldPos = worldPos.xyz;
+
+    // Transform normal using upper-left 3x3 of modelViewMatrix
+    let normalMat = mat3x3f(
+        transform.normalMatrix[0].xyz,
+        transform.normalMatrix[1].xyz,
+        transform.normalMatrix[2].xyz
+    );
+    output.normal = normalize(normalMat * input.normal);
+
+    // View direction from camera to vertex
+    output.viewDir = normalize(params.cameraPos.xyz - worldPos.xyz);
+
+    return output;
+}
+)";
+
+static const char* kEnvReflectFragmentShader = R"(
+struct ReflectParams {
+    cameraPos: vec4f,
+    baseColor: vec4f,
+    exposure: f32,
+    gamma: f32,
+    reflectivity: f32,
+    envRotation: f32,
+}
+
+@group(0) @binding(1) var<uniform> params: ReflectParams;
+@group(0) @binding(2) var envMap: texture_2d<f32>;
+@group(0) @binding(3) var envSampler: sampler;
+
+const PI: f32 = 3.14159265359;
+
+// Convert direction vector to equirectangular UV coordinates
+fn directionToUV(dir: vec3f) -> vec2f {
+    // Apply Y-axis rotation for environment rotation
+    let cosR = cos(params.envRotation);
+    let sinR = sin(params.envRotation);
+    let rotatedDir = vec3f(
+        dir.x * cosR - dir.z * sinR,
+        dir.y,
+        dir.x * sinR + dir.z * cosR
+    );
+
+    let phi = atan2(rotatedDir.z, rotatedDir.x);  // -PI to PI
+    let theta = acos(clamp(rotatedDir.y, -1.0, 1.0));  // 0 to PI
+
+    let u = (phi + PI) / (2.0 * PI);  // 0 to 1
+    let v = theta / PI;                // 0 to 1
+
+    return vec2f(u, v);
+}
+
+struct FragmentInput {
+    @location(0) worldPos: vec3f,
+    @location(1) normal: vec3f,
+    @location(2) viewDir: vec3f,
+}
+
+@fragment
+fn fs_main(input: FragmentInput) -> @location(0) vec4f {
+    let normal = normalize(input.normal);
+    let viewDir = normalize(input.viewDir);
+
+    // Compute reflection vector
+    let reflectDir = reflect(-viewDir, normal);
+
+    // Sample environment map
+    let uv = directionToUV(reflectDir);
+    let envColor = textureSample(envMap, envSampler, uv).rgb;
+
+    // Tone mapping (Reinhard)
+    var mapped = envColor * params.exposure;
+    mapped = mapped / (vec3f(1.0) + mapped);
+
+    // Gamma correction
+    mapped = pow(mapped, vec3f(1.0 / params.gamma));
+
+    // Mix with base color based on reflectivity
+    let finalColor = mix(params.baseColor.rgb, mapped, params.reflectivity);
+
+    return vec4f(finalColor, params.baseColor.a);
+}
+)";
+
 // ─── PBR Shaders (Phase 5) ───────────────────────────────────────────────────
 // Physically-Based Rendering with metallic-roughness workflow and IBL
 
@@ -3739,6 +3866,403 @@ void WebGPUBackend::drawSkybox(const float* viewMatrix, const float* projMatrix)
     wgpuRenderPassEncoderDraw(mRenderPassEncoder, 36, 1, 0, 0);
 }
 
+// ─── Environment Reflection Methods (Phase 6) ─────────────────────────────────
+
+void WebGPUBackend::setEnvironmentRotation(float angleRadians) {
+    mEnvRotation = angleRadians;
+    mEnvReflectBindingDirty = true;
+}
+
+void WebGPUBackend::createEnvReflectShader() {
+    // Create vertex shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescVert = {};
+    wgslDescVert.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescVert.code = kEnvReflectVertexShader;
+
+    WGPUShaderModuleDescriptor moduleDescVert = {};
+    moduleDescVert.nextInChain = &wgslDescVert.chain;
+    moduleDescVert.label = "env_reflect_vert";
+    WGPUShaderModule vertModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescVert);
+
+    // Create fragment shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescFrag = {};
+    wgslDescFrag.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescFrag.code = kEnvReflectFragmentShader;
+
+    WGPUShaderModuleDescriptor moduleDescFrag = {};
+    moduleDescFrag.nextInChain = &wgslDescFrag.chain;
+    moduleDescFrag.label = "env_reflect_frag";
+    WGPUShaderModule fragModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescFrag);
+
+    if (!vertModule || !fragModule) {
+        printf("[WebGPUBackend] ERROR: Failed to create env reflect shader modules!\n");
+        return;
+    }
+
+    // Create bind group layout with 4 entries:
+    // - binding 0: transform uniforms (mat4x4 * 3 = 192 bytes)
+    // - binding 1: reflect params (48 bytes)
+    // - binding 2: envMap texture
+    // - binding 3: sampler
+    WGPUBindGroupLayoutEntry layoutEntries[4] = {};
+
+    // binding 0: transform uniforms
+    layoutEntries[0].binding = 0;
+    layoutEntries[0].visibility = WGPUShaderStage_Vertex;
+    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[0].buffer.minBindingSize = 192;  // 3 * mat4x4f
+
+    // binding 1: reflect params
+    layoutEntries[1].binding = 1;
+    layoutEntries[1].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    layoutEntries[1].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[1].buffer.minBindingSize = 48;  // cameraPos(16) + baseColor(16) + 4 floats(16)
+
+    // binding 2: envMap texture
+    layoutEntries[2].binding = 2;
+    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[2].texture.sampleType = WGPUTextureSampleType_Float;
+    layoutEntries[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+
+    // binding 3: sampler
+    layoutEntries[3].binding = 3;
+    layoutEntries[3].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[3].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = 4;
+    layoutDesc.entries = layoutEntries;
+    mEnvReflectBindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
+
+    // Create pipeline layout
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &mEnvReflectBindGroupLayout;
+    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
+
+    // Vertex buffer layout: position(3) + texcoord(2) + color(4) + normal(3) = 12 floats
+    WGPUVertexAttribute vertexAttrs[4] = {};
+
+    // position
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+
+    // texcoord
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x2;
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+
+    // color
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x4;
+    vertexAttrs[2].offset = 20;
+    vertexAttrs[2].shaderLocation = 2;
+
+    // normal
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;  // 12 floats * 4 bytes
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    // Fragment state
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+
+    // Depth stencil state
+    WGPUDepthStencilState depthStencilState = {};
+    depthStencilState.format = WGPUTextureFormat_Depth24Plus;
+    depthStencilState.depthWriteEnabled = true;
+    depthStencilState.depthCompare = WGPUCompareFunction_Less;
+
+    // Create pipeline
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = pipelineLayout;
+    pipelineDesc.vertex.module = vertModule;
+    pipelineDesc.vertex.entryPoint = "vs_main";
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexBufferLayout;
+    pipelineDesc.fragment = &fragmentState;
+    pipelineDesc.depthStencil = &depthStencilState;
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_Back;
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    mEnvReflectPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+
+    // Create uniform buffer (transforms + params)
+    WGPUBufferDescriptor uniformBufferDesc = {};
+    uniformBufferDesc.size = sizeof(EnvReflectUniforms);
+    uniformBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    mEnvReflectUniformBuffer = wgpuDeviceCreateBuffer(mDevice, &uniformBufferDesc);
+
+    // Clean up shader modules
+    wgpuShaderModuleRelease(vertModule);
+    wgpuShaderModuleRelease(fragModule);
+    wgpuPipelineLayoutRelease(pipelineLayout);
+
+    printf("[WebGPUBackend] Environment reflect shader created\n");
+}
+
+void WebGPUBackend::updateEnvReflectBindGroup() {
+    if (!mEnvReflectBindGroupLayout || !mEnvReflectUniformBuffer) return;
+    if (!mBoundEnvironmentTexture.valid()) return;
+
+    // Release old bind group
+    if (mEnvReflectBindGroup) {
+        wgpuBindGroupRelease(mEnvReflectBindGroup);
+        mEnvReflectBindGroup = nullptr;
+    }
+
+    // Find environment texture
+    auto texIt = mTextures.find(mBoundEnvironmentTexture.id);
+    if (texIt == mTextures.end()) {
+        printf("[WebGPUBackend] Environment texture not found for reflection!\n");
+        return;
+    }
+
+    // Create sampler for environment map
+    WGPUSamplerDescriptor samplerDesc = {};
+    samplerDesc.addressModeU = WGPUAddressMode_Repeat;
+    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
+    samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
+    samplerDesc.magFilter = WGPUFilterMode_Linear;
+    samplerDesc.minFilter = WGPUFilterMode_Linear;
+    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Linear;
+    WGPUSampler sampler = wgpuDeviceCreateSampler(mDevice, &samplerDesc);
+
+    // Create bind group entries
+    WGPUBindGroupEntry entries[4] = {};
+
+    // binding 0: transform uniforms (192 bytes for 3 mat4x4f)
+    entries[0].binding = 0;
+    entries[0].buffer = mEnvReflectUniformBuffer;
+    entries[0].offset = 0;
+    entries[0].size = 192;
+
+    // binding 1: reflect params (48 bytes)
+    entries[1].binding = 1;
+    entries[1].buffer = mEnvReflectUniformBuffer;
+    entries[1].offset = 192;
+    entries[1].size = 48;
+
+    // binding 2: envMap texture
+    entries[2].binding = 2;
+    entries[2].textureView = texIt->second.view;
+
+    // binding 3: sampler
+    entries[3].binding = 3;
+    entries[3].sampler = sampler;
+
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.layout = mEnvReflectBindGroupLayout;
+    bindGroupDesc.entryCount = 4;
+    bindGroupDesc.entries = entries;
+
+    mEnvReflectBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    mEnvReflectBindingDirty = false;
+
+    // Note: sampler is owned by bind group now
+}
+
+void WebGPUBackend::beginEnvReflect(const float* cameraPos, float reflectivity,
+                                     const float* baseColor) {
+    if (!mEnvReflectPipeline) {
+        printf("[WebGPUBackend] Creating environment reflection shader...\n");
+        createEnvReflectShader();
+    }
+
+    if (!mEnvReflectPipeline) {
+        printf("[WebGPUBackend] Environment reflection pipeline not available!\n");
+        return;
+    }
+
+    // Store reflection parameters
+    mEnvReflectUniforms.cameraPos[0] = cameraPos[0];
+    mEnvReflectUniforms.cameraPos[1] = cameraPos[1];
+    mEnvReflectUniforms.cameraPos[2] = cameraPos[2];
+    mEnvReflectUniforms.cameraPos[3] = 1.0f;
+
+    mEnvReflectUniforms.baseColor[0] = baseColor[0];
+    mEnvReflectUniforms.baseColor[1] = baseColor[1];
+    mEnvReflectUniforms.baseColor[2] = baseColor[2];
+    mEnvReflectUniforms.baseColor[3] = baseColor[3];
+
+    mEnvReflectUniforms.exposure = mEnvExposure;
+    mEnvReflectUniforms.gamma = mEnvGamma;
+    mEnvReflectUniforms.reflectivity = reflectivity;
+    mEnvReflectUniforms.envRotation = mEnvRotation;
+
+    mEnvReflectActive = true;
+
+    // Update bind group if needed
+    if (mEnvReflectBindingDirty) {
+        updateEnvReflectBindGroup();
+    }
+}
+
+void WebGPUBackend::endEnvReflect() {
+    mEnvReflectActive = false;
+}
+
+void WebGPUBackend::drawEnvReflect(
+    const float* modelViewMatrix,
+    const float* projectionMatrix,
+    const float* normalMatrix,
+    BufferHandle vertexBuffer,
+    int vertexCount,
+    PrimitiveType primitive
+) {
+    if (!mEnvReflectActive || !mEnvReflectPipeline || !mEnvReflectBindGroup) {
+        return;
+    }
+
+    auto vbIt = mBuffers.find(vertexBuffer.id);
+    if (vbIt == mBuffers.end()) return;
+
+    // Update uniform buffer
+    // First part: transform uniforms (192 bytes)
+    memcpy(mEnvReflectUniforms.modelViewMatrix, modelViewMatrix, 64);
+    memcpy(mEnvReflectUniforms.projectionMatrix, projectionMatrix, 64);
+
+    // Normal matrix is 3x3 but we store as 3x vec4f for WGSL alignment
+    if (normalMatrix) {
+        mEnvReflectUniforms.normalMatrix[0] = normalMatrix[0];
+        mEnvReflectUniforms.normalMatrix[1] = normalMatrix[1];
+        mEnvReflectUniforms.normalMatrix[2] = normalMatrix[2];
+        mEnvReflectUniforms.normalMatrix[3] = 0.0f;
+        mEnvReflectUniforms.normalMatrix[4] = normalMatrix[3];
+        mEnvReflectUniforms.normalMatrix[5] = normalMatrix[4];
+        mEnvReflectUniforms.normalMatrix[6] = normalMatrix[5];
+        mEnvReflectUniforms.normalMatrix[7] = 0.0f;
+        mEnvReflectUniforms.normalMatrix[8] = normalMatrix[6];
+        mEnvReflectUniforms.normalMatrix[9] = normalMatrix[7];
+        mEnvReflectUniforms.normalMatrix[10] = normalMatrix[8];
+        mEnvReflectUniforms.normalMatrix[11] = 0.0f;
+    } else {
+        // Identity matrix
+        memset(mEnvReflectUniforms.normalMatrix, 0, sizeof(mEnvReflectUniforms.normalMatrix));
+        mEnvReflectUniforms.normalMatrix[0] = 1.0f;
+        mEnvReflectUniforms.normalMatrix[5] = 1.0f;
+        mEnvReflectUniforms.normalMatrix[10] = 1.0f;
+    }
+
+    // Upload uniforms
+    wgpuQueueWriteBuffer(mQueue, mEnvReflectUniformBuffer, 0,
+                         &mEnvReflectUniforms, sizeof(mEnvReflectUniforms));
+
+    // Begin render pass
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    // Set pipeline and bind group
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, mEnvReflectPipeline);
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mEnvReflectBindGroup, 0, nullptr);
+
+    // Set vertex buffer
+    wgpuRenderPassEncoderSetVertexBuffer(
+        mRenderPassEncoder, 0,
+        vbIt->second.buffer, 0,
+        vbIt->second.size
+    );
+
+    // Draw
+    wgpuRenderPassEncoderDraw(mRenderPassEncoder, vertexCount, 1, 0, 0);
+}
+
+void WebGPUBackend::drawEnvReflectIndexed(
+    const float* modelViewMatrix,
+    const float* projectionMatrix,
+    const float* normalMatrix,
+    BufferHandle vertexBuffer,
+    BufferHandle indexBuffer,
+    int indexCount,
+    bool use32BitIndices,
+    PrimitiveType primitive
+) {
+    if (!mEnvReflectActive || !mEnvReflectPipeline || !mEnvReflectBindGroup) {
+        return;
+    }
+
+    auto vbIt = mBuffers.find(vertexBuffer.id);
+    auto ibIt = mBuffers.find(indexBuffer.id);
+    if (vbIt == mBuffers.end() || ibIt == mBuffers.end()) return;
+
+    // Update uniform buffer (same as non-indexed version)
+    memcpy(mEnvReflectUniforms.modelViewMatrix, modelViewMatrix, 64);
+    memcpy(mEnvReflectUniforms.projectionMatrix, projectionMatrix, 64);
+
+    if (normalMatrix) {
+        mEnvReflectUniforms.normalMatrix[0] = normalMatrix[0];
+        mEnvReflectUniforms.normalMatrix[1] = normalMatrix[1];
+        mEnvReflectUniforms.normalMatrix[2] = normalMatrix[2];
+        mEnvReflectUniforms.normalMatrix[3] = 0.0f;
+        mEnvReflectUniforms.normalMatrix[4] = normalMatrix[3];
+        mEnvReflectUniforms.normalMatrix[5] = normalMatrix[4];
+        mEnvReflectUniforms.normalMatrix[6] = normalMatrix[5];
+        mEnvReflectUniforms.normalMatrix[7] = 0.0f;
+        mEnvReflectUniforms.normalMatrix[8] = normalMatrix[6];
+        mEnvReflectUniforms.normalMatrix[9] = normalMatrix[7];
+        mEnvReflectUniforms.normalMatrix[10] = normalMatrix[8];
+        mEnvReflectUniforms.normalMatrix[11] = 0.0f;
+    } else {
+        memset(mEnvReflectUniforms.normalMatrix, 0, sizeof(mEnvReflectUniforms.normalMatrix));
+        mEnvReflectUniforms.normalMatrix[0] = 1.0f;
+        mEnvReflectUniforms.normalMatrix[5] = 1.0f;
+        mEnvReflectUniforms.normalMatrix[10] = 1.0f;
+    }
+
+    wgpuQueueWriteBuffer(mQueue, mEnvReflectUniformBuffer, 0,
+                         &mEnvReflectUniforms, sizeof(mEnvReflectUniforms));
+
+    // Begin render pass
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    // Set pipeline and bind group
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, mEnvReflectPipeline);
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mEnvReflectBindGroup, 0, nullptr);
+
+    // Set vertex and index buffers
+    wgpuRenderPassEncoderSetVertexBuffer(
+        mRenderPassEncoder, 0,
+        vbIt->second.buffer, 0,
+        vbIt->second.size
+    );
+
+    WGPUIndexFormat indexFormat = use32BitIndices ?
+        WGPUIndexFormat_Uint32 : WGPUIndexFormat_Uint16;
+    wgpuRenderPassEncoderSetIndexBuffer(
+        mRenderPassEncoder,
+        ibIt->second.buffer, indexFormat, 0,
+        ibIt->second.size
+    );
+
+    // Draw indexed
+    wgpuRenderPassEncoderDrawIndexed(mRenderPassEncoder, indexCount, 1, 0, 0, 0);
+}
+
 // ─── PBR Methods (Phase 5) ────────────────────────────────────────────────────
 
 void WebGPUBackend::createPBRShader() {
@@ -4510,6 +5034,11 @@ void WebGPUBackend::setNormalMatrix(const float*) {}
 void WebGPUBackend::setEnvironmentTexture(TextureHandle) {}
 void WebGPUBackend::setEnvironmentParams(float, float) {}
 void WebGPUBackend::drawSkybox(const float*, const float*) {}
+void WebGPUBackend::setEnvironmentRotation(float) {}
+void WebGPUBackend::beginEnvReflect(const float*, float, const float*) {}
+void WebGPUBackend::endEnvReflect() {}
+void WebGPUBackend::drawEnvReflect(const float*, const float*, const float*, BufferHandle, int, PrimitiveType) {}
+void WebGPUBackend::drawEnvReflectIndexed(const float*, const float*, const float*, BufferHandle, BufferHandle, int, bool, PrimitiveType) {}
 void WebGPUBackend::setPBREnabled(bool) {}
 bool WebGPUBackend::isPBREnabled() const { return false; }
 void WebGPUBackend::setPBRMaterial(const float*, float, float, float, const float*) {}

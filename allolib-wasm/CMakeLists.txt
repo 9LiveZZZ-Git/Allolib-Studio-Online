@@ -128,9 +128,9 @@ set(ALLOLIB_SOURCES
     ${ALLOLIB_DIR}/src/graphics/al_BufferObject.cpp
     # NOTE: al_DefaultShaders.cpp and al_DefaultShaderString.cpp are replaced by web versions
     # NOTE: al_Graphics.cpp is replaced by al_Graphics_Web.cpp (WebGL2/WebGPU support)
-    ${ALLOLIB_DIR}/src/graphics/al_EasyFBO.cpp
+    # ${ALLOLIB_DIR}/src/graphics/al_EasyFBO.cpp  # Replaced by al_EasyFBO_Web.cpp for WebGPU registration
     ${ALLOLIB_DIR}/src/graphics/al_EasyVAO.cpp
-    ${ALLOLIB_DIR}/src/graphics/al_FBO.cpp
+    # ${ALLOLIB_DIR}/src/graphics/al_FBO.cpp  # Replaced by al_FBO_Web.cpp for WebGPU FBO routing
     ${ALLOLIB_DIR}/src/graphics/al_GPUObject.cpp
     # ${ALLOLIB_DIR}/src/graphics/al_Graphics.cpp  # Replaced by web version
     ${ALLOLIB_DIR}/src/graphics/al_Isosurface.cpp
@@ -208,6 +208,9 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebMeshAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebShaders.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_GraphicsWebExtension.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_FBOBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_FBO_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_EasyFBO_Web.cpp
 )
 
 # WebGL2 backend sources - always included (needed for al::Graphics)

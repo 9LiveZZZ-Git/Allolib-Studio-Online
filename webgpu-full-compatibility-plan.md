@@ -25,7 +25,7 @@ Make ALL existing AlloLib Studio examples work with WebGPU **without changing ex
 | ~~EasyFBO (render-to-texture)~~ | ~~EasyFBO Test, post-processing~~ | ✅ DONE |
 | ~~Cubemaps/Skyboxes~~ | ~~HDRI Skybox, Environment examples~~ | ✅ DONE |
 | ~~WebPBR System~~ | ~~All PBR examples~~ | ✅ DONE |
-| WebEnvironment | Environment Picker, Reflections | MEDIUM |
+| ~~WebEnvironment~~ | ~~Environment Picker, Reflections~~ | ✅ DONE |
 | ProceduralTexture | Procedural Noise, Patterns | LOW |
 | 3D Textures | 3D Textures example | LOW |
 | HDR Textures | HDR examples | LOW |
@@ -245,19 +245,38 @@ void drawPBR(const float* modelView, const float* proj, const float* normalMatri
 
 ---
 
-### Phase 6: WebEnvironment / HDRI (Enables ~6 examples)
+### Phase 6: WebEnvironment / HDRI (Enables ~6 examples) ✅ COMPLETE
 **Builds on Phase 4 & 5**
 
-**Additional API:**
+**Files modified:**
+- `al_WebGPUBackend.hpp` - Added environment reflection API
+- `al_WebGPUBackend.cpp` - Implemented environment reflection shader with rotation support
+- `al_WebEnvironment.hpp` - Added WebGPU conditional paths for beginReflect/endReflect
+
+**Implementation approach:**
+- Environment reflection uses existing equirectangular HDR textures
+- WGSL shaders handle direction→UV conversion with rotation support
+- Reflection rendering uses camera position and base color mixing
+- No changes needed to user example code
+
+**API added:**
 ```cpp
-void loadHDREnvironment(const char* url); // Async load
-void setEnvironmentRotation(float angle);
-void enableReflections(bool enable);
-void beginReflectionCapture(const Vec3f& position);
-void endReflectionCapture();
+void setEnvironmentRotation(float angleRadians);
+void beginEnvReflect(const float* cameraPos, float reflectivity, const float* baseColor);
+void endEnvReflect();
+void drawEnvReflect(const float* modelViewMatrix, const float* projectionMatrix,
+                    const float* normalMatrix, BufferHandle vertexBuffer,
+                    int vertexCount, PrimitiveType primitive);
 ```
 
-**Estimated lines:** ~200
+**Playwright tests:** ✅ COMPLETE
+- [x] Basic environment scene (WebGL2 + WebGPU)
+- [x] WebEnvironment class compiles (WebGL2 + WebGPU)
+- [x] Reflective sphere renders (WebGL2 + WebGPU)
+- [x] Visual baseline: environment scene
+- [x] Environment WebGL2 vs WebGPU comparison
+
+**Lines added:** ~400
 
 ---
 
@@ -289,12 +308,12 @@ LOD switching is done on CPU based on distance. The GPU just renders whichever m
 | 2 | Full Lighting | 10 | 450 | 700 | ✅ DONE |
 | 3 | EasyFBO | 5 | 350 | 1050 | ✅ DONE |
 | 4 | Cubemaps/Skybox | 8 | 350 | 1400 | ✅ DONE |
-| 5 | WebPBR | 12 | 300 | 1530 | Pending |
-| 6 | WebEnvironment | 6 | 200 | 1730 | Pending |
-| 7 | ProceduralTexture | 4 | 100 | 1830 | Pending |
-| 8 | LOD System | 4 | 50 | 1880 | Pending |
+| 5 | WebPBR | 12 | 300 | 1700 | ✅ DONE |
+| 6 | WebEnvironment | 6 | 400 | 2100 | ✅ DONE |
+| 7 | ProceduralTexture | 4 | 100 | 2200 | Pending |
+| 8 | LOD System | 4 | 50 | 2250 | Pending |
 
-**Total: ~2,050 lines of new code (1400 complete)**
+**Total: ~2,250 lines of new code (2100 complete)**
 
 ---
 

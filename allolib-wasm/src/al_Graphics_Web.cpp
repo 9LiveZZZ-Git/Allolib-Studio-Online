@@ -13,6 +13,7 @@
 #include "al_WebGPUBackend.hpp"
 #endif
 #include "al_WebMeshAdapter.hpp"
+#include "al_FBOBridge.hpp"
 #include <utility>
 #include <cmath>
 
@@ -114,7 +115,91 @@ void Graphics_clearTextureBridge() {
     sLastBoundGLTexture = 0;
 }
 
+// ─── FBO Bridge (OpenGL ↔ WebGPU) ────────────────────────────────────────────
+
+// Get the WebGPU texture handle for a GL texture (for FBO color attachment)
+TextureHandle Graphics_getTextureHandle(GLuint glTextureId) {
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) {
+        return TextureHandle{0};
+    }
+    auto it = sTextureBridge.find(glTextureId);
+    if (it != sTextureBridge.end()) {
+        return it->second.webgpuHandle;
+    }
+    return TextureHandle{0};
+}
+
+// Bind framebuffer - routes to WebGPU backend when in WebGPU mode
+void Graphics_bindFramebuffer(unsigned int fboId) {
+    if (sWebGPUMode && sGraphicsBackend) {
+        if (fboId == 0) {
+            // Binding default framebuffer (screen)
+            sGraphicsBackend->unbindRenderTarget();
+        } else {
+            // Look up WebGPU render target handle from FBO bridge
+            RenderTargetHandle handle = FBO_getWebGPUHandle(fboId);
+            if (handle.valid()) {
+                sGraphicsBackend->bindRenderTarget(handle);
+            } else {
+                // FBO not registered - log warning
+                printf("[Graphics] Warning: FBO %u not registered with WebGPU bridge\n", fboId);
+            }
+        }
+        return;
+    }
+
+    // WebGL2 path - direct GL call
+#ifdef __EMSCRIPTEN__
+    glBindFramebuffer(GL_FRAMEBUFFER, fboId);
+#endif
+}
+
+// Register an EasyFBO with the WebGPU bridge
+// Called after EasyFBO::init() to create WebGPU render target
+void EasyFBO_registerWithBridge(unsigned int fboId, unsigned int colorTexId,
+                                 unsigned int depthTexId, int width, int height) {
+    if (!sWebGPUMode || !sGraphicsBackend) return;
+
+    // Get WebGPU texture handles from texture bridge
+    TextureHandle colorHandle = Graphics_getTextureHandle(colorTexId);
+
+    if (!colorHandle.valid()) {
+        printf("[EasyFBO] Warning: Color texture %u not registered, cannot create WebGPU render target\n",
+               colorTexId);
+        return;
+    }
+
+    // Create render target in WebGPU backend (depth is optional)
+    TextureHandle depthHandle = Graphics_getTextureHandle(depthTexId);
+    RenderTargetHandle rtHandle = sGraphicsBackend->createRenderTarget(colorHandle, depthHandle);
+
+    if (rtHandle.valid()) {
+        // Store in FBO bridge with dimensions
+        FBO_register(fboId, rtHandle, width, height);
+        printf("[EasyFBO] Registered FBO %u → WebGPU render target (size: %dx%d)\n",
+               fboId, width, height);
+    } else {
+        printf("[EasyFBO] Failed to create WebGPU render target for FBO %u\n", fboId);
+    }
+}
+
+// Unregister an EasyFBO when destroyed
+void EasyFBO_unregisterFromBridge(unsigned int fboId) {
+    if (!sWebGPUMode || !sGraphicsBackend) return;
+
+    // Get the render target handle to destroy it
+    RenderTargetHandle handle = FBO_getWebGPUHandle(fboId);
+    if (handle.valid()) {
+        sGraphicsBackend->destroyRenderTarget(handle);
+    }
+    FBO_unregister(fboId);
+}
+
 void Graphics_setBackend(GraphicsBackend* backend) {
+    // Clear old bridge state when changing backends
+    if (sGraphicsBackend != backend) {
+        FBO_clearAll();
+    }
     sGraphicsBackend = backend;
     sMeshAdapter.setBackend(backend);
     sWebGPUMode = backend && backend->isWebGPU();

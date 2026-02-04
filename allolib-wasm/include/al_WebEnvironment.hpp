@@ -32,9 +32,19 @@
 #include <cmath>
 
 #include "al_WebHDR.hpp"
+#include "al_WebGraphicsBackend.hpp"
+#ifdef ALLOLIB_WEBGPU
+#include "al_WebGPUBackend.hpp"
+#endif
 #include "al/graphics/al_Mesh.hpp"
 #include "al/graphics/al_Shader.hpp"
 #include "al/graphics/al_Graphics.hpp"
+
+// Forward declarations for WebGPU bridge functions (defined in al_Graphics_Web.cpp)
+namespace al {
+    bool Graphics_isWebGPU();
+    GraphicsBackend* Graphics_getBackend();
+}
 
 namespace al {
 
@@ -210,7 +220,8 @@ public:
     using LoadCallback = std::function<void(bool success)>;
 
     WebEnvironment() : mTextureId(0), mReady(false), mCreated(false),
-                       mExposure(1.0f), mGamma(2.2f) {}
+                       mExposure(1.0f), mGamma(2.2f),
+                       mWebGPUTextureId(0), mWebGPUTextureCreated(false) {}
 
     ~WebEnvironment() {
         destroy();
@@ -287,6 +298,14 @@ public:
     void drawSkybox(Graphics& g) {
         if (!mReady) return;
 
+        // Check if we're in WebGPU mode
+        if (Graphics_isWebGPU()) {
+            drawSkyboxWebGPU(g);
+            return;
+        }
+
+        // WebGL2 path follows...
+
         // Lazy initialization - create GPU resources on first use
         if (!mCreated) {
             create(g);
@@ -332,8 +351,17 @@ public:
     /**
      * Begin drawing reflective objects
      */
-    void beginReflect(Graphics& g, const Vec3f& cameraPos, float reflectivity = 0.8f) {
+    void beginReflect(Graphics& g, const Vec3f& cameraPos, float reflectivity = 0.8f,
+                      const Vec4f& baseColor = Vec4f(0.8f, 0.8f, 0.8f, 1.0f)) {
         if (!mReady) return;
+
+        // Check if we're in WebGPU mode
+        if (Graphics_isWebGPU()) {
+            beginReflectWebGPU(g, cameraPos, reflectivity, baseColor);
+            return;
+        }
+
+        // WebGL2 path follows...
 
         // Lazy initialization
         if (!mCreated) {
@@ -348,7 +376,7 @@ public:
         mReflectShader.uniform("gamma", mGamma);
         mReflectShader.uniform("cameraPos", cameraPos);
         mReflectShader.uniform("reflectivity", reflectivity);
-        mReflectShader.uniform("baseColor", Vec4f(0.8f, 0.8f, 0.8f, 1.0f));
+        mReflectShader.uniform("baseColor", baseColor);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, mTextureId);
@@ -358,8 +386,36 @@ public:
      * End drawing reflective objects
      */
     void endReflect() {
+        // Check if we're in WebGPU mode
+        if (Graphics_isWebGPU()) {
+            endReflectWebGPU();
+            return;
+        }
+
+        // WebGL2 path
         glBindTexture(GL_TEXTURE_2D, 0);
     }
+
+    /**
+     * Set environment rotation angle (radians around Y axis)
+     */
+    void setRotation(float angleRadians) {
+        mRotation = angleRadians;
+        // If in WebGPU mode, update backend
+        if (Graphics_isWebGPU()) {
+#ifdef ALLOLIB_WEBGPU
+            auto* backend = static_cast<WebGPUBackend*>(Graphics_getBackend());
+            if (backend) {
+                backend->setEnvironmentRotation(angleRadians);
+            }
+#endif
+        }
+    }
+
+    /**
+     * Get current environment rotation angle
+     */
+    float rotation() const { return mRotation; }
 
     /**
      * Bind environment texture to texture unit
@@ -419,6 +475,76 @@ public:
     }
 
 private:
+    /**
+     * Draw skybox using WebGPU backend (Phase 4)
+     */
+    void drawSkyboxWebGPU(Graphics& g) {
+#ifdef ALLOLIB_WEBGPU
+        auto* baseBackend = Graphics_getBackend();
+        if (!baseBackend || !baseBackend->isWebGPU()) return;
+
+        // Cast to WebGPUBackend to access skybox methods
+        auto* backend = static_cast<WebGPUBackend*>(baseBackend);
+
+        // Lazy create WebGPU texture on first use
+        if (!mWebGPUTextureCreated) {
+            createWebGPUTexture(backend);
+        }
+
+        if (mWebGPUTextureId == 0) return;
+
+        // Get matrices from Graphics
+        // Note: WebGPU backend drawSkybox handles view matrix translation removal
+        backend->setEnvironmentTexture(TextureHandle{mWebGPUTextureId});
+        backend->setEnvironmentParams(mExposure, mGamma);
+        backend->drawSkybox(g.viewMatrix().elems(), g.projMatrix().elems());
+#endif
+    }
+
+    /**
+     * Create WebGPU texture from HDR data
+     */
+    void createWebGPUTexture([[maybe_unused]] GraphicsBackend* backend) {
+#ifdef ALLOLIB_WEBGPU
+        if (!mReady || mWebGPUTextureCreated) return;
+
+        // HDR data is RGB float, but WebGPU prefers RGBA
+        // Convert RGB to RGBA
+        int w = mHdr.width();
+        int h = mHdr.height();
+        std::vector<float> rgbaData(w * h * 4);
+        const float* rgb = mHdr.pixels();
+
+        for (int i = 0; i < w * h; i++) {
+            rgbaData[i * 4 + 0] = rgb[i * 3 + 0];
+            rgbaData[i * 4 + 1] = rgb[i * 3 + 1];
+            rgbaData[i * 4 + 2] = rgb[i * 3 + 2];
+            rgbaData[i * 4 + 3] = 1.0f;  // Alpha
+        }
+
+        // Create texture descriptor
+        TextureDesc desc;
+        desc.width = w;
+        desc.height = h;
+        desc.format = PixelFormat::RGBA32F;  // HDR float texture
+        desc.minFilter = FilterMode::Linear;
+        desc.magFilter = FilterMode::Linear;
+        desc.wrapS = WrapMode::Repeat;      // Equirectangular wraps horizontally
+        desc.wrapT = WrapMode::ClampToEdge; // Clamp vertically
+
+        // Create texture with HDR pixel data (converted to RGBA)
+        TextureHandle handle = backend->createTexture(desc, rgbaData.data());
+        if (handle.valid()) {
+            mWebGPUTextureId = handle.id;
+            mWebGPUTextureCreated = true;
+            printf("[WebEnvironment] Created WebGPU texture %llu (%dx%d)\n",
+                   (unsigned long long)mWebGPUTextureId, desc.width, desc.height);
+        } else {
+            printf("[WebEnvironment] ERROR: Failed to create WebGPU texture!\n");
+        }
+#endif
+    }
+
     void createSkyboxMesh() {
         mSkyboxMesh.reset();
         mSkyboxMesh.primitive(Mesh::TRIANGLES);
@@ -479,7 +605,64 @@ private:
     bool mNeedsUpload = false;
     float mExposure;
     float mGamma;
+    float mRotation = 0.0f;  // Phase 6: Y-axis rotation in radians
     LoadCallback mCallback;
+
+    // WebGPU state (Phase 4 & 6)
+    uint64_t mWebGPUTextureId;
+    bool mWebGPUTextureCreated;
+    bool mWebGPUReflectActive = false;  // Phase 6: Reflection mode active
+
+    /**
+     * Begin environment reflection rendering with WebGPU (Phase 6)
+     */
+    void beginReflectWebGPU([[maybe_unused]] Graphics& g,
+                            [[maybe_unused]] const Vec3f& cameraPos,
+                            [[maybe_unused]] float reflectivity,
+                            [[maybe_unused]] const Vec4f& baseColor) {
+#ifdef ALLOLIB_WEBGPU
+        auto* baseBackend = Graphics_getBackend();
+        if (!baseBackend || !baseBackend->isWebGPU()) return;
+
+        auto* backend = static_cast<WebGPUBackend*>(baseBackend);
+
+        // Lazy create WebGPU texture
+        if (!mWebGPUTextureCreated) {
+            createWebGPUTexture(backend);
+        }
+
+        if (mWebGPUTextureId == 0) return;
+
+        // Set environment texture and rotation
+        backend->setEnvironmentTexture(TextureHandle{mWebGPUTextureId});
+        backend->setEnvironmentParams(mExposure, mGamma);
+        backend->setEnvironmentRotation(mRotation);
+
+        // Begin reflection rendering
+        float camPos[3] = { cameraPos.x, cameraPos.y, cameraPos.z };
+        float baseCol[4] = { baseColor[0], baseColor[1], baseColor[2], baseColor[3] };
+        backend->beginEnvReflect(camPos, reflectivity, baseCol);
+
+        mWebGPUReflectActive = true;
+#endif
+    }
+
+    /**
+     * End environment reflection rendering with WebGPU (Phase 6)
+     */
+    void endReflectWebGPU() {
+#ifdef ALLOLIB_WEBGPU
+        if (!mWebGPUReflectActive) return;
+
+        auto* baseBackend = Graphics_getBackend();
+        if (!baseBackend || !baseBackend->isWebGPU()) return;
+
+        auto* backend = static_cast<WebGPUBackend*>(baseBackend);
+        backend->endEnvReflect();
+
+        mWebGPUReflectActive = false;
+#endif
+    }
 };
 
 } // namespace al

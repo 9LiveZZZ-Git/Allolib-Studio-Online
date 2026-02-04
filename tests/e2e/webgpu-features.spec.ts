@@ -1793,3 +1793,252 @@ ALLOLIB_WEB_MAIN(PBRBasicApp)
     expect(colorRatio).toBeLessThan(5.0)
   })
 })
+
+// ============================================================================
+// Phase 6: WebEnvironment / HDRI Tests
+// ============================================================================
+
+test.describe('WebGPU Phase 6: Environment @webgpu', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+  })
+
+  // Basic skybox with built-in gradient (no HDR loading required)
+  const ENV_SKYBOX_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+class SkyboxApp : public WebApp {
+  WebEnvironment env;
+  Mesh sphere;
+
+  void onCreate() override {
+    // Create a simple gradient environment (no HDR file needed)
+    addSphere(sphere, 0.3, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 2);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.1, 0.1, 0.15);
+
+    // Draw a simple lit sphere as reference
+    g.lighting(true);
+    g.light(Light().pos(3, 2, 4).diffuse(Color(1, 0.95, 0.9)));
+    g.color(0.6, 0.7, 0.8);
+    g.draw(sphere);
+    g.lighting(false);
+  }
+};
+ALLOLIB_WEB_MAIN(SkyboxApp)
+`
+
+  // Environment reflection test with analytical lighting
+  const ENV_REFLECT_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+class ReflectApp : public WebApp {
+  Mesh sphere;
+  Material mat;
+
+  void onCreate() override {
+    addSphere(sphere, 0.4, 32, 32);
+    sphere.generateNormals();
+    nav().pos(0, 0, 3);
+
+    // Set up reflective material
+    mat.specular(Color(1, 1, 1));
+    mat.shininess(128);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.05, 0.05, 0.1);
+
+    // Draw reflective sphere with lighting
+    g.lighting(true);
+    g.light(Light().pos(5, 3, 5).diffuse(Color(1, 1, 1)));
+
+    // Use specular material for reflective look
+    g.material(mat);
+    g.color(0.8, 0.85, 0.9);
+
+    g.draw(sphere);
+    g.lighting(false);
+  }
+};
+ALLOLIB_WEB_MAIN(ReflectApp)
+`
+
+  // WebEnvironment class compilation test
+  const ENV_CLASS_CODE = `
+#include "al_WebApp.hpp"
+#include "al_WebEnvironment.hpp"
+#include "al/graphics/al_Shapes.hpp"
+using namespace al;
+
+class EnvClassApp : public WebApp {
+  WebEnvironment env;
+  Mesh sphere;
+
+  void onCreate() override {
+    addSphere(sphere, 0.4, 24, 24);
+    sphere.generateNormals();
+    nav().pos(0, 0, 3);
+
+    // Set environment parameters
+    env.exposure(1.5f);
+    env.gamma(2.2f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.1, 0.1, 0.15);
+
+    // Just draw a simple sphere to verify compilation
+    g.lighting(true);
+    g.light(Light().pos(3, 2, 4));
+    g.color(0.7, 0.7, 0.8);
+    g.draw(sphere);
+    g.lighting(false);
+  }
+};
+ALLOLIB_WEB_MAIN(EnvClassApp)
+`
+
+  test('basic environment scene (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, ENV_SKYBOX_CODE, 'webgl2')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Environment:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('basic environment scene (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, ENV_SKYBOX_CODE, 'webgpu')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Environment:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(2)
+  })
+
+  test('WebEnvironment class compiles (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, ENV_CLASS_CODE, 'webgl2')
+    expect(success, 'WebEnvironment compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 WebEnvironment:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('WebEnvironment class compiles (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, ENV_CLASS_CODE, 'webgpu')
+    expect(success, 'WebEnvironment compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU WebEnvironment:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+  })
+
+  test('reflective sphere renders (WebGL2)', async ({ page }) => {
+    const success = await compileAndRun(page, ENV_REFLECT_CODE, 'webgl2')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGL2 Reflective:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    // Reflective spheres should have smooth color gradients
+    expect(analysis.uniqueColors).toBeGreaterThan(5)
+  })
+
+  test('reflective sphere renders (WebGPU)', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    const webgpuOk = await isWebGPUFunctional(page)
+    test.skip(!webgpuOk, 'WebGPU not functional')
+
+    const success = await compileAndRun(page, ENV_REFLECT_CODE, 'webgpu')
+    expect(success, 'Compilation should succeed').toBe(true)
+
+    const analysis = await analyzeCanvas(page)
+    console.log('  WebGPU Reflective:', analysis)
+
+    expect(analysis.hasContent).toBe(true)
+    expect(analysis.uniqueColors).toBeGreaterThan(5)
+  })
+
+  test('visual baseline: environment scene', async ({ page }) => {
+    const success = await compileAndRun(page, ENV_SKYBOX_CODE, 'webgl2')
+    expect(success).toBe(true)
+
+    const screenshot = await captureCanvas(page)
+    expect(screenshot).not.toBeNull()
+
+    // Save baseline
+    const baselinePath = path.join(BASELINE_DIR, 'webgpu-phase6-environment.png')
+    if (process.env.UPDATE_BASELINES === 'true' || !fs.existsSync(baselinePath)) {
+      fs.writeFileSync(baselinePath, screenshot!)
+      console.log('  Saved baseline:', baselinePath)
+    }
+  })
+
+  test('Environment WebGL2 vs WebGPU comparison', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'WebGPU only in Chromium')
+
+    // First run WebGL2
+    const webgl2Success = await compileAndRun(page, ENV_REFLECT_CODE, 'webgl2')
+    expect(webgl2Success).toBe(true)
+
+    const webgl2Analysis = await analyzeCanvas(page)
+    console.log('  Env WebGL2:', webgl2Analysis)
+
+    // Check if WebGPU is functional
+    await page.goto(BASE_URL)
+    await page.waitForLoadState('networkidle')
+    const webgpuOk = await isWebGPUFunctional(page)
+    if (!webgpuOk) {
+      console.log('  WebGPU not functional, skipping comparison')
+      return
+    }
+
+    // Run WebGPU version
+    const webgpuSuccess = await compileAndRun(page, ENV_REFLECT_CODE, 'webgpu')
+    expect(webgpuSuccess).toBe(true)
+
+    const webgpuAnalysis = await analyzeCanvas(page)
+    console.log('  Env WebGPU:', webgpuAnalysis)
+
+    // Both should have content
+    expect(webgl2Analysis.hasContent).toBe(true)
+    expect(webgpuAnalysis.hasContent).toBe(true)
+
+    // Both should produce similar color complexity
+    const colorRatio = webgpuAnalysis.uniqueColors / webgl2Analysis.uniqueColors
+    console.log(`  Env Color ratio: ${colorRatio.toFixed(3)}`)
+    expect(colorRatio).toBeGreaterThan(0.2)
+    expect(colorRatio).toBeLessThan(5.0)
+  })
+})

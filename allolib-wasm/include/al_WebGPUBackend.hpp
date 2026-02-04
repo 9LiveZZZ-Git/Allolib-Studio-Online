@@ -227,6 +227,43 @@ public:
     /// Draw skybox with current environment texture
     void drawSkybox(const float* viewMatrix, const float* projMatrix);
 
+    // ── Environment Reflections (Phase 6) ──────────────────────────────────
+
+    /// Set environment rotation angle (radians around Y axis)
+    void setEnvironmentRotation(float angleRadians);
+
+    /// Begin environment reflection rendering
+    /// @param cameraPos Camera position in world space
+    /// @param reflectivity Reflection strength (0-1)
+    /// @param baseColor Base material color when not reflecting
+    void beginEnvReflect(const float* cameraPos, float reflectivity,
+                         const float* baseColor);
+
+    /// End environment reflection rendering
+    void endEnvReflect();
+
+    /// Draw mesh with environment reflection shader
+    void drawEnvReflect(
+        const float* modelViewMatrix,
+        const float* projectionMatrix,
+        const float* normalMatrix,
+        BufferHandle vertexBuffer,
+        int vertexCount,
+        PrimitiveType primitive = PrimitiveType::Triangles
+    );
+
+    /// Draw indexed mesh with environment reflection shader
+    void drawEnvReflectIndexed(
+        const float* modelViewMatrix,
+        const float* projectionMatrix,
+        const float* normalMatrix,
+        BufferHandle vertexBuffer,
+        BufferHandle indexBuffer,
+        int indexCount,
+        bool use32BitIndices = false,
+        PrimitiveType primitive = PrimitiveType::Triangles
+    );
+
     // ── PBR Rendering (Phase 5) ─────────────────────────────────────────────
 
     /// Enable or disable PBR rendering mode
@@ -386,7 +423,31 @@ private:
     TextureHandle mBoundEnvironmentTexture;
     float mEnvExposure = 1.0f;
     float mEnvGamma = 2.2f;
+    float mEnvRotation = 0.0f;  // Phase 6: Y-axis rotation in radians
     bool mSkyboxBindingDirty = true;
+
+    // Environment Reflection state (Phase 6)
+    ShaderHandle mEnvReflectShader;
+    WGPUBuffer mEnvReflectUniformBuffer = nullptr;
+    WGPUBindGroup mEnvReflectBindGroup = nullptr;
+    WGPUBindGroupLayout mEnvReflectBindGroupLayout = nullptr;
+    WGPURenderPipeline mEnvReflectPipeline = nullptr;
+    bool mEnvReflectBindingDirty = true;
+    bool mEnvReflectActive = false;
+
+    // Environment reflection uniforms (Phase 6)
+    struct EnvReflectUniforms {
+        float modelViewMatrix[16];
+        float projectionMatrix[16];
+        float normalMatrix[12];  // mat3 as 3x vec4
+        float cameraPos[4];      // xyz + pad
+        float baseColor[4];      // rgba
+        float exposure;
+        float gamma;
+        float reflectivity;
+        float envRotation;
+    };
+    EnvReflectUniforms mEnvReflectUniforms;
 
     // PBR state (Phase 5)
     ShaderHandle mPBRShader;
@@ -501,15 +562,17 @@ private:
     void createDepthBuffer();
     void createDefaultShader();
     void createTexturedShader();
-    void createLightingShader();     // Phase 2: Lighting
-    void createSkyboxShader();       // Phase 4: Skybox
-    void createSkyboxMesh();         // Phase 4: Skybox
-    void createPBRShader();          // Phase 5: PBR
-    void createPBRFallbackShader();  // Phase 5: PBR fallback
+    void createLightingShader();       // Phase 2: Lighting
+    void createSkyboxShader();         // Phase 4: Skybox
+    void createSkyboxMesh();           // Phase 4: Skybox
+    void createPBRShader();            // Phase 5: PBR
+    void createPBRFallbackShader();    // Phase 5: PBR fallback
+    void createEnvReflectShader();     // Phase 6: Environment reflections
     void updateTexturedBindGroup();
-    void updateLightingBindGroup();  // Phase 2: Lighting
-    void updateSkyboxBindGroup();    // Phase 4: Skybox
-    void updatePBRBindGroup();       // Phase 5: PBR
+    void updateLightingBindGroup();    // Phase 2: Lighting
+    void updateSkyboxBindGroup();      // Phase 4: Skybox
+    void updatePBRBindGroup();         // Phase 5: PBR
+    void updateEnvReflectBindGroup();  // Phase 6: Environment reflections
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();
