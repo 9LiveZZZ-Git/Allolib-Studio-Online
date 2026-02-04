@@ -533,10 +533,10 @@ _al_obj_delete(const char* id)
 | **Graphics (WebGPU)** | Basic mesh rendering | ✅ |
 | | 2D Textures | ✅ Phase 1 |
 | | Full lighting (multi-light, materials) | ✅ Phase 2 |
-| | EasyFBO / render-to-texture | ⏳ Phase 3 pending |
-| | Cubemaps / skybox | ⏳ Phase 4 pending |
-| | PBR system | ⏳ Phase 5 pending |
-| | HDRI / IBL | ⏳ Phase 6 pending |
+| | EasyFBO / render-to-texture | ✅ Phase 3 |
+| | Cubemaps / skybox | ✅ Phase 4 |
+| | PBR system | ✅ Phase 5 |
+| | HDRI / IBL | ✅ Phase 6 |
 | **Audio** | Web Audio + AudioWorklet | ✅ |
 | | Polyphonic synthesis | ✅ |
 | | Gamma DSP (oscillators, envelopes, filters) | ✅ |
@@ -568,10 +568,10 @@ _al_obj_delete(const char* id)
 |-------|---------|----------|------------------|--------|
 | 1 | 2D Textures | ~200 | 15 | ✅ COMPLETE |
 | 2 | Full Lighting | ~450 | 10 | ✅ COMPLETE |
-| 3 | EasyFBO | ~150 | 5 | Pending |
-| 4 | Cubemaps/Skybox | ~180 | 8 | Pending |
-| 5 | WebPBR | ~300 | 12 | Pending |
-| 6 | WebEnvironment/HDRI | ~200 | 6 | Pending |
+| 3 | EasyFBO | ~350 | 5 | ✅ COMPLETE |
+| 4 | Cubemaps/Skybox | ~350 | 8 | ✅ COMPLETE |
+| 5 | WebPBR | ~300 | 12 | ✅ COMPLETE |
+| 6 | WebEnvironment/HDRI | ~400 | 6 | ✅ COMPLETE |
 | 7 | ProceduralTexture | ~100 | 4 | Pending |
 | 8 | LOD System | ~50 | 4 | Pending |
 
