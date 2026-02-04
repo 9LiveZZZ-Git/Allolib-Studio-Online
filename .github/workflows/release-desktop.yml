@@ -11,6 +11,9 @@ on:
         required: true
         default: 'v0.1.0-beta.1'
 
+permissions:
+  contents: write
+
 jobs:
   # Build frontend and backend first
   build-web:

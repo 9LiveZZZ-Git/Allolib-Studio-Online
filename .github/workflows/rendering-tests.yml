@@ -33,6 +33,10 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+  issues: write
+
 env:
   NODE_VERSION: '20'
   DOCKER_BUILDKIT: 1

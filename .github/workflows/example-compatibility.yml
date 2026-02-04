@@ -42,6 +42,10 @@ on:
       - 'frontend/src/data/**'
       - 'allolib-wasm/**'
 
+permissions:
+  contents: read
+  issues: write
+
 env:
   NODE_VERSION: '20'
 
