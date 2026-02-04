@@ -83,6 +83,51 @@ void Graphics_registerTexture(GLuint glTextureId, int width, int height, const v
     }
 }
 
+// Register a texture as a render target (for FBO color/depth attachments)
+// Unlike Graphics_registerTexture, this doesn't need pixel data and sets renderTarget flag
+void Graphics_registerRenderTargetTexture(GLuint glTextureId, int width, int height, bool isDepth) {
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) return;
+
+    // Check if already registered
+    auto it = sTextureBridge.find(glTextureId);
+    if (it != sTextureBridge.end() && it->second.webgpuHandle.valid()) {
+        // Already registered - check if size matches
+        if (it->second.width == width && it->second.height == height) {
+            return; // Already registered with correct size
+        }
+        // Size changed - destroy old and recreate
+        sGraphicsBackend->destroyTexture(it->second.webgpuHandle);
+        sTextureBridge.erase(it);
+    }
+
+    TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.renderTarget = true;  // Key difference: this is a render target
+
+    if (isDepth) {
+        desc.format = PixelFormat::Depth24;
+    } else {
+        desc.format = PixelFormat::RGBA8;
+    }
+
+    // FBO textures typically use nearest filtering and clamp-to-edge
+    desc.minFilter = FilterMode::Nearest;
+    desc.magFilter = FilterMode::Nearest;
+    desc.wrapS = WrapMode::ClampToEdge;
+    desc.wrapT = WrapMode::ClampToEdge;
+
+    // Create without initial data (it's a render target)
+    TextureHandle handle = sGraphicsBackend->createTexture(desc, nullptr);
+    if (handle.valid()) {
+        sTextureBridge[glTextureId] = {handle, width, height, 1};
+        printf("[Graphics] Registered GL texture %u as render target (size: %dx%d, depth: %s)\n",
+               glTextureId, width, height, isDepth ? "yes" : "no");
+    } else {
+        printf("[Graphics] Failed to create render target texture for GL texture %u\n", glTextureId);
+    }
+}
+
 // Called when a GL texture is bound - sync to WebGPU backend
 void Graphics_onTextureBind(GLuint glTextureId, int unit) {
     if (!sWebGPUMode || !sGraphicsBackend) return;
@@ -154,23 +199,43 @@ void Graphics_bindFramebuffer(unsigned int fboId) {
 #endif
 }
 
+// Counter for synthetic depth texture IDs (for FBOs using RBOs)
+static GLuint sSyntheticDepthIdCounter = 0x80000000;  // Start high to avoid conflicts
+
 // Register an EasyFBO with the WebGPU bridge
 // Called after EasyFBO::init() to create WebGPU render target
 void EasyFBO_registerWithBridge(unsigned int fboId, unsigned int colorTexId,
                                  unsigned int depthTexId, int width, int height) {
     if (!sWebGPUMode || !sGraphicsBackend) return;
 
-    // Get WebGPU texture handles from texture bridge
+    // First, register the color texture as a render target
+    Graphics_registerRenderTargetTexture(colorTexId, width, height, false);
+
+    // Handle depth: WebGPU needs a depth texture even if GL used an RBO
+    // If depthTexId is 0, create a synthetic depth texture for WebGPU
+    GLuint effectiveDepthId = depthTexId;
+    if (depthTexId == 0) {
+        // Generate a synthetic ID for the depth texture
+        effectiveDepthId = sSyntheticDepthIdCounter++;
+        printf("[EasyFBO] Creating synthetic depth texture for FBO %u (synthetic ID: %u)\n",
+               fboId, effectiveDepthId);
+    }
+    Graphics_registerRenderTargetTexture(effectiveDepthId, width, height, true);
+
+    // Now get WebGPU texture handles from texture bridge
     TextureHandle colorHandle = Graphics_getTextureHandle(colorTexId);
 
     if (!colorHandle.valid()) {
-        printf("[EasyFBO] Warning: Color texture %u not registered, cannot create WebGPU render target\n",
-               colorTexId);
+        printf("[EasyFBO] Warning: Color texture %u registration failed\n", colorTexId);
         return;
     }
 
-    // Create render target in WebGPU backend (depth is optional)
-    TextureHandle depthHandle = Graphics_getTextureHandle(depthTexId);
+    // Get depth handle (should always be valid now)
+    TextureHandle depthHandle = Graphics_getTextureHandle(effectiveDepthId);
+    if (!depthHandle.valid()) {
+        printf("[EasyFBO] Warning: Depth texture registration failed\n");
+    }
+
     RenderTargetHandle rtHandle = sGraphicsBackend->createRenderTarget(colorHandle, depthHandle);
 
     if (rtHandle.valid()) {

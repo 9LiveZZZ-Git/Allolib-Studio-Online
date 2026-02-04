@@ -19,8 +19,9 @@
 
 namespace al {
 
-// Forward declaration of bridge function (defined in al_Graphics_Web.cpp)
+// Forward declarations of bridge functions (defined in al_Graphics_Web.cpp)
 extern void Graphics_bindFramebuffer(unsigned int fboId);
+extern bool Graphics_isWebGPU();
 
 // ─── RBO Implementation (unchanged from original) ─────────────────────────────
 
@@ -149,16 +150,22 @@ void FBO::bind(unsigned fboID) {
 }
 
 void FBO::renderBuffer(unsigned rboID, unsigned int attachment) {
+  // Skip GL call in WebGPU mode - render target setup happens in EasyFBO_registerWithBridge
+  if (Graphics_isWebGPU()) return;
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, rboID);
 }
 
 void FBO::texture2D(unsigned texID, unsigned int attachment, int level) {
+  // Skip GL call in WebGPU mode - render target setup happens in EasyFBO_registerWithBridge
+  if (Graphics_isWebGPU()) return;
   glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, texID,
                          level);
 }
 
 void FBO::textureCubemapFace(unsigned int texID, unsigned int target_face,
                              unsigned int attachment, int level) {
+  // Skip GL call in WebGPU mode - render target setup happens in EasyFBO_registerWithBridge
+  if (Graphics_isWebGPU()) return;
   glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, target_face, texID, level);
 }
 

@@ -405,6 +405,7 @@ private:
     ShaderHandle mCurrentShader;
     ShaderHandle mDefaultShader;    // Default mesh shader for fallback
     ShaderHandle mTexturedShader;   // Textured mesh shader
+    ShaderHandle mScreenSpaceShader; // Screen-space textured shader (for post-processing)
     ShaderHandle mLitShader;        // Lighting shader (Phase 2)
 
     // Lighting state (Phase 2)
@@ -562,6 +563,7 @@ private:
     void createDepthBuffer();
     void createDefaultShader();
     void createTexturedShader();
+    void createScreenSpaceShader();    // Screen-space shader for post-processing
     void createLightingShader();       // Phase 2: Lighting
     void createSkyboxShader();         // Phase 4: Skybox
     void createSkyboxMesh();           // Phase 4: Skybox

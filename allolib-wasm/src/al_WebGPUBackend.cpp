@@ -217,6 +217,77 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4f {
 }
 )";
 
+// ─── Screen-space Textured Shader ────────────────────────────────────────────
+// For post-processing and full-screen quads - no transformation applied
+// Use this when rendering to a screen-filling quad with vertices in NDC
+
+static const char* kScreenSpaceVertexShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3f,
+    @location(1) color: vec4f,
+    @location(2) texcoord: vec2f,
+    @location(3) normal: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+    @location(1) texcoord: vec2f,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    // No transformation - position is already in NDC
+    out.position = vec4f(in.position.xy, 0.0, 1.0);
+    out.color = in.color;
+    out.texcoord = in.texcoord;
+
+    return out;
+}
+)";
+
+static const char* kScreenSpaceFragmentShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var tex0: texture_2d<f32>;
+@group(0) @binding(2) var samp0: sampler;
+
+struct FragmentInput {
+    @location(0) color: vec4f,
+    @location(1) texcoord: vec2f,
+}
+
+@fragment
+fn fs_main(in: FragmentInput) -> @location(0) vec4f {
+    // Sample texture - no lighting, just apply tint
+    let texColor = textureSample(tex0, samp0, in.texcoord);
+    return vec4f(texColor.rgb * uniforms.tint.rgb, texColor.a * uniforms.tint.a);
+}
+)";
+
 // ─── Lighting Shader (Phase 2) ───────────────────────────────────────────────
 // Full Phong/Blinn lighting with up to 8 lights
 
@@ -721,21 +792,22 @@ fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, roughness: f32) -> vec3f {
 }
 
 // Sample environment with roughness blur approximation
+// All texture samples are unconditional for WGSL uniform control flow compliance
 fn sampleEnvLOD(worldDir: vec3f, roughness: f32) -> vec3f {
     let uv = directionToUV(worldDir);
-    var color = textureSample(envMap, envSampler, uv).rgb;
+    let centerSample = textureSample(envMap, envSampler, uv).rgb;
 
-    // Approximate roughness blur
-    if (roughness > 0.1) {
-        let blur = roughness * 0.03;
-        color = color + textureSample(envMap, envSampler, uv + vec2f(blur, 0.0)).rgb;
-        color = color + textureSample(envMap, envSampler, uv + vec2f(-blur, 0.0)).rgb;
-        color = color + textureSample(envMap, envSampler, uv + vec2f(0.0, blur)).rgb;
-        color = color + textureSample(envMap, envSampler, uv + vec2f(0.0, -blur)).rgb;
-        color = color / 5.0;
-    }
+    // Always sample blur offsets (WGSL requires uniform control flow for textureSample)
+    let blur = max(roughness * 0.03, 0.001);
+    let blurSample1 = textureSample(envMap, envSampler, uv + vec2f(blur, 0.0)).rgb;
+    let blurSample2 = textureSample(envMap, envSampler, uv + vec2f(-blur, 0.0)).rgb;
+    let blurSample3 = textureSample(envMap, envSampler, uv + vec2f(0.0, blur)).rgb;
+    let blurSample4 = textureSample(envMap, envSampler, uv + vec2f(0.0, -blur)).rgb;
 
-    return color;
+    let blurredColor = (centerSample + blurSample1 + blurSample2 + blurSample3 + blurSample4) / 5.0;
+
+    // Select between sharp and blurred based on roughness
+    return select(centerSample, blurredColor, roughness > 0.1);
 }
 
 @fragment
@@ -759,23 +831,27 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4f {
     var F0 = vec3f(0.04);  // Dielectric default
     F0 = mix(F0, material.albedo.rgb, material.metallic);
 
-    // IBL Diffuse
+    // IBL Diffuse - sample irradiance map
     let irradianceUV = directionToUV(worldN);
-    var irradiance = textureSample(irradianceMap, envSampler, irradianceUV).rgb;
+    let irradianceMapSample = textureSample(irradianceMap, envSampler, irradianceUV).rgb;
 
-    // Fallback if irradiance map is weak
-    if (length(irradiance) < 0.001) {
-        let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(worldN.y) >= 0.999);
-        let tangent = normalize(cross(up, worldN));
-        let bitangent = cross(worldN, tangent);
+    // Compute fallback irradiance from env map (always computed for uniform control flow)
+    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(worldN.y) >= 0.999);
+    let tangent = normalize(cross(up, worldN));
+    let bitangent = cross(worldN, tangent);
 
-        irradiance = textureSample(envMap, envSampler, directionToUV(worldN)).rgb * 0.3;
-        irradiance = irradiance + textureSample(envMap, envSampler, directionToUV(normalize(worldN + tangent * 0.5))).rgb * 0.15;
-        irradiance = irradiance + textureSample(envMap, envSampler, directionToUV(normalize(worldN - tangent * 0.5))).rgb * 0.15;
-        irradiance = irradiance + textureSample(envMap, envSampler, directionToUV(normalize(worldN + bitangent * 0.5))).rgb * 0.15;
-        irradiance = irradiance + textureSample(envMap, envSampler, directionToUV(normalize(worldN - bitangent * 0.5))).rgb * 0.15;
-        irradiance = irradiance + textureSample(envMap, envSampler, directionToUV(normalize(worldN + vec3f(0.0, 0.5, 0.0)))).rgb * 0.1;
-    }
+    // Sample all directions unconditionally (WGSL uniform control flow requirement)
+    let fallbackCenter = textureSample(envMap, envSampler, directionToUV(worldN)).rgb * 0.3;
+    let fallbackTangentP = textureSample(envMap, envSampler, directionToUV(normalize(worldN + tangent * 0.5))).rgb * 0.15;
+    let fallbackTangentN = textureSample(envMap, envSampler, directionToUV(normalize(worldN - tangent * 0.5))).rgb * 0.15;
+    let fallbackBitangentP = textureSample(envMap, envSampler, directionToUV(normalize(worldN + bitangent * 0.5))).rgb * 0.15;
+    let fallbackBitangentN = textureSample(envMap, envSampler, directionToUV(normalize(worldN - bitangent * 0.5))).rgb * 0.15;
+    let fallbackUp = textureSample(envMap, envSampler, directionToUV(normalize(worldN + vec3f(0.0, 0.5, 0.0)))).rgb * 0.1;
+    let fallbackIrradiance = fallbackCenter + fallbackTangentP + fallbackTangentN + fallbackBitangentP + fallbackBitangentN + fallbackUp;
+
+    // Select between irradiance map and fallback based on irradiance map strength
+    let useIrradianceMap = length(irradianceMapSample) >= 0.001;
+    var irradiance = select(fallbackIrradiance, irradianceMapSample, useIrradianceMap);
 
     let NdotV = max(dot(N, V), 0.0);
     let kS = fresnelSchlickRoughness(NdotV, F0, material.roughness);
@@ -1099,6 +1175,10 @@ bool WebGPUBackend::init(int width, int height) {
     // Create textured shader
     printf("[WebGPUBackend] Creating textured shader...\n");
     createTexturedShader();
+
+    // Create screen-space shader (for post-processing)
+    printf("[WebGPUBackend] Creating screen-space shader...\n");
+    createScreenSpaceShader();
 
     // Create lighting shader (Phase 2)
     printf("[WebGPUBackend] Creating lighting shader...\n");
@@ -2241,15 +2321,20 @@ void WebGPUBackend::draw(
     flushUniforms();
 
     // Check rendering modes
-    bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+    bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
+    // Use screen-space shader for textured rendering without lighting (post-processing)
+    bool useScreenSpace = hasTexture && !useLighting && mScreenSpaceShader.valid();
+    bool useTextured = hasTexture && !useScreenSpace && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > textured > default
+    // Shader selection priority: custom > lighting > screen-space > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
+    } else if (useScreenSpace) {
+        shaderToUse = mScreenSpaceShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2282,8 +2367,8 @@ void WebGPUBackend::draw(
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
-    } else if (useTextured && !mCurrentShader.valid()) {
-        // Update textured bind group if needed
+    } else if ((useScreenSpace || useTextured) && !mCurrentShader.valid()) {
+        // Screen-space and textured shaders share the same bind group layout
         if (mTextureBindingDirty || !mTexturedBindGroup) {
             updateTexturedBindGroup();
         }
@@ -2319,15 +2404,20 @@ void WebGPUBackend::drawIndexed(
     flushUniforms();
 
     // Check rendering modes
-    bool useTextured = mBoundTextures[0].valid() && mTexturedShader.valid();
+    bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
+    // Use screen-space shader for textured rendering without lighting (post-processing)
+    bool useScreenSpace = hasTexture && !useLighting && mScreenSpaceShader.valid();
+    bool useTextured = hasTexture && !useScreenSpace && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > textured > default
+    // Shader selection priority: custom > lighting > screen-space > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
+    } else if (useScreenSpace) {
+        shaderToUse = mScreenSpaceShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2359,7 +2449,8 @@ void WebGPUBackend::drawIndexed(
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
-    } else if (useTextured && !mCurrentShader.valid()) {
+    } else if ((useScreenSpace || useTextured) && !mCurrentShader.valid()) {
+        // Screen-space and textured shaders share the same bind group layout
         if (mTextureBindingDirty || !mTexturedBindGroup) {
             updateTexturedBindGroup();
         }
@@ -3078,6 +3169,156 @@ void WebGPUBackend::updateTexturedBindGroup() {
 
     mTexturedBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
     mTextureBindingDirty = false;
+}
+
+void WebGPUBackend::createScreenSpaceShader() {
+    // Screen-space shader for post-processing - no transformation
+    ShaderResource resource;
+    resource.name = "screenspace_textured";
+
+    // Create vertex shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescVert = {};
+    wgslDescVert.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescVert.code = kScreenSpaceVertexShader;
+
+    WGPUShaderModuleDescriptor moduleDescVert = {};
+    moduleDescVert.nextInChain = &wgslDescVert.chain;
+    moduleDescVert.label = "screenspace_vert";
+    resource.vertModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescVert);
+
+    // Create fragment shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescFrag = {};
+    wgslDescFrag.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescFrag.code = kScreenSpaceFragmentShader;
+
+    WGPUShaderModuleDescriptor moduleDescFrag = {};
+    moduleDescFrag.nextInChain = &wgslDescFrag.chain;
+    moduleDescFrag.label = "screenspace_frag";
+    resource.fragModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescFrag);
+
+    if (!resource.vertModule || !resource.fragModule) {
+        printf("[WebGPUBackend] ERROR: Failed to create screen-space shader modules!\n");
+        return;
+    }
+
+    // Create bind group layout with uniform buffer + texture + sampler
+    WGPUBindGroupLayoutEntry layoutEntries[3] = {};
+
+    // Binding 0: Uniform buffer
+    layoutEntries[0].binding = 0;
+    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[0].buffer.minBindingSize = 160;
+    layoutEntries[0].buffer.hasDynamicOffset = true;
+
+    // Binding 1: Texture
+    layoutEntries[1].binding = 1;
+    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[1].texture.sampleType = WGPUTextureSampleType_Float;
+    layoutEntries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+    layoutEntries[1].texture.multisampled = false;
+
+    // Binding 2: Sampler
+    layoutEntries[2].binding = 2;
+    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[2].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = 3;
+    layoutDesc.entries = layoutEntries;
+    resource.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
+
+    // Create pipeline layout
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
+    resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
+
+    // Create render pipeline
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = resource.pipelineLayout;
+
+    // Vertex state - must match InterleavedVertex layout
+    WGPUVertexAttribute vertexAttrs[4] = {};
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;  // sizeof(InterleavedVertex)
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    WGPUVertexState vertexState = {};
+    vertexState.module = resource.vertModule;
+    vertexState.entryPoint = "vs_main";
+    vertexState.bufferCount = 1;
+    vertexState.buffers = &vertexBufferLayout;
+    pipelineDesc.vertex = vertexState;
+
+    // Primitive state
+    WGPUPrimitiveState primitiveState = {};
+    primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
+    primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
+    primitiveState.frontFace = WGPUFrontFace_CCW;
+    primitiveState.cullMode = WGPUCullMode_None;
+    pipelineDesc.primitive = primitiveState;
+
+    // Fragment state - alpha blending
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = resource.fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    // No depth testing for screen-space rendering
+    pipelineDesc.depthStencil = nullptr;
+
+    // Multisample
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    resource.defaultPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (!resource.defaultPipeline) {
+        printf("[WebGPUBackend] ERROR: Failed to create screen-space shader pipeline!\n");
+        wgpuPipelineLayoutRelease(resource.pipelineLayout);
+        wgpuBindGroupLayoutRelease(resource.bindGroupLayout);
+        wgpuShaderModuleRelease(resource.fragModule);
+        wgpuShaderModuleRelease(resource.vertModule);
+        return;
+    }
+
+    resource.pipelines[static_cast<int>(PrimitiveType::Triangles)] = resource.defaultPipeline;
+
+    uint64_t id = generateHandleId();
+    mShaders[id] = std::move(resource);
+    mScreenSpaceShader = ShaderHandle{id};
+
+    printf("[WebGPUBackend] Screen-space shader created successfully\n");
 }
 
 void WebGPUBackend::createLightingShader() {
