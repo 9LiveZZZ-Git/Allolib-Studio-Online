@@ -40,6 +40,7 @@
 #include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
 #include "al/math/al_Matrix4.hpp"
+#include "al/math/al_Random.hpp"
 #include "al/spatial/al_Pose.hpp"
 #include "al_WebAutoLOD.hpp"
 #include "al_WebGraphicsBackend.hpp"

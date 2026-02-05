@@ -2590,14 +2590,25 @@ public:
             auto* voice = synth.getVoice<AVVoice>();
             voice->setInternalParameterValue("frequency", freqs[note]);
             voice->setInternalParameterValue("amplitude", 0.3);
-            synth.triggerOn(voice);
+            synth.triggerOn(voice, 0, note);
         }
 
         return true;
     }
 
     bool onKeyUp(Keyboard const& k) override {
-        synth.triggerOff();
+        int note = -1;
+        switch (k.key()) {
+            case 'a': note = 0; break;
+            case 's': note = 1; break;
+            case 'd': note = 2; break;
+            case 'f': note = 3; break;
+            case 'j': note = 4; break;
+            case 'k': note = 5; break;
+            case 'l': note = 6; break;
+            case ';': note = 7; break;
+        }
+        if (note >= 0) synth.triggerOff(note);
         return true;
     }
 };
@@ -5134,7 +5145,7 @@ public:
         objectManager().initMeshes();
 
         // Create some objects via ObjectManager
-        auto* obj1 = objectManager().createObject("sphere1", "Red Sphere", PrimitiveType::Sphere);
+        auto* obj1 = objectManager().createObject("sphere1", "Red Sphere", ObjectPrimitive::Sphere);
         if (obj1) {
             obj1->material.color = Color(1, 0.3, 0.3, 1);
             obj1->material.type = MaterialType::PBR;
@@ -5142,7 +5153,7 @@ public:
             obj1->material.roughness = 0.2;
         }
 
-        auto* obj2 = objectManager().createObject("cube1", "Blue Cube", PrimitiveType::Cube);
+        auto* obj2 = objectManager().createObject("cube1", "Blue Cube", ObjectPrimitive::Cube);
         if (obj2) {
             obj2->material.color = Color(0.3, 0.5, 1, 1);
             obj2->material.type = MaterialType::PBR;
@@ -5150,7 +5161,7 @@ public:
             obj2->material.roughness = 0.6;
         }
 
-        auto* obj3 = objectManager().createObject("torus1", "Gold Torus", PrimitiveType::Torus);
+        auto* obj3 = objectManager().createObject("torus1", "Gold Torus", ObjectPrimitive::Torus);
         if (obj3) {
             obj3->material.color = Color(1, 0.8, 0.2, 1);
             obj3->material.type = MaterialType::PBR;
@@ -5458,6 +5469,8 @@ int main() {
 #include "al/graphics/al_Shapes.hpp"
 #include "al/scene/al_PolySynth.hpp"
 #include "al/scene/al_SynthSequencer.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
 
 using namespace al;
 
@@ -5541,7 +5554,7 @@ public:
         // Setup synth
         pSynth.allocatePolyphony<PadSynth>(8);
         pSynth.setDefaultUserData(this);
-        sequencer.synth(pSynth);
+        // sequencer uses pSynth directly via render
 
         // Create crystal mesh (elongated octahedron)
         crystalMesh.primitive(Mesh::TRIANGLES);
@@ -5796,79 +5809,39 @@ int main() {
  */
 
 #include "al_WebApp.hpp"
-#include "al_WebObjectManager.hpp"
 #include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
 
 class ProceduralPlanet : public WebApp {
 public:
-    // Meshes (custom rendering - not using ObjectManager's meshes)
     Mesh planetMesh;
     Mesh atmosphereMesh;
     Mesh ringMesh;
     Mesh moonMesh;
 
-    // Timeline objects (for tracking transforms)
-    SceneObject* tlPlanet = nullptr;
-    SceneObject* tlRings = nullptr;
-    SceneObject* tlMoon1 = nullptr;
-    SceneObject* tlMoon2 = nullptr;
-    SceneObject* tlMoon3 = nullptr;
-
-    // Animation state
     double time = 0;
     float planetRotation = 0;
     float ringRotation = 0;
     float atmosphereGlow = 0.5f;
 
-    // Moon orbital positions
     struct Moon {
         float orbitRadius;
         float orbitSpeed;
         float size;
         Color color;
         float phase;
-        SceneObject* timeline; // Link to timeline object
+        Vec3f pos;
     };
     std::vector<Moon> moons;
 
-    // Keyframe time (0-60 seconds loop)
     float duration = 60.0f;
 
     void onCreate() override {
-        // Initialize ObjectManager meshes (required for timeline integration)
-        objectManager().initMeshes();
-
-        // Register objects with timeline (these will appear in the Objects panel)
-        // Users can add keyframes to animate position, scale, rotation, color
-        tlPlanet = registerTimelineObject("planet", "Planet", PrimitiveType::Sphere,
-                                          Vec3f(0, 0, 0), Vec3f(2, 2, 2),
-                                          Color(0.3f, 0.5f, 0.8f, 1.0f));
-
-        tlRings = registerTimelineObject("rings", "Rings", PrimitiveType::Torus,
-                                         Vec3f(0, 0, 0), Vec3f(3.5f, 0.15f, 3.5f),
-                                         Color(0.7f, 0.6f, 0.5f, 0.6f));
-
-        // Register moons
-        tlMoon1 = registerTimelineObject("moon1", "Moon 1", PrimitiveType::Sphere,
-                                         Vec3f(4.5f, 0, 0), Vec3f(0.3f, 0.3f, 0.3f),
-                                         Color(0.8f, 0.7f, 0.6f, 1.0f));
-
-        tlMoon2 = registerTimelineObject("moon2", "Moon 2", PrimitiveType::Sphere,
-                                         Vec3f(0, 0, 6.0f), Vec3f(0.2f, 0.2f, 0.2f),
-                                         Color(0.6f, 0.6f, 0.7f, 1.0f));
-
-        tlMoon3 = registerTimelineObject("moon3", "Moon 3", PrimitiveType::Sphere,
-                                         Vec3f(-5.2f, 0, 0), Vec3f(0.15f, 0.15f, 0.15f),
-                                         Color(0.7f, 0.5f, 0.5f, 1.0f));
-
-        // Create custom planet mesh with procedural coloring
-        addSphere(planetMesh, 1.0f, 64, 64);  // Unit sphere, scale via transform
+        addSphere(planetMesh, 1.0f, 64, 64);
         planetMesh.generateNormals();
 
-        // Color vertices procedurally (simulating noise)
-        for (int i = 0; i < planetMesh.vertices().size(); i++) {
+        for (int i = 0; i < (int)planetMesh.vertices().size(); i++) {
             Vec3f& v = planetMesh.vertices()[i];
             float noise = sin(v.x * 5) * cos(v.y * 4) * sin(v.z * 6);
             float r = 0.2f + noise * 0.1f;
@@ -5877,58 +5850,39 @@ public:
             planetMesh.color(r, g, b, 1.0f);
         }
 
-        // Create atmosphere shell (slightly larger)
         addSphere(atmosphereMesh, 1.08f, 48, 48);
         atmosphereMesh.generateNormals();
 
-        // Create ring (torus) - unit size, scale via transform
         addTorus(ringMesh, 0.04f, 1.0f, 64, 16);
         ringMesh.generateNormals();
 
-        // Create moon mesh - unit sphere
         addSphere(moonMesh, 1.0f, 24, 24);
         moonMesh.generateNormals();
 
-        // Setup moons with links to timeline objects
-        moons.push_back({4.5f, 0.8f, 0.3f, Color(0.8f, 0.7f, 0.6f), 0.0f, tlMoon1});
-        moons.push_back({6.0f, 0.5f, 0.2f, Color(0.6f, 0.6f, 0.7f), M_PI * 0.5f, tlMoon2});
-        moons.push_back({5.2f, 0.65f, 0.15f, Color(0.7f, 0.5f, 0.5f), M_PI, tlMoon3});
+        moons.push_back({4.5f, 0.8f, 0.3f, Color(0.8f, 0.7f, 0.6f), 0.0f, Vec3f(0,0,0)});
+        moons.push_back({6.0f, 0.5f, 0.2f, Color(0.6f, 0.6f, 0.7f), (float)(M_PI * 0.5), Vec3f(0,0,0)});
+        moons.push_back({5.2f, 0.65f, 0.15f, Color(0.7f, 0.5f, 0.5f), (float)M_PI, Vec3f(0,0,0)});
 
-        // Camera position
         nav().pos(0, 5, 12);
         nav().faceToward(Vec3d(0, 0, 0));
-
-        std::cout << "Procedural Planet Demo - Timeline Integrated" << std::endl;
-        std::cout << "Objects registered in timeline: Planet, Rings, Moon 1-3" << std::endl;
-        std::cout << "Add keyframes in the timeline panel to animate them!" << std::endl;
     }
 
     void onAnimate(double dt) override {
         time += dt;
-        float t = fmod(time, duration) / duration; // 0-1 normalized time
+        float t = fmod(time, duration) / duration;
 
-        // Update procedural animation (will be overridden by keyframes if set)
         planetRotation = t * 360.0f;
         ringRotation = t * -180.0f;
         atmosphereGlow = 0.5f + 0.2f * sin(time * 0.5f);
 
-        // Update moon positions procedurally
-        // (Timeline keyframes can override these via the SceneObject transforms)
         for (size_t i = 0; i < moons.size(); i++) {
             auto& moon = moons[i];
             moon.phase += dt * moon.orbitSpeed;
-
-            // Update timeline object position (for display in timeline)
-            // If user has keyframes, the objectManagerBridge will override this
-            if (moon.timeline) {
-                float x = cos(moon.phase) * moon.orbitRadius;
-                float z = sin(moon.phase) * moon.orbitRadius;
-                float y = sin(moon.phase * 0.3f) * 0.5f;
-                moon.timeline->transform.position.set(x, y, z);
-            }
+            moon.pos.x = cos(moon.phase) * moon.orbitRadius;
+            moon.pos.z = sin(moon.phase) * moon.orbitRadius;
+            moon.pos.y = sin(moon.phase * 0.3f) * 0.5f;
         }
 
-        // Slow camera orbit
         float camAngle = time * 3.0f;
         float camDist = 12.0f + sin(time * 0.1f) * 2.0f;
         nav().pos(
@@ -5947,11 +5901,9 @@ public:
         g.blending(true);
         g.blendTrans();
 
-        // Get planet transform from timeline (allows keyframe animation)
-        Vec3f planetPos = tlPlanet ? tlPlanet->transform.position : Vec3f(0, 0, 0);
-        Vec3f planetScale = tlPlanet ? tlPlanet->transform.scale : Vec3f(2, 2, 2);
+        Vec3f planetPos(0, 0, 0);
+        Vec3f planetScale(2, 2, 2);
 
-        // Draw planet using timeline transform
         g.pushMatrix();
         g.translate(planetPos);
         g.scale(planetScale);
@@ -5960,7 +5912,6 @@ public:
         g.draw(planetMesh);
         g.popMatrix();
 
-        // Draw atmosphere
         g.pushMatrix();
         g.translate(planetPos);
         g.scale(planetScale);
@@ -5970,41 +5921,24 @@ public:
         g.draw(atmosphereMesh);
         g.popMatrix();
 
-        // Get rings transform from timeline
-        Vec3f ringsScale = tlRings ? tlRings->transform.scale : Vec3f(3.5f, 0.15f, 3.5f);
-
-        // Draw rings
         g.pushMatrix();
-        g.translate(planetPos);  // Rings follow planet
-        g.scale(ringsScale);
+        g.translate(planetPos);
+        g.scale(3.5f, 0.15f, 3.5f);
         g.rotate(ringRotation, 0, 1, 0);
         g.rotate(75, 1, 0, 0);
-        g.color(tlRings ? tlRings->material.color : Color(0.7f, 0.6f, 0.5f, 0.6f));
+        g.color(0.7f, 0.6f, 0.5f, 0.6f);
         g.draw(ringMesh);
         g.popMatrix();
 
-        // Draw moons using timeline transforms
         for (const auto& moon : moons) {
             g.pushMatrix();
-            if (moon.timeline) {
-                // Use timeline position (can be keyframed)
-                g.translate(moon.timeline->transform.position);
-                g.scale(moon.timeline->transform.scale);
-                g.color(moon.timeline->material.color);
-            } else {
-                // Fallback to procedural
-                float x = cos(moon.phase) * moon.orbitRadius;
-                float z = sin(moon.phase) * moon.orbitRadius;
-                float y = sin(moon.phase * 0.3f) * 0.5f;
-                g.translate(x, y, z);
-                g.scale(moon.size);
-                g.color(moon.color);
-            }
+            g.translate(moon.pos);
+            g.scale(moon.size);
+            g.color(moon.color);
             g.draw(moonMesh);
             g.popMatrix();
         }
 
-        // Draw orbit paths (faint)
         g.lighting(false);
         for (const auto& moon : moons) {
             g.pushMatrix();
@@ -6018,21 +5952,6 @@ public:
             g.draw(orbit);
             g.popMatrix();
         }
-
-        // Time indicator bar
-        g.pushMatrix();
-        g.loadIdentity();
-        g.translate(-0.9, 0.85, 0);
-        g.color(0.5, 0.7, 1.0, 0.7);
-        float progress = fmod(time, duration) / duration;
-        Mesh bar;
-        bar.primitive(Mesh::TRIANGLE_STRIP);
-        bar.vertex(0, 0, 0);
-        bar.vertex(0, 0.015, 0);
-        bar.vertex(0.5 * progress, 0, 0);
-        bar.vertex(0.5 * progress, 0.015, 0);
-        g.draw(bar);
-        g.popMatrix();
     }
 };
 
@@ -6225,8 +6144,8 @@ public:
         }
 
         // Sun intensity
-        sunIntensity = std::max(0.0f, sin(phase * M_2PI));
-        moonIntensity = std::max(0.0f, sin((phase + 0.5f) * M_2PI));
+        sunIntensity = std::max(0.0f, (float)sin(phase * M_2PI));
+        moonIntensity = std::max(0.0f, (float)sin((phase + 0.5f) * M_2PI));
 
         // Fog
         fogDensity = 0.02f + moonIntensity * 0.03f;

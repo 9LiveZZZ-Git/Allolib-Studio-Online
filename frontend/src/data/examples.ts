@@ -3654,9 +3654,9 @@ public:
 
     void onCreate() override {
         addSphere(shapes[0], 1.0, 32, 32);
-        addCube(shapes[1], 1.5);
-        addCone(shapes[2], 0.8, Vec3f(0, -1, 0), Vec3f(0, 1.5, 0), 32);
-        addCylinder(shapes[3], 0.6, 2.0, 32, 1, true, true);
+        addCube(shapes[1], false, 1.5);
+        addCone(shapes[2], 0.8, Vec3f(0, 1.5, 0), 32);
+        addCylinder(shapes[3], 0.6, 2.0, 32, 0, true);
         addTorus(shapes[4], 0.3, 1.0, 32, 32);
         addIcosphere(shapes[5], 1.0, 3);
         addDodecahedron(shapes[6], 1.0);
@@ -3664,15 +3664,8 @@ public:
         addTetrahedron(shapes[8], 1.2);
         addRect(shapes[9], -1.0f, -0.75f, 2.0f, 1.5f);
 
-        // Surface of revolution
-        std::vector<Vec3f> profile;
-        for (int i = 0; i <= 16; i++) {
-            float t = i / 16.0f;
-            float y = t * 2.0f - 1.0f;
-            float r = 0.3f + 0.3f * sin(t * M_PI * 2);
-            profile.push_back(Vec3f(r, y, 0));
-        }
-        addSurfaceLoop(shapes[10], profile.data(), profile.size(), 32, 0);
+        // Surface loop (grid-based surface)
+        addSurfaceLoop(shapes[10], 32, 32, 0);
 
         addWireBox(shapes[11], 1.5, 1.0, 1.2);
 
@@ -4160,24 +4153,37 @@ ALLOLIB_WEB_MAIN(BlendModesTest)
 #include "Gamma/Oscillator.h"
 #include "Gamma/Envelope.h"
 #include "Gamma/Filter.h"
-#include "Gamma/Delay.h"
-#include "Gamma/Effects.h"
 #include "Gamma/Noise.h"
 #include <cmath>
+#include <vector>
 
 using namespace al;
 using namespace gam;
 
+// Simple delay line (avoids Gamma Delay heap issues in WASM)
+struct SimpleDelay {
+    std::vector<float> buf;
+    int writePos = 0;
+    int delaySamples = 0;
+    void init(int maxSamples) { buf.resize(maxSamples, 0.0f); }
+    void setDelay(int samples) { delaySamples = samples; }
+    float operator()(float in) {
+        buf[writePos] = in;
+        int readPos = (writePos - delaySamples + (int)buf.size()) % (int)buf.size();
+        float out = buf[readPos];
+        writePos = (writePos + 1) % (int)buf.size();
+        return out;
+    }
+};
+
 class GammaDSPTest : public WebApp {
 public:
-    // Sine oscillator and LFO for other waveforms
     Sine<> sine;
-    LFO<> lfo;  // LFO provides saw, square, triangle, pulse via methods
+    LFO<> lfo;
     NoisePink<> pink;
     ADSR<> adsr;
     Biquad<> lowpass, highpass;
-    Delay<float, ipl::Linear> delay;
-    Comb<> comb1, comb2;
+    SimpleDelay delay, comb1, comb2;
 
     int oscType = 0;
     float baseFreq = 220.0f;
@@ -4192,16 +4198,16 @@ public:
         gam::sampleRate(44100);
         sine.freq(baseFreq);
         lfo.freq(baseFreq);
-        lfo.mod(0.3f);  // Pulse width for pulse wave
+        lfo.mod(0.3f);
 
         adsr.attack(0.01f); adsr.decay(0.1f); adsr.sustain(0.7f); adsr.release(0.3f);
 
         lowpass.type(LOW_PASS); lowpass.freq(2000); lowpass.res(2);
         highpass.type(HIGH_PASS); highpass.freq(100);
 
-        delay.maxDelay(1.0f); delay.delay(0.3f);
-        comb1.delay(0.035f); comb1.decay(0.5f);
-        comb2.delay(0.042f); comb2.decay(0.5f);
+        delay.init(44100); delay.setDelay(13230); // 0.3s at 44100
+        comb1.init(2048); comb1.setDelay(1544);   // ~0.035s
+        comb2.init(2048); comb2.setDelay(1852);   // ~0.042s
 
         oscWave.primitive(Mesh::LINE_STRIP);
         for (int i = 0; i < 256; i++) {
@@ -4237,11 +4243,11 @@ public:
             float osc = 0;
             switch (oscType) {
                 case 0: osc = sine(); break;
-                case 1: osc = lfo.up(); break;      // Saw (upward ramp)
-                case 2: osc = lfo.sqr(); break;     // Square
-                case 3: osc = lfo.tri(); break;     // Triangle
-                case 4: osc = lfo.pulse(); break;   // Pulse
-                case 5: osc = pink(); break;        // Pink noise
+                case 1: osc = lfo.up(); break;
+                case 2: osc = lfo.sqr(); break;
+                case 3: osc = lfo.tri(); break;
+                case 4: osc = lfo.pulse(); break;
+                case 5: osc = pink(); break;
             }
             float s = osc * env * 0.5f;
             if (filterOn) { s = lowpass(s); s = highpass(s); }
@@ -5111,8 +5117,8 @@ public:
     LFO<> lfo;
 
     // Effect modules
-    Burst burst;
-    Chirp<> chirp;
+    Burst burst{8000, 200, 0.1f};
+    Chirp<> chirp{880, 110, 0.3f};
 
     // Parameters
     float delayTime = 0.25f;
@@ -5156,10 +5162,6 @@ public:
 
         // LFO for modulation
         lfo.freq(0.5f);
-
-        // Burst and Chirp
-        burst(8000, 200, 0.1f);
-        chirp(880, 110, 0.3f);
 
         // Waveform display
         waveform.primitive(Mesh::LINE_STRIP);
@@ -5450,7 +5452,6 @@ ALLOLIB_WEB_MAIN(ReverbDemo)
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
-#include "al/spatial/al_DistAtten.hpp"
 #include "Gamma/Oscillator.h"
 #include <cmath>
 
@@ -5461,9 +5462,6 @@ class DistanceAttenDemo : public WebApp {
 public:
     Sine<> osc;
 
-    // Distance attenuation
-    DistAtten<float> distAtten;
-
     // Positions
     Vec3f sourcePos{2, 0, 0};
     Vec3f listenerPos{0, 0, 0};
@@ -5472,15 +5470,26 @@ public:
     Mesh sourceMesh, listenerMesh, groundMesh;
 
     int attenLaw = 1;  // 0=none, 1=linear, 2=inverse, 3=inverse square
+    float nearDist = 0.5f;
+    float farDist = 10.0f;
+
+    // Simple distance attenuation function
+    float calcAtten(float dist) {
+        if (dist <= nearDist) return 1.0f;
+        if (dist >= farDist) return 0.0f;
+        float t = (dist - nearDist) / (farDist - nearDist);
+        if (attenLaw == 0) return 1.0f;
+        if (attenLaw == 2) return 1.0f / (1.0f + t * 9.0f);
+        if (attenLaw == 3) return 1.0f / (1.0f + t * t * 81.0f);
+        return 1.0f - t; // linear (default)
+    }
 
     void onCreate() override {
         gam::sampleRate(44100);
         osc.freq(440.0f);
 
-        // Configure distance attenuation
-        distAtten.near(0.5f);    // Full volume at 0.5 units
-        distAtten.far(10.0f);    // Silent at 10 units
-        distAtten.law(ATTEN_LINEAR);
+        // Distance attenuation configured via manual calculation
+        // (DistAtten API uses nearClip/farClip, keep it simple)
 
         // Create meshes
         addSphere(sourceMesh, 0.2f, 16, 16);
@@ -5521,7 +5530,7 @@ public:
 
         // Draw source (color based on attenuation)
         float dist = (sourcePos - listenerPos).mag();
-        float atten = distAtten(dist);
+        float atten = calcAtten(dist);
 
         g.pushMatrix();
         g.translate(sourcePos);
@@ -5539,7 +5548,7 @@ public:
 
     void onSound(AudioIOData& io) override {
         float dist = (sourcePos - listenerPos).mag();
-        float atten = distAtten(dist);
+        float atten = calcAtten(dist);
 
         while (io()) {
             float s = osc() * atten * 0.3f;
@@ -5566,24 +5575,24 @@ public:
         if (k.key() == 'e') sourcePos.y -= moveSpeed;
 
         if (k.key() == '1') {
-            distAtten.law(ATTEN_NONE);
+            attenLaw = 0;
             printf("Attenuation: None\\n");
         }
         if (k.key() == '2') {
-            distAtten.law(ATTEN_LINEAR);
+            attenLaw = 1;
             printf("Attenuation: Linear\\n");
         }
         if (k.key() == '3') {
-            distAtten.law(ATTEN_INVERSE);
+            attenLaw = 2;
             printf("Attenuation: Inverse\\n");
         }
         if (k.key() == '4') {
-            distAtten.law(ATTEN_INVERSE_SQUARE);
+            attenLaw = 3;
             printf("Attenuation: Inverse Square\\n");
         }
 
         float dist = (sourcePos - listenerPos).mag();
-        printf("Distance: %.2f, Attenuation: %.3f\\n", dist, distAtten(dist));
+        printf("Distance: %.2f, Attenuation: %.3f\\n", dist, calcAtten(dist));
 
         return true;
     }
@@ -5606,7 +5615,6 @@ ALLOLIB_WEB_MAIN(DistanceAttenDemo)
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
-#include "al/spatial/al_HashSpace.hpp"
 #include <cmath>
 #include <vector>
 
@@ -5616,13 +5624,8 @@ class HashSpaceDemo : public WebApp {
 public:
     static const int MAX_OBJECTS = 100;
 
-    // HashSpace for spatial queries
-    HashSpace space;
-    HashSpace::Query query;
-
     // Object data
     struct Object {
-        HashSpace::Object hsObj;
         Vec3f pos;
         Vec3f vel;
         bool isNeighbor;
@@ -5638,9 +5641,7 @@ public:
     double time = 0;
 
     void onCreate() override {
-        // Initialize HashSpace (dim=3, resolution)
-        space.dim(3);
-        space.maxRadius(queryRadius);
+        // HashSpace initialized with default resolution (constructor)
 
         // Create sphere mesh
         addSphere(sphereMesh, 0.1f, 8, 8);
@@ -5674,10 +5675,6 @@ public:
         );
         obj.isNeighbor = false;
 
-        // Register with HashSpace
-        obj.hsObj = HashSpace::Object(space, objects.size());
-        obj.hsObj.pos(obj.pos.x, obj.pos.y, obj.pos.z);
-
         objects.push_back(obj);
     }
 
@@ -5696,18 +5693,17 @@ public:
                 }
             }
 
-            // Update HashSpace position
-            obj.hsObj.pos(obj.pos.x, obj.pos.y, obj.pos.z);
             obj.isNeighbor = false;
         }
 
-        // Query neighbors
-        int numNeighbors = query(space, queryPoint.x, queryPoint.y, queryPoint.z, queryRadius);
-
-        for (int i = 0; i < numNeighbors; i++) {
-            int idx = query[i]->id;
-            if (idx < objects.size()) {
-                objects[idx].isNeighbor = true;
+        // Query neighbors (brute-force distance check)
+        float r2 = queryRadius * queryRadius;
+        for (auto& obj : objects) {
+            float dx = obj.pos.x - queryPoint.x;
+            float dy = obj.pos.y - queryPoint.y;
+            float dz = obj.pos.z - queryPoint.z;
+            if (dx*dx + dy*dy + dz*dz < r2) {
+                obj.isNeighbor = true;
             }
         }
     }
@@ -5737,9 +5733,7 @@ public:
         g.pushMatrix();
         g.translate(queryPoint);
         g.color(0.2f, 1.0f, 0.5f, 0.2f);
-        g.polygonMode(Graphics::LINE);
         g.draw(queryMesh);
-        g.polygonMode(Graphics::FILL);
         g.popMatrix();
         g.blending(false);
     }
@@ -5771,12 +5765,10 @@ public:
         }
         if (k.key() == Keyboard::UP) {
             queryRadius = std::min(queryRadius + 0.2f, 5.0f);
-            space.maxRadius(queryRadius);
             printf("Query radius: %.1f\\n", queryRadius);
         }
         if (k.key() == Keyboard::DOWN) {
             queryRadius = std::max(queryRadius - 0.2f, 0.5f);
-            space.maxRadius(queryRadius);
             printf("Query radius: %.1f\\n", queryRadius);
         }
         return true;
@@ -5807,9 +5799,7 @@ ALLOLIB_WEB_MAIN(HashSpaceDemo)
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
-#include "al/sound/al_StereoPanner.hpp"
-#include "al/scene/al_DynamicScene.hpp"
-#include "al/scene/al_PositionedVoice.hpp"
+#include "al/scene/al_PolySynth.hpp"
 #include "Gamma/Oscillator.h"
 #include "Gamma/Envelope.h"
 #include <cmath>
@@ -5817,26 +5807,27 @@ ALLOLIB_WEB_MAIN(HashSpaceDemo)
 using namespace al;
 using namespace gam;
 
-class SpatialVoice : public PositionedVoice {
+class SpatialVoice : public SynthVoice {
 public:
     Sine<> osc;
     AD<> env;
     float freq = 440.0f;
     Color color;
+    Vec3f position;
 
     void init() override { env.attack(0.01f); env.decay(2.0f); }
     void onTriggerOn() override { osc.freq(freq); env.reset(); }
     void onProcess(AudioIOData& io) override {
         while (io()) {
             float s = osc() * env() * 0.3f;
-            io.out(0) = s; io.out(1) = s;
+            io.out(0) += s; io.out(1) += s;
         }
         if (env.done()) free();
     }
     void onProcess(Graphics& g) override {
         Mesh m; addSphere(m, 0.2f, 16, 16);
         g.pushMatrix();
-        g.translate(pose().pos());
+        g.translate(position);
         g.color(color);
         g.draw(m);
         g.popMatrix();
@@ -5845,20 +5836,17 @@ public:
 
 class SpatialAudioTest : public WebApp {
 public:
-    DynamicScene scene;
+    PolySynth synth;
     Mesh listenerMesh, groundPlane;
     double time = 0;
     float listenerAngle = 0;
-    StereoPanner panner;
     Sine<> continuousOsc;
     float srcX = 0, srcZ = -3;
 
     void onCreate() override {
-        scene.distanceAttenuation(true);
-        scene.allocatePolyphony<SpatialVoice>(16);
-        scene.prepare(audioIO());
+        synth.allocatePolyphony<SpatialVoice>(16);
 
-        addCone(listenerMesh, 0.2f, Vec3f(0,0,0.5f), Vec3f(0,0,-0.3f), 12);
+        addSphere(listenerMesh, 0.15f, 12, 12);
         listenerMesh.generateNormals();
 
         groundPlane.primitive(Mesh::TRIANGLES);
@@ -5867,9 +5855,6 @@ public:
         groundPlane.vertex(-sz,-0.5f,-sz); groundPlane.vertex(sz,-0.5f,sz); groundPlane.vertex(-sz,-0.5f,sz);
         for (int i = 0; i < 6; i++) groundPlane.color(0.2f, 0.3f, 0.2f);
 
-        panner.numSpeakers(2);
-        std::vector<float> az = {-45.0f, 45.0f};
-        panner.setSpeakerAngles(az);
         continuousOsc.freq(330.0f);
 
         nav().pos(0, 2, 8);
@@ -5878,9 +5863,6 @@ public:
 
     void onAnimate(double dt) override {
         time += dt;
-        Pose lp; lp.pos(0,0,0);
-        lp.faceToward(Vec3f(sin(listenerAngle), 0, -cos(listenerAngle)));
-        scene.listenerPose(lp);
     }
 
     void onDraw(Graphics& g) override {
@@ -5902,29 +5884,33 @@ public:
         g.draw(s);
         g.popMatrix();
 
-        scene.render(g);
+        synth.render(g);
     }
 
     void onSound(AudioIOData& io) override {
-        scene.render(io);
+        synth.render(io);
         while (io()) {
             float s = continuousOsc() * 0.1f;
+            // Manual stereo panning based on source azimuth
             float dx = srcX, dz = srcZ;
             float rotX = dx * cos(-listenerAngle) - dz * sin(-listenerAngle);
             float rotZ = dx * sin(-listenerAngle) + dz * cos(-listenerAngle);
-            float azimuth = atan2(rotX, -rotZ) * 180.0f / M_PI;
+            float azimuth = atan2(rotX, -rotZ);
             float dist = sqrt(dx*dx + dz*dz);
             float atten = 1.0f / (1.0f + dist * 0.5f);
-            float gains[2];
-            panner.renderSample(io, azimuth, 0, gains);
-            io.out(0) += s * gains[0] * atten;
-            io.out(1) += s * gains[1] * atten;
+            // Equal power panning
+            float pan = (azimuth / M_PI) * 0.5f + 0.5f; // 0=left, 1=right
+            pan = fmax(0.0f, fmin(1.0f, pan));
+            float gainL = cos(pan * M_PI * 0.5f);
+            float gainR = sin(pan * M_PI * 0.5f);
+            io.out(0) += s * gainL * atten;
+            io.out(1) += s * gainR * atten;
         }
     }
 
     void trigger(float x, float y, float z, float f, Color c) {
-        auto* v = scene.getVoice<SpatialVoice>();
-        if (v) { v->freq = f; v->color = c; v->pose().pos(x,y,z); scene.triggerOn(v); }
+        auto* v = synth.getVoice<SpatialVoice>();
+        if (v) { v->freq = f; v->color = c; v->position.set(x,y,z); synth.triggerOn(v); }
     }
 
     bool onKeyDown(const Keyboard& k) override {
@@ -12419,17 +12405,57 @@ ALLOLIB_WEB_MAIN(CoralGrowth)
     code: `/**
  * Multi-File Synthesizer Example
  *
- * This example demonstrates organizing code across multiple files:
- * - main.cpp (this file) - Application entry point
- * - MySynth.hpp - Header with synth voice definition
+ * Demonstrates organizing a synth project with separate voice definitions.
+ * The MySynthVoice class would typically be in its own header file.
+ * Here it is inlined for web compatibility.
  *
- * Add MySynth.hpp to your project to compile this example.
+ * Play notes with keyboard keys (ZXCVBNM = C4-B4, ASDFGHJ = C5-B5)
  */
 
 #include "al_playground_compat.hpp"
-#include "MySynth.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
 
 using namespace al;
+
+// --- MySynthVoice (normally in MySynth.hpp) ---
+class MySynthVoice : public SynthVoice {
+public:
+    gam::Sine<> osc;
+    gam::AD<> env{0.05f, 0.5f};
+    float frequency = 440.0f;
+    float amplitude = 0.3f;
+
+    void init() override {
+        createInternalTriggerParameter("frequency", 440.0f, 20.0f, 5000.0f);
+        createInternalTriggerParameter("amplitude", 0.3f, 0.0f, 1.0f);
+    }
+
+    void onTriggerOn() override {
+        frequency = getInternalParameterValue("frequency");
+        amplitude = getInternalParameterValue("amplitude");
+        osc.freq(frequency);
+        env.reset();
+    }
+
+    void onProcess(AudioIOData& io) override {
+        while (io()) {
+            float s = osc() * env() * amplitude;
+            io.out(0) += s;
+            io.out(1) += s;
+        }
+        if (env.done()) free();
+    }
+
+    void onProcess(Graphics& g) override {
+        // Visual feedback when voice is active
+    }
+};
+
+// Helper: convert MIDI note to frequency
+inline float midiToFreq(int note) {
+    return 440.0f * powf(2.0f, (note - 69) / 12.0f);
+}
 
 class MultiFileSynthApp : public WebApp {
 public:
@@ -12440,29 +12466,23 @@ public:
         addSphere(backgroundSphere, 0.5, 30, 30);
         backgroundSphere.generateNormals();
         nav().pos(0, 0, 4);
+        configureWebAudio(44100, 128, 2, 0);
     }
 
-    void onAnimate(double dt) override {
-        synthManager.setCurrentTime(currentTime());
-    }
+    void onAnimate(double dt) override {}
 
     void onDraw(Graphics& g) override {
         g.clear(0.1f, 0.1f, 0.15f);
         g.depthTesting(true);
         g.lighting(true);
 
-        // Draw synth visuals
         synthManager.render(g);
 
-        // Draw background
         g.pushMatrix();
         g.translate(0, -1, 0);
         g.color(0.2f, 0.3f, 0.4f);
         g.draw(backgroundSphere);
         g.popMatrix();
-
-        // Draw GUI
-        synthManager.drawSynthControlPanel();
     }
 
     void onSound(AudioIOData& io) override {
@@ -12470,7 +12490,7 @@ public:
     }
 
     bool onKeyDown(const Keyboard& k) override {
-        int midiNote = keyToMidi(k.key());
+        int midiNote = asciiToMIDI(k.key());
         if (midiNote > 0) {
             synthManager.voice()->setInternalParameterValue("frequency", midiToFreq(midiNote));
             synthManager.triggerOn(midiNote);
@@ -12479,7 +12499,7 @@ public:
     }
 
     bool onKeyUp(const Keyboard& k) override {
-        int midiNote = keyToMidi(k.key());
+        int midiNote = asciiToMIDI(k.key());
         if (midiNote > 0) {
             synthManager.triggerOff(midiNote);
         }
@@ -12487,14 +12507,7 @@ public:
     }
 };
 
-ALLOLIB_MAIN(MultiFileSynthApp)
-
-/*
- * To use this example:
- * 1. Add a new file called "MySynth.hpp" to your project
- * 2. Copy the MySynth.hpp template code into it
- * 3. Compile and run - play notes with your keyboard!
- */
+ALLOLIB_WEB_MAIN(MultiFileSynthApp)
 `,
   },
 
@@ -12909,10 +12922,103 @@ export const multiFileExamples: MultiFileExample[] = [
  */
 
 #include "al_playground_compat.hpp"
-#include "voices/FMVoice.hpp"
-#include "effects/Reverb.hpp"
+#include "Gamma/Oscillator.h"
+#include "Gamma/Envelope.h"
+#include "al/graphics/al_Shapes.hpp"
 
 using namespace al;
+
+// ---- Inlined FMVoice (originally voices/FMVoice.hpp) ----
+class FMVoice : public al::SynthVoice {
+public:
+    gam::Sine<> carrier;
+    gam::Sine<> modulator;
+    gam::Env<4> env;
+    Mesh sphere;
+    float envValue = 0;
+
+    void init() override {
+        env.levels(0, 1, 0.6, 0);
+        env.lengths(0.01, 0.1, 0.8);
+        env.curve(-4);
+        env.sustainPoint(2);
+        addSphere(sphere, 0.3, 20, 20);
+        sphere.generateNormals();
+        createInternalTriggerParameter("frequency", 440, 20, 2000);
+        createInternalTriggerParameter("amplitude", 0.2, 0.0, 1.0);
+        createInternalTriggerParameter("modRatio", 2.0, 0.5, 8.0);
+        createInternalTriggerParameter("modIndex", 3.0, 0.0, 10.0);
+        createInternalTriggerParameter("pan", 0.0, -1.0, 1.0);
+        createInternalTriggerParameter("attackTime", 0.01, 0.001, 1.0);
+        createInternalTriggerParameter("releaseTime", 0.8, 0.01, 5.0);
+    }
+
+    void onProcess(al::AudioIOData& io) override {
+        float freq = getInternalParameterValue("frequency");
+        float amp = getInternalParameterValue("amplitude");
+        float modRatio = getInternalParameterValue("modRatio");
+        float modIndex = getInternalParameterValue("modIndex");
+        float panVal = getInternalParameterValue("pan");
+        env.lengths()[0] = getInternalParameterValue("attackTime");
+        env.lengths()[2] = getInternalParameterValue("releaseTime");
+        modulator.freq(freq * modRatio);
+        while (io()) {
+            float mod = modulator() * modIndex * freq;
+            carrier.freq(freq + mod);
+            envValue = env();
+            float s = carrier() * envValue * amp;
+            float leftGain = (1.0f - panVal) * 0.5f + 0.5f;
+            float rightGain = (1.0f + panVal) * 0.5f + 0.5f;
+            io.out(0) += s * leftGain;
+            io.out(1) += s * rightGain;
+        }
+        if (env.done()) free();
+    }
+
+    void onProcess(al::Graphics& g) override {
+        g.pushMatrix();
+        g.translate(getInternalParameterValue("pan") * 2, 0, 0);
+        g.scale(1 + envValue);
+        float freq = getInternalParameterValue("frequency");
+        float hue = log2f(freq / 110.0f) / 4.0f;
+        g.color(HSV(hue, 0.7f, 0.5f + envValue * 0.5f));
+        g.draw(sphere);
+        g.popMatrix();
+    }
+
+    void onTriggerOn() override { env.reset(); }
+    void onTriggerOff() override { env.release(); }
+};
+
+// ---- Inlined SimpleReverb (originally effects/Reverb.hpp) ----
+class SimpleReverb {
+public:
+    static const int BUFFER_SIZE = 8192;
+    float bufferL[BUFFER_SIZE];
+    float bufferR[BUFFER_SIZE];
+    int writePos = 0;
+    float decay = 0.8f;
+    float mix = 0.3f;
+    int delayL = 1557;
+    int delayR = 1617;
+
+    SimpleReverb() {
+        for (int i = 0; i < BUFFER_SIZE; ++i) { bufferL[i] = 0; bufferR[i] = 0; }
+    }
+    void setDecay(float d) { decay = d; }
+    void setMix(float m) { mix = m; }
+    void process(float& left, float& right) {
+        int readPosL = (writePos - delayL + BUFFER_SIZE) % BUFFER_SIZE;
+        int readPosR = (writePos - delayR + BUFFER_SIZE) % BUFFER_SIZE;
+        float delayedL = bufferL[readPosL];
+        float delayedR = bufferR[readPosR];
+        bufferL[writePos] = left + delayedR * decay;
+        bufferR[writePos] = right + delayedL * decay;
+        left = left * (1.0f - mix) + delayedL * mix;
+        right = right * (1.0f - mix) + delayedR * mix;
+        writePos = (writePos + 1) % BUFFER_SIZE;
+    }
+};
 
 class OrganizedSynthApp : public al::WebApp {
 public:

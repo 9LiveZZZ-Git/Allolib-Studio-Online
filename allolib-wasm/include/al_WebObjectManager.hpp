@@ -37,7 +37,7 @@ namespace al {
 
 // ─── Object Types ────────────────────────────────────────────────────────────
 
-enum class PrimitiveType {
+enum class ObjectPrimitive {
   Sphere,
   Cube,
   Cylinder,
@@ -87,7 +87,7 @@ struct SceneObject {
   bool locked = false;
 
   ObjectTransform transform;
-  PrimitiveType primitiveType = PrimitiveType::Cube;
+  ObjectPrimitive primitiveType = ObjectPrimitive::Cube;
   ObjectMaterial material;
 
   // Lifecycle
@@ -109,7 +109,7 @@ public:
   // ─── Object CRUD ─────────────────────────────────────────────────────────
 
   SceneObject* createObject(const std::string& id, const std::string& name,
-                            PrimitiveType primitive = PrimitiveType::Cube) {
+                            ObjectPrimitive primitive = ObjectPrimitive::Cube) {
     if (mObjects.find(id) != mObjects.end()) {
       return nullptr; // ID already exists
     }
@@ -308,18 +308,18 @@ private:
   bool mMeshesInitialized = false;
   float mCurrentTime = 0;
 
-  VAOMesh* getMeshForPrimitive(PrimitiveType type) {
+  VAOMesh* getMeshForPrimitive(ObjectPrimitive type) {
     if (!mMeshesInitialized) {
       return nullptr;
     }
 
     switch (type) {
-      case PrimitiveType::Sphere:   return mSphereMesh.get();
-      case PrimitiveType::Cube:     return mCubeMesh.get();
-      case PrimitiveType::Cylinder: return mCylinderMesh.get();
-      case PrimitiveType::Cone:     return mConeMesh.get();
-      case PrimitiveType::Torus:    return mTorusMesh.get();
-      case PrimitiveType::Plane:    return mPlaneMesh.get();
+      case ObjectPrimitive::Sphere:   return mSphereMesh.get();
+      case ObjectPrimitive::Cube:     return mCubeMesh.get();
+      case ObjectPrimitive::Cylinder: return mCylinderMesh.get();
+      case ObjectPrimitive::Cone:     return mConeMesh.get();
+      case ObjectPrimitive::Torus:    return mTorusMesh.get();
+      case ObjectPrimitive::Plane:    return mPlaneMesh.get();
       default:                      return mCubeMesh.get();
     }
   }
@@ -384,14 +384,14 @@ inline ObjectManager& objectManager() {
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
-inline PrimitiveType primitiveFromString(const std::string& str) {
-  if (str == "sphere") return PrimitiveType::Sphere;
-  if (str == "cube") return PrimitiveType::Cube;
-  if (str == "cylinder") return PrimitiveType::Cylinder;
-  if (str == "cone") return PrimitiveType::Cone;
-  if (str == "torus") return PrimitiveType::Torus;
-  if (str == "plane") return PrimitiveType::Plane;
-  return PrimitiveType::Cube; // default
+inline ObjectPrimitive primitiveFromString(const std::string& str) {
+  if (str == "sphere") return ObjectPrimitive::Sphere;
+  if (str == "cube") return ObjectPrimitive::Cube;
+  if (str == "cylinder") return ObjectPrimitive::Cylinder;
+  if (str == "cone") return ObjectPrimitive::Cone;
+  if (str == "torus") return ObjectPrimitive::Torus;
+  if (str == "plane") return ObjectPrimitive::Plane;
+  return ObjectPrimitive::Cube; // default
 }
 
 inline MaterialType materialFromString(const std::string& str) {

@@ -1541,10 +1541,10 @@ using namespace al;
 
 class ColorVoice : public SynthVoice {
 public:
-    gam::Pan<> mPan;
     gam::Sine<> mOsc;
     gam::ADSR<> mAmpEnv;
     gam::EnvFollow<> mEnvFollow;
+    float mPanPos = 0;
     Mesh mMesh;
     float hue = 0;
 
@@ -1566,15 +1566,16 @@ public:
 
     void onProcess(AudioIOData& io) override {
         mOsc.freq(getInternalParameterValue("frequency"));
-        mPan.pos(getInternalParameterValue("pan"));
+        mPanPos = getInternalParameterValue("pan");
 
         while (io()) {
             float s1 = mOsc() * mAmpEnv() * getInternalParameterValue("amplitude");
-            float s2;
             mEnvFollow(s1);
-            mPan(s1, s1, s2);
-            io.out(0) += s1;
-            io.out(1) += s2;
+            // Manual stereo panning: pan from -1 (left) to 1 (right)
+            float leftGain = (1.0f - mPanPos) * 0.5f;
+            float rightGain = (1.0f + mPanPos) * 0.5f;
+            io.out(0) += s1 * leftGain;
+            io.out(1) += s1 * rightGain;
         }
         if (mAmpEnv.done() && (mEnvFollow.value() < 0.001f)) free();
     }

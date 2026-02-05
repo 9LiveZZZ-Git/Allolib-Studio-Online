@@ -43,6 +43,7 @@
 #include "al/ui/al_Parameter.hpp"
 #include "al/ui/al_ParameterBundle.hpp"
 #include "al/graphics/al_Light.hpp"
+#include "al/math/al_Random.hpp"
 
 // Gamma DSP library for sample rate configuration
 #include "Gamma/Domain.h"

@@ -111,6 +111,22 @@ const ERROR_PATTERNS: { pattern: RegExp; category: string; fix: string }[] = [
   // Asset errors
   { pattern: /mesh.*load.*fail|obj.*not.*found/i, category: 'Missing Mesh Asset', fix: 'OBJ files need web-compatible loading' },
   { pattern: /font.*not.*found/i, category: 'Missing Font', fix: 'Font file not bundled for web' },
+
+  // WASM-specific
+  { pattern: /stack overflow|call stack size exceeded/i, category: 'WASM Stack Overflow', fix: 'Move large arrays to heap or reduce stack usage' },
+  { pattern: /LinkError|import object.*is not/i, category: 'WASM Link Error', fix: 'Check EXPORTED_FUNCTIONS in compile.sh' },
+  { pattern: /CompileError.*wasm/i, category: 'WASM Compile Error', fix: 'Check WASM module validity' },
+
+  // GPU-specific
+  { pattern: /device.*lost|GPUDevice.*lost/i, category: 'GPU Device Lost', fix: 'GPU resource exhaustion - reduce load' },
+  { pattern: /context.*lost|lost.*context/i, category: 'GPU Context Lost', fix: 'GPU context crashed' },
+
+  // Additional compilation patterns
+  { pattern: /undefined reference|unresolved symbol/i, category: 'Linker Error', fix: 'Missing library or symbol export' },
+  { pattern: /no member named|undeclared identifier/i, category: 'Missing API', fix: 'API not available in web build' },
+  { pattern: /cannot open.*file|file not found/i, category: 'Missing File', fix: 'Header or source file not in web build' },
+  { pattern: /use of undeclared/i, category: 'Undeclared Identifier', fix: 'Missing include or namespace' },
+  { pattern: /multiple definition|redefinition/i, category: 'Duplicate Definition', fix: 'Header guard or duplicate symbol' },
 ]
 
 function categorizeError(errorMsg: string): { category: string; fix: string } {
@@ -457,14 +473,22 @@ async function compileAndRun(page: Page): Promise<{ success: boolean; time: numb
 
   await runButton.click()
 
-  // Wait for compilation result
+  // Wait for compilation result - check console output element for reliable detection
   const result = await Promise.race([
     page.waitForFunction(() => {
-      const text = document.body.innerText || ''
-      if (text.includes('[SUCCESS]') || text.includes('Application started') || text.includes('Running')) {
+      // Check console output panel first (most reliable)
+      const consoleEl = document.querySelector('[data-testid="console-output"], .console-panel, [class*="console"]')
+      const consoleText = consoleEl?.textContent || ''
+      // Also check full page text as fallback
+      const pageText = document.body.innerText || ''
+      const text = consoleText + ' ' + pageText
+
+      if (text.includes('[SUCCESS]') || text.includes('Compilation complete') ||
+          text.includes('Application started') || text.includes('Running')) {
         return 'success'
       }
-      if (text.includes('[ERROR]') || text.includes('error:') || text.includes('failed')) {
+      if (text.includes('[ERROR]') || text.includes('Compilation failed') ||
+          text.includes('error:') || text.includes('undefined symbol')) {
         return 'error'
       }
       return null
@@ -926,10 +950,11 @@ test.describe('All Examples Pipeline Test', () => {
   })
 
   test('should compile and render all examples without errors', async ({ page, browser }) => {
-    test.setTimeout(1800000) // 30 minutes for all 155+ examples
+    test.setTimeout(3600000) // 60 minutes for all 155+ examples (both pipelines)
 
     const results: TestResult[] = []
     const browserInfo = browser.browserType().name()
+    let currentPage = page
 
     console.log(`\n[Test] Starting tests for ${allExamples.length} examples on ${currentBackend}`)
 
@@ -937,8 +962,19 @@ test.describe('All Examples Pipeline Test', () => {
       const example = allExamples[i]
       console.log(`\n[${i + 1}/${allExamples.length}] Testing: ${example.title} (${example.id})`)
 
+      // Every 25 examples, create fresh page to prevent GPU/memory exhaustion
+      if (i > 0 && i % 25 === 0) {
+        console.log(`  [Refresh] Creating fresh browser page (after ${i} examples)`)
+        try {
+          await currentPage.close()
+        } catch (e) {
+          console.log(`  [Refresh] Old page already closed: ${e}`)
+        }
+        currentPage = await browser.newPage()
+      }
+
       try {
-        const result = await testSingleExample(page, example, currentBackend)
+        const result = await testSingleExample(currentPage, example, currentBackend)
         results.push(result)
 
         const statusIcon = result.status === 'passed' ? '✓' : result.status === 'skipped' ? '○' : '✗'
@@ -959,11 +995,44 @@ test.describe('All Examples Pipeline Test', () => {
           failureCategory: 'Test Error',
           suggestedFix: 'Check test infrastructure'
         })
+
+        // If page crashed, create a new one
+        try {
+          await currentPage.evaluate(() => true)
+        } catch {
+          console.log(`  [Recovery] Page crashed, creating new page`)
+          currentPage = await browser.newPage()
+        }
       }
 
-      // Clear page state between examples
-      await page.goto('about:blank')
-      await page.waitForTimeout(500)
+      // Clean up GPU resources before navigating away
+      try {
+        await currentPage.evaluate(() => {
+          const win = window as any
+          // Stop any running WASM module
+          if (win.Module?._allolib_stop) {
+            try { win.Module._allolib_stop() } catch(e) {}
+          }
+          if (win.Module?._allolib_destroy) {
+            try { win.Module._allolib_destroy() } catch(e) {}
+          }
+          // Force WebGL context loss to free GPU memory
+          const canvas = document.querySelector('canvas')
+          if (canvas) {
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
+            if (gl) {
+              const ext = gl.getExtension('WEBGL_lose_context')
+              if (ext) ext.loseContext()
+            }
+          }
+        }).catch(() => {})
+        await currentPage.goto('about:blank')
+        await currentPage.waitForTimeout(300)
+      } catch {
+        // Page is dead, will be recreated at next iteration or refresh cycle
+        console.log(`  [Cleanup] Page unavailable, will recreate`)
+        currentPage = await browser.newPage()
+      }
     }
 
     // Generate report
