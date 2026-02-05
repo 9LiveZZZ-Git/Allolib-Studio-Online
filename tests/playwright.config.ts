@@ -59,6 +59,8 @@ export default defineConfig({
       name: 'chromium-webgl2',
       use: {
         ...devices['Desktop Chrome'],
+        // Headed mode for reliable canvas capture in functional tests
+        headless: false,
         launchOptions: {
           args: [
             '--enable-webgl',

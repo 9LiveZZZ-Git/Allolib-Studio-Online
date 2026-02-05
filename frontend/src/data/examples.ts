@@ -9223,6 +9223,7 @@ class SlimeMold : public WebApp {
 public:
     static const int SIZE=200,NUM=5000;
     float trail[SIZE][SIZE];
+    float newTrail[SIZE][SIZE];  // Class member to avoid stack overflow
     Particle particles[NUM];
     Mesh mesh,trailMesh;
     bool running=true;
@@ -9280,7 +9281,7 @@ public:
             trail[iy][ix]=fmin(1.0f,trail[iy][ix]+0.1f);
         }
 
-        float newTrail[SIZE][SIZE];
+        // Use class member newTrail to avoid stack overflow
         for(int y=0;y<SIZE;y++){
             for(int x=0;x<SIZE;x++){
                 float sum=0;

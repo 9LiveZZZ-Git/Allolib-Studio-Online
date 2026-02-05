@@ -1,0 +1,2 @@
+# Don't commit diff images - they're temporary debugging artifacts
+*.png

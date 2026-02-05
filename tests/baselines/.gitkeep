@@ -1,0 +1,24 @@
+# Visual Test Baselines
+
+This directory contains baseline screenshots for visual regression testing.
+
+## Structure
+
+- `{example-id}-webgl2.png` - Baseline screenshot for WebGL2 backend
+- `{example-id}-webgpu.png` - Baseline screenshot for WebGPU backend
+- `diffs/` - Diff images when tests fail (not committed)
+
+## Updating Baselines
+
+To capture new baseline screenshots:
+
+```bash
+cd tests
+UPDATE_BASELINES=true npx playwright test enhanced-functional-tests.spec.ts
+```
+
+## Notes
+
+- Baselines are platform-specific (rendering may differ between OS)
+- Update baselines after intentional visual changes
+- Review diff images in `diffs/` folder when tests fail
