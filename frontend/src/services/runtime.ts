@@ -285,6 +285,12 @@ export class AllolibRuntime {
         this.onPrint('[Backend] Passing WebGL2 context to WASM module')
       }
 
+      // Hook into Emscripten main loop to count frames and enable captures
+      moduleConfig.postMainLoop = () => {
+        const w = window as any
+        w.__emFrameCount = (w.__emFrameCount || 0) + 1
+      }
+
       // Store backend type for runtime queries
       const activeBackend = useWebGPU ? 'webgpu' : 'webgl2'
       ;(window as any).alloBackendType = activeBackend

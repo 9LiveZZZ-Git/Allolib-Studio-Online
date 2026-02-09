@@ -570,7 +570,7 @@ private:
     void createPBRShader();            // Phase 5: PBR
     void createPBRFallbackShader();    // Phase 5: PBR fallback
     void createEnvReflectShader();     // Phase 6: Environment reflections
-    void updateTexturedBindGroup();
+    void updateTexturedBindGroup(ShaderHandle shaderToUse = {});
     void updateLightingBindGroup();    // Phase 2: Lighting
     void updateSkyboxBindGroup();      // Phase 4: Skybox
     void updatePBRBindGroup();         // Phase 5: PBR
@@ -578,6 +578,7 @@ private:
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();
+    void drawTriangleFanEmulated(int vertexCount, int firstVertex); // WebGPU doesn't support TriangleFan
 
     // Get or create pipeline for a specific primitive type
     WGPURenderPipeline getPipelineForPrimitive(ShaderResource& shader, PrimitiveType primitive);

@@ -40,6 +40,9 @@ pnpm-debug.log*
 # Testing
 coverage/
 .nyc_output/
+tests/reports/
+tests/test-results/
+test-results/
 
 # Cache
 .cache/

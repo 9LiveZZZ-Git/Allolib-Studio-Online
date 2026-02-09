@@ -62,13 +62,17 @@ bool WebMeshAdapter::prepareMesh(const Mesh& mesh) {
     entry.meshVersion = currentVersion;
     entry.layout = createVertexLayout();
     entry.originalPrimitive = mesh.primitive();
+    printf("[WebMeshAdapter::prepareMesh] Original primitive=%d (TRIANGLE_FAN=6), vertices=%zu\n",
+           static_cast<int>(mesh.primitive()), mesh.vertices().size());
 
     // Create interleaved vertex data
     std::vector<InterleavedVertex> interleavedData;
     createInterleavedData(mesh, interleavedData);
 
     // Check if we need to convert unsupported primitives (TRIANGLE_FAN, LINE_LOOP)
-    if (needsPrimitiveConversion(mesh.primitive())) {
+    bool needsConversion = needsPrimitiveConversion(mesh.primitive());
+    printf("[WebMeshAdapter::prepareMesh] needsConversion=%d\n", needsConversion ? 1 : 0);
+    if (needsConversion) {
         std::vector<InterleavedVertex> convertedVertices;
         std::vector<uint32_t> convertedIndices;
 
@@ -152,6 +156,8 @@ void WebMeshAdapter::drawMesh(PrimitiveType primitive, int vertexCount) {
 
     // Use the converted primitive type (handles TRIANGLE_FAN → TRIANGLES, etc.)
     PrimitiveType actualPrimitive = entry.convertedPrimitive;
+    printf("[WebMeshAdapter::drawMesh] passed primitive=%d, cached convertedPrimitive=%d, hasIndices=%d\n",
+           static_cast<int>(primitive), static_cast<int>(actualPrimitive), entry.hasIndices ? 1 : 0);
 
     // Bind vertex buffer
     mBackend->setVertexBuffer(entry.vertexBuffer, entry.layout);

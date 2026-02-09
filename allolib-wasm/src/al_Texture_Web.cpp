@@ -160,6 +160,11 @@ void Texture::unbind(int binding_point) { unbind(binding_point, target()); }
 void Texture::unbind(int binding_point, unsigned int target) {
   glActiveTexture(GL_TEXTURE0 + binding_point);
   glBindTexture(target, 0);
+
+#ifdef __EMSCRIPTEN__
+  // Sync unbind to WebGPU backend (clear the texture binding)
+  Graphics_onTextureBind(0, binding_point);
+#endif
 }
 
 void Texture::filterMin(int v) {

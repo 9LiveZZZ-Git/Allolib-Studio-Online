@@ -76,11 +76,15 @@ const baselineManager = new BaselineManager()
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-async function testKeyboardInteraction(page: Page, keys: string[]): Promise<number> {
+async function testKeyboardInteraction(
+  page: Page,
+  keys: string[],
+  backend: 'webgl2' | 'webgpu' = 'webgl2'
+): Promise<number> {
   const canvasLocator = page.locator('[data-testid="canvas"], #canvas, canvas').first()
 
   try {
-    const shotBefore = await canvasLocator.screenshot({ type: 'png' })
+    const shotBefore = await captureCanvas(page, backend)
 
     // Click to focus
     await canvasLocator.click({ force: true })
@@ -93,7 +97,7 @@ async function testKeyboardInteraction(page: Page, keys: string[]): Promise<numb
     }
     await page.waitForTimeout(INTERACTION_WAIT)
 
-    const shotAfter = await canvasLocator.screenshot({ type: 'png' })
+    const shotAfter = await captureCanvas(page, backend)
 
     const { diffPercentage } = compareImages(shotBefore, shotAfter)
     return diffPercentage
@@ -562,7 +566,8 @@ const BACKENDS: Array<'webgl2' | 'webgpu'> = ['webgl2', 'webgpu']
 
 for (const backend of BACKENDS) {
   test.describe(`Enhanced Functional Tests - ${backend.toUpperCase()}`, () => {
-    test.setTimeout(180000)
+    // WebGPU shader compilation can be slow (DXC compiler) - use 4 min timeout
+    test.setTimeout(240000)
 
     const backendResults: EnhancedTestResult[] = []
 
@@ -625,7 +630,7 @@ for (const backend of BACKENDS) {
 
         // Capture screenshot and perform visual analysis
         try {
-          const screenshot = await captureCanvas(page)
+          const screenshot = await captureCanvas(page, backend)
           const basicAnalysis = analyzeImage(screenshot)
 
           if (!basicAnalysis.hasContent) {
@@ -640,8 +645,8 @@ for (const backend of BACKENDS) {
           result.rendering = 'pass'
 
           // Perform detailed visual analysis
-          const expectations = getExpectation(example.id)
-          result.visualAnalysis = await performVisualAnalysis(page, expectations)
+          const expectations = getExpectation(example.id, backend)
+          result.visualAnalysis = await performVisualAnalysis(page, expectations, backend)
 
           if (!result.visualAnalysis.allExpectationsMet) {
             result.issues.push(...result.visualAnalysis.failedExpectations)
@@ -671,7 +676,7 @@ for (const backend of BACKENDS) {
 
           // Test interaction if applicable
           if (example.testKeys && example.testKeys.length > 0) {
-            result.interactionChange = await testKeyboardInteraction(page, example.testKeys)
+            result.interactionChange = await testKeyboardInteraction(page, example.testKeys, backend)
             if (result.interactionChange < 5) {
               result.issues.push(`Low interaction response: ${result.interactionChange.toFixed(1)}%`)
             }

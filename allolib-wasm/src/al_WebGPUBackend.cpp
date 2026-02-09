@@ -201,17 +201,17 @@ struct FragmentInput {
 
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0) vec4f {
-    // Sample texture
-    let texColor = textureSample(tex0, samp0, in.texcoord);
-
-    // Apply diffuse lighting
+    // Basic ambient + diffuse lighting (matches default shader)
     let N = normalize(in.viewNormal);
     let lightDir = normalize(vec3f(1.0, 1.0, 1.0));
     let ambient = 0.3;
     let diffuse = max(dot(N, lightDir), 0.0);
     let lighting = ambient + diffuse * 0.7;
 
-    // Combine texture, vertex color, lighting, and tint
+    // Sample texture
+    let texColor = textureSample(tex0, samp0, in.texcoord);
+
+    // Combine texture color with vertex color, lighting and tint
     let litColor = texColor.rgb * in.color.rgb * lighting;
     return vec4f(litColor * uniforms.tint.rgb, texColor.a * in.color.a * uniforms.tint.a);
 }
@@ -1608,6 +1608,14 @@ TextureHandle WebGPUBackend::createTexture(
     texDesc.sampleCount = desc.samples;
     texDesc.dimension = desc.depth > 1 ? WGPUTextureDimension_3D : WGPUTextureDimension_2D;
     texDesc.format = toWGPUFormat(desc.format);
+
+    // For color render target textures, use the swap chain format (BGRA8Unorm)
+    // so that pipelines (which all use mSwapChainFormat) are compatible.
+    // WebGPU requires pipeline color target format to match render pass attachment format.
+    if (desc.renderTarget && desc.format == PixelFormat::RGBA8) {
+        texDesc.format = mSwapChainFormat;  // BGRA8Unorm
+    }
+
     texDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
 
     if (desc.renderTarget) {
@@ -1739,10 +1747,11 @@ RenderTargetHandle WebGPUBackend::createRenderTarget(
         auto it = mTextures.find(color.id);
         if (it != mTextures.end()) {
             resource.colorView = it->second.view;
-            // Store dimensions from the color attachment
             resource.width = it->second.desc.width;
             resource.height = it->second.desc.height;
-            // Don't release - owned by texture resource
+        } else {
+            printf("[WebGPUBackend] ERROR: Color texture %llu not found for render target!\n",
+                   (unsigned long long)color.id);
         }
     }
 
@@ -1750,6 +1759,9 @@ RenderTargetHandle WebGPUBackend::createRenderTarget(
         auto it = mTextures.find(depth.id);
         if (it != mTextures.end()) {
             resource.depthView = it->second.view;
+        } else {
+            printf("[WebGPUBackend] ERROR: Depth texture %llu not found for render target!\n",
+                   (unsigned long long)depth.id);
         }
     }
 
@@ -2087,7 +2099,7 @@ WGPURenderPipeline WebGPUBackend::createPipelineForPrimitive(ShaderResource& sha
     WGPUDepthStencilState depthStencil = {};
     depthStencil.format = WGPUTextureFormat_Depth24Plus;
     depthStencil.depthWriteEnabled = true;
-    depthStencil.depthCompare = WGPUCompareFunction_LessEqual;
+    depthStencil.depthCompare = WGPUCompareFunction_Less;
     pipelineDesc.depthStencil = &depthStencil;
 
     // Multisample state
@@ -2283,10 +2295,6 @@ void WebGPUBackend::setTexture(const char* name, TextureHandle handle, int unit)
     if (mBoundTextures[unit].id != handle.id) {
         mBoundTextures[unit] = handle;
         mTextureBindingDirty = true;
-
-        if (handle.valid()) {
-            printf("[WebGPUBackend] Texture bound to unit %d (id=%llu)\n", unit, (unsigned long long)handle.id);
-        }
     }
 }
 
@@ -2313,6 +2321,12 @@ void WebGPUBackend::draw(
     int vertexCount,
     int firstVertex
 ) {
+    // WebGPU does NOT support TriangleFan - emulate it using indexed TriangleList
+    if (primitive == PrimitiveType::TriangleFan && vertexCount >= 3) {
+        drawTriangleFanEmulated(vertexCount, firstVertex);
+        return;
+    }
+
     // Ensure render pass is active
     beginRenderPass();
     if (!mRenderPassEncoder) return;
@@ -2323,18 +2337,14 @@ void WebGPUBackend::draw(
     // Check rendering modes
     bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
-    // Use screen-space shader for textured rendering without lighting (post-processing)
-    bool useScreenSpace = hasTexture && !useLighting && mScreenSpaceShader.valid();
-    bool useTextured = hasTexture && !useScreenSpace && mTexturedShader.valid();
+    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > screen-space > textured > default
+    // Shader selection priority: custom > lighting > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
-    } else if (useScreenSpace) {
-        shaderToUse = mScreenSpaceShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2351,7 +2361,7 @@ void WebGPUBackend::draw(
     // Get or create pipeline for this primitive type
     WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, primitive);
     if (!pipeline) {
-        printf("[WebGPUBackend::draw] WARNING: No valid pipeline for primitive %d!\n", static_cast<int>(primitive));
+        printf("[WebGPUBackend::draw] WARNING: No pipeline for primitive %d!\n", static_cast<int>(primitive));
         return;
     }
 
@@ -2359,7 +2369,6 @@ void WebGPUBackend::draw(
 
     // Bind appropriate bind group
     if (useLighting && !mCurrentShader.valid()) {
-        // Update lighting bind group if needed
         if (mLightingDirty || !mLitBindGroup) {
             updateLightingBindGroup();
         }
@@ -2367,17 +2376,138 @@ void WebGPUBackend::draw(
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
-    } else if ((useScreenSpace || useTextured) && !mCurrentShader.valid()) {
-        // Screen-space and textured shaders share the same bind group layout
+    } else if (useTextured && !mCurrentShader.valid()) {
         if (mTextureBindingDirty || !mTexturedBindGroup) {
-            updateTexturedBindGroup();
+            updateTexturedBindGroup(mTexturedShader);
         }
         if (mTexturedBindGroup) {
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTexturedBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
     } else {
-        // Use regular bind group
+        wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
+                                           1, &mCurrentDynamicOffset);
+    }
+
+    // Bind vertex buffer
+    auto vbIt = mBuffers.find(mCurrentVertexBuffer.id);
+    if (vbIt != mBuffers.end() && vbIt->second.buffer) {
+        wgpuRenderPassEncoderSetVertexBuffer(mRenderPassEncoder, 0, vbIt->second.buffer, 0, vbIt->second.size);
+    } else {
+        printf("[WebGPUBackend::draw] WARNING: No vertex buffer!\n");
+    }
+
+    // Draw
+    wgpuRenderPassEncoderDraw(mRenderPassEncoder, vertexCount, 1, firstVertex, 0);
+}
+
+void WebGPUBackend::drawTriangleFanEmulated(int vertexCount, int firstVertex) {
+    // Emulate TriangleFan using indexed TriangleList
+    // For N vertices: v0, v1, v2, ..., v(N-1)
+    // Triangles: (v0,v1,v2), (v0,v2,v3), ..., (v0,v(N-2),v(N-1))
+    // Total triangles: N-2, total indices: (N-2)*3
+
+    if (vertexCount < 3) return;
+
+    int numTriangles = vertexCount - 2;
+    int numIndices = numTriangles * 3;
+
+    // Create index buffer for fan emulation (cached for reuse)
+    // Max supported fan size: 256 vertices = 254 triangles = 762 indices
+    static WGPUBuffer sFanIndexBuffer = nullptr;
+    static int sFanIndexBufferSize = 0;
+    static const int kMaxFanVertices = 256;
+
+    if (!sFanIndexBuffer || numIndices > sFanIndexBufferSize) {
+        // Need to (re)create index buffer
+        if (sFanIndexBuffer) {
+            wgpuBufferRelease(sFanIndexBuffer);
+        }
+
+        int maxIndices = (kMaxFanVertices - 2) * 3;
+        std::vector<uint16_t> indices(maxIndices);
+
+        // Generate indices for all possible fan sizes
+        for (int tri = 0; tri < kMaxFanVertices - 2; tri++) {
+            indices[tri * 3 + 0] = 0;           // Center vertex
+            indices[tri * 3 + 1] = tri + 1;     // Current vertex
+            indices[tri * 3 + 2] = tri + 2;     // Next vertex
+        }
+
+        WGPUBufferDescriptor bufDesc = {};
+        bufDesc.label = "TriangleFan Index Buffer";
+        bufDesc.size = maxIndices * sizeof(uint16_t);
+        bufDesc.usage = WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst;
+        bufDesc.mappedAtCreation = true;
+
+        sFanIndexBuffer = wgpuDeviceCreateBuffer(mDevice, &bufDesc);
+        if (sFanIndexBuffer) {
+            void* mapped = wgpuBufferGetMappedRange(sFanIndexBuffer, 0, bufDesc.size);
+            if (mapped) {
+                memcpy(mapped, indices.data(), bufDesc.size);
+                wgpuBufferUnmap(sFanIndexBuffer);
+            }
+            sFanIndexBufferSize = maxIndices;
+            printf("[drawTriangleFanEmulated] Created fan index buffer for up to %d vertices\n", kMaxFanVertices);
+        }
+    }
+
+    if (!sFanIndexBuffer || vertexCount > kMaxFanVertices) {
+        printf("[drawTriangleFanEmulated] ERROR: Cannot emulate fan with %d vertices (max=%d)\n",
+               vertexCount, kMaxFanVertices);
+        return;
+    }
+
+    // Now draw using the standard indexed draw path but with TriangleList
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    flushUniforms();
+
+    // Check rendering modes (same as draw())
+    bool hasTexture = mBoundTextures[0].valid();
+    bool useLighting = mLightingEnabled && mLitShader.valid();
+    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
+
+    // Shader selection priority: custom > lighting > textured > default
+    ShaderHandle shaderToUse;
+    if (mCurrentShader.valid()) {
+        shaderToUse = mCurrentShader;
+    } else if (useLighting) {
+        shaderToUse = mLitShader;
+    } else if (useTextured) {
+        shaderToUse = mTexturedShader;
+    } else {
+        shaderToUse = mDefaultShader;
+    }
+
+    auto shaderIt = mShaders.find(shaderToUse.id);
+    if (shaderIt == mShaders.end()) return;
+
+    // Get pipeline for TriangleList (not TriangleFan!)
+    WGPURenderPipeline pipeline = getPipelineForPrimitive(shaderIt->second, PrimitiveType::Triangles);
+    if (!pipeline) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+
+    // Bind appropriate bind group
+    if (useLighting && !mCurrentShader.valid()) {
+        if (mLightingDirty || !mLitBindGroup) {
+            updateLightingBindGroup();
+        }
+        if (mLitBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else if (useTextured && !mCurrentShader.valid()) {
+        if (mTextureBindingDirty || !mTexturedBindGroup) {
+            updateTexturedBindGroup(mTexturedShader);
+        }
+        if (mTexturedBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTexturedBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else {
         wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, shaderIt->second.bindGroup,
                                            1, &mCurrentDynamicOffset);
     }
@@ -2388,8 +2518,14 @@ void WebGPUBackend::draw(
         wgpuRenderPassEncoderSetVertexBuffer(mRenderPassEncoder, 0, vbIt->second.buffer, 0, vbIt->second.size);
     }
 
-    // Draw
-    wgpuRenderPassEncoderDraw(mRenderPassEncoder, vertexCount, 1, firstVertex, 0);
+    // Bind our fan index buffer
+    wgpuRenderPassEncoderSetIndexBuffer(mRenderPassEncoder, sFanIndexBuffer, WGPUIndexFormat_Uint16, 0,
+                                         numIndices * sizeof(uint16_t));
+
+    // Draw indexed with baseVertex to handle firstVertex offset
+    printf("[drawTriangleFanEmulated] Drawing %d indices (%d triangles) with baseVertex=%d\n",
+           numIndices, numTriangles, firstVertex);
+    wgpuRenderPassEncoderDrawIndexed(mRenderPassEncoder, numIndices, 1, 0, firstVertex, 0);
 }
 
 void WebGPUBackend::drawIndexed(
@@ -2406,18 +2542,16 @@ void WebGPUBackend::drawIndexed(
     // Check rendering modes
     bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
-    // Use screen-space shader for textured rendering without lighting (post-processing)
-    bool useScreenSpace = hasTexture && !useLighting && mScreenSpaceShader.valid();
-    bool useTextured = hasTexture && !useScreenSpace && mTexturedShader.valid();
+    // Use textured shader for textured rendering (applies modelView/projection transforms)
+    // Screen-space shader is for post-processing only (no transforms) - not used by default
+    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > screen-space > textured > default
+    // Shader selection priority: custom > lighting > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
-    } else if (useScreenSpace) {
-        shaderToUse = mScreenSpaceShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2449,10 +2583,10 @@ void WebGPUBackend::drawIndexed(
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
-    } else if ((useScreenSpace || useTextured) && !mCurrentShader.valid()) {
-        // Screen-space and textured shaders share the same bind group layout
+    } else if (useTextured && !mCurrentShader.valid()) {
+        // Use textured shader's layout for bind group
         if (mTextureBindingDirty || !mTexturedBindGroup) {
-            updateTexturedBindGroup();
+            updateTexturedBindGroup(mTexturedShader);
         }
         if (mTexturedBindGroup) {
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTexturedBindGroup,
@@ -3129,15 +3263,24 @@ void WebGPUBackend::createTexturedShader() {
     printf("[WebGPUBackend] Textured shader created successfully\n");
 }
 
-void WebGPUBackend::updateTexturedBindGroup() {
+void WebGPUBackend::updateTexturedBindGroup(ShaderHandle shaderToUse) {
     // Create/update bind group for textured rendering
-    if (!mTexturedShader.valid() || !mBoundTextures[0].valid()) return;
+    // Use the provided shader's layout to ensure compatibility
+    ShaderHandle effectiveShader = shaderToUse.valid() ? shaderToUse : mTexturedShader;
 
-    auto shaderIt = mShaders.find(mTexturedShader.id);
-    if (shaderIt == mShaders.end()) return;
+    if (!effectiveShader.valid() || !mBoundTextures[0].valid()) {
+        return;
+    }
+
+    auto shaderIt = mShaders.find(effectiveShader.id);
+    if (shaderIt == mShaders.end()) {
+        return;
+    }
 
     auto texIt = mTextures.find(mBoundTextures[0].id);
-    if (texIt == mTextures.end()) return;
+    if (texIt == mTextures.end()) {
+        return;
+    }
 
     // Release old bind group
     if (mTexturedBindGroup) {
@@ -3552,18 +3695,25 @@ void WebGPUBackend::updateLightingBindGroup() {
 void WebGPUBackend::beginRenderPass() {
     if (mRenderPassEncoder) return; // Already in render pass
 
-    if (!mCommandEncoder || !mCurrentSwapChainView) return;
+    if (!mCommandEncoder || !mCurrentSwapChainView) {
+        printf("[WebGPUBackend::beginRenderPass] ERROR: cmdEncoder=%p, swapView=%p\n",
+               (void*)mCommandEncoder, (void*)mCurrentSwapChainView);
+        return;
+    }
 
     // Determine which views to use
     WGPUTextureView colorView = mCurrentSwapChainView;
     WGPUTextureView depthView = mDepthTextureView;
 
-    // Check if using custom render target
+    // Check if using custom render target (FBO)
     if (mCurrentRenderTarget.valid()) {
         auto it = mRenderTargets.find(mCurrentRenderTarget.id);
         if (it != mRenderTargets.end()) {
             if (it->second.colorView) colorView = it->second.colorView;
             if (it->second.depthView) depthView = it->second.depthView;
+        } else {
+            printf("[WebGPUBackend::beginRenderPass] ERROR: Render target %llu not found!\n",
+                   (unsigned long long)mCurrentRenderTarget.id);
         }
     }
 
@@ -3650,26 +3800,6 @@ void WebGPUBackend::flushUniforms() {
         memcpy(mUniformData.data() + 192, tint, 16);
         memcpy(mUniformData.data() + 208, params, 16);
     }
-
-#ifdef __EMSCRIPTEN__
-    static int flushLogCount = 0;
-    if (flushLogCount < 3) {
-        // Log modelView matrix translation (bytes 48-60 = floats 12-14)
-        float* uniforms = reinterpret_cast<float*>(mUniformData.data());
-        EM_ASM({
-            console.log('[WebGPUBackend::flushUniforms] MV translation at offset ' + $3 + ': (' +
-                        $0 + ', ' + $1 + ', ' + $2 + ')');
-        }, uniforms[12], uniforms[13], uniforms[14], (int)mUniformRingOffset);
-
-        // Log projection matrix diagonal (floats 16+0, 16+5, 16+10, 16+15)
-        EM_ASM({
-            console.log('[WebGPUBackend::flushUniforms] Proj diagonal: (' +
-                        $0 + ', ' + $1 + ', ' + $2 + ', ' + $3 + ')');
-        }, uniforms[16+0], uniforms[16+5], uniforms[16+10], uniforms[16+15]);
-
-        flushLogCount++;
-    }
-#endif
 
     // Check if we have room in the ring buffer
     if (mUniformRingBuffer && mUniformRingOffset + kUniformAlignment <= kUniformAlignment * kMaxDrawsPerFrame) {

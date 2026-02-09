@@ -134,9 +134,17 @@ void Graphics_onTextureBind(GLuint glTextureId, int unit) {
 
     sLastBoundGLTexture = glTextureId;
 
+    if (glTextureId == 0) {
+        // Unbinding texture - clear the WebGPU binding
+        sGraphicsBackend->setTexture("tex0", TextureHandle{}, unit);
+        return;
+    }
+
     auto it = sTextureBridge.find(glTextureId);
     if (it != sTextureBridge.end() && it->second.webgpuHandle.valid()) {
         sGraphicsBackend->setTexture("tex0", it->second.webgpuHandle, unit);
+    } else {
+        printf("[Graphics] Warning: GL texture %u not found in WebGPU bridge\n", glTextureId);
     }
 }
 
@@ -208,41 +216,28 @@ void EasyFBO_registerWithBridge(unsigned int fboId, unsigned int colorTexId,
                                  unsigned int depthTexId, int width, int height) {
     if (!sWebGPUMode || !sGraphicsBackend) return;
 
-    // First, register the color texture as a render target
+    // Register the color texture as a render target
     Graphics_registerRenderTargetTexture(colorTexId, width, height, false);
 
     // Handle depth: WebGPU needs a depth texture even if GL used an RBO
-    // If depthTexId is 0, create a synthetic depth texture for WebGPU
     GLuint effectiveDepthId = depthTexId;
     if (depthTexId == 0) {
-        // Generate a synthetic ID for the depth texture
         effectiveDepthId = sSyntheticDepthIdCounter++;
-        printf("[EasyFBO] Creating synthetic depth texture for FBO %u (synthetic ID: %u)\n",
-               fboId, effectiveDepthId);
     }
     Graphics_registerRenderTargetTexture(effectiveDepthId, width, height, true);
 
-    // Now get WebGPU texture handles from texture bridge
+    // Get WebGPU texture handles from texture bridge
     TextureHandle colorHandle = Graphics_getTextureHandle(colorTexId);
-
     if (!colorHandle.valid()) {
         printf("[EasyFBO] Warning: Color texture %u registration failed\n", colorTexId);
         return;
     }
 
-    // Get depth handle (should always be valid now)
     TextureHandle depthHandle = Graphics_getTextureHandle(effectiveDepthId);
-    if (!depthHandle.valid()) {
-        printf("[EasyFBO] Warning: Depth texture registration failed\n");
-    }
 
     RenderTargetHandle rtHandle = sGraphicsBackend->createRenderTarget(colorHandle, depthHandle);
-
     if (rtHandle.valid()) {
-        // Store in FBO bridge with dimensions
         FBO_register(fboId, rtHandle, width, height);
-        printf("[EasyFBO] Registered FBO %u → WebGPU render target (size: %dx%d)\n",
-               fboId, width, height);
     } else {
         printf("[EasyFBO] Failed to create WebGPU render target for FBO %u\n", fboId);
     }
@@ -881,33 +876,6 @@ static void drawMeshWithWebGPU(Graphics& g, const Mesh& m) {
     Mat4f mv = view * model;
     Mat4f proj = g.projMatrix();
 
-#ifdef __EMSCRIPTEN__
-    static int matrixLogCount = 0;
-    if (matrixLogCount < 3) {
-        // Log model matrix translation (column 3)
-        EM_ASM({
-            console.log('[WebGPU Matrix] Model translation: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
-        }, model.elems()[12], model.elems()[13], model.elems()[14]);
-
-        // Log view matrix (position is embedded in column 3)
-        EM_ASM({
-            console.log('[WebGPU Matrix] View[12-14]: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
-        }, view.elems()[12], view.elems()[13], view.elems()[14]);
-
-        // Log modelView result translation
-        EM_ASM({
-            console.log('[WebGPU Matrix] ModelView translation: (' + $0 + ', ' + $1 + ', ' + $2 + ')');
-        }, mv.elems()[12], mv.elems()[13], mv.elems()[14]);
-
-        // Log projection matrix diagonal (aspect ratio info)
-        EM_ASM({
-            console.log('[WebGPU Matrix] Proj diagonal: (' + $0 + ', ' + $1 + ', ' + $2 + ', ' + $3 + ')');
-        }, proj.elems()[0], proj.elems()[5], proj.elems()[10], proj.elems()[15]);
-
-        matrixLogCount++;
-    }
-#endif
-
     sGraphicsBackend->setUniformMat4("modelViewMatrix", mv.elems());
     sGraphicsBackend->setUniformMat4("projectionMatrix", proj.elems());
 
@@ -933,36 +901,10 @@ static void drawMeshWithWebGPU(Graphics& g, const Mesh& m) {
 }
 
 void Graphics::draw(const Mesh& mesh) {
-#ifdef __EMSCRIPTEN__
-    static int drawCount = 0;
-    if (drawCount < 5) {
-        EM_ASM({ console.log('[Graphics::draw] Entry, count=' + $0 + ', WebGPU=' + $1); }, drawCount, sWebGPUMode ? 1 : 0);
-    }
-#endif
-
     if (sWebGPUMode && sGraphicsBackend) {
-#ifdef __EMSCRIPTEN__
-        if (drawCount < 5) {
-            EM_ASM({ console.log('[Graphics::draw] Calling drawMeshWithWebGPU...'); });
-        }
-#endif
         drawMeshWithWebGPU(*this, mesh);
-#ifdef __EMSCRIPTEN__
-        if (drawCount < 5) {
-            EM_ASM({ console.log('[Graphics::draw] drawMeshWithWebGPU done'); });
-            drawCount++;
-        }
-#endif
         return;
     }
-
-    // Standard WebGL2 path - delegate to RenderManager
-#ifdef __EMSCRIPTEN__
-    if (drawCount < 5) {
-        EM_ASM({ console.log('[Graphics::draw] Using WebGL2 path'); });
-        drawCount++;
-    }
-#endif
     RenderManager::draw(mesh);
 }
 

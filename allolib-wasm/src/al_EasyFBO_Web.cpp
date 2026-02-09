@@ -13,9 +13,17 @@
 
 namespace al {
 
-// Forward declaration of bridge registration function (defined in al_Graphics_Web.cpp)
+// Forward declarations of bridge functions (defined in al_Graphics_Web.cpp)
 extern void EasyFBO_registerWithBridge(unsigned int fboId, unsigned int colorTexId,
                                         unsigned int depthTexId, int width, int height);
+extern void EasyFBO_unregisterFromBridge(unsigned int fboId);
+
+EasyFBO::~EasyFBO() {
+  // Unregister from WebGPU bridge to prevent render target leaks
+  if (mFbo.id()) {
+    EasyFBO_unregisterFromBridge(mFbo.id());
+  }
+}
 
 void EasyFBO::init(int width, int height, EasyFBOSetting const& setting) {
   mWidth = width;

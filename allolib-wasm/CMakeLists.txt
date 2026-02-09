@@ -43,16 +43,18 @@ set(EMSCRIPTEN_COMPILE_FLAGS
 )
 
 # Base link flags for applications
+# NOTE: EXPORTED_FUNCTIONS and stack sizes must stay in sync with backend/docker/compile.sh
 set(EMSCRIPTEN_LINK_FLAGS
     "-sUSE_GLFW=3"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','stringToUTF8']"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_allolib_configure_backend']"
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_allolib_create','_allolib_configure_backend','_allolib_start','_allolib_stop','_allolib_destroy','_allolib_process_audio','_allolib_configure_audio','_al_webgui_get_parameter_count','_al_webgui_get_parameter_name','_al_webgui_get_parameter_group','_al_webgui_get_parameter_type','_al_webgui_get_parameter_min','_al_webgui_get_parameter_max','_al_webgui_get_parameter_value','_al_webgui_get_parameter_default','_al_webgui_set_parameter_value','_al_webgui_set_parameter_string','_al_webgui_trigger_parameter','_al_webgui_set_parameter_vec3','_al_webgui_set_parameter_vec4','_al_web_set_point_size','_al_web_get_point_size','_al_autolod_set_bias','_al_autolod_set_enabled','_al_autolod_set_budget','_al_autolod_set_mode','_al_autolod_get_triangles','_al_autolod_get_bias','_al_autolod_set_min_full_quality_distance','_al_autolod_set_distances','_al_autolod_set_distance_scale','_al_autolod_get_distance_scale','_al_autolod_set_levels','_al_autolod_get_levels','_al_autolod_set_unload_distance','_al_autolod_set_unload_enabled','_al_texture_lod_set_enabled','_al_texture_lod_get_enabled','_al_texture_lod_set_bias','_al_texture_lod_get_bias','_al_texture_lod_set_max_resolution','_al_texture_lod_get_max_resolution','_al_texture_lod_get_resolution','_al_texture_lod_get_level','_al_texture_lod_set_reference_distance','_al_texture_lod_get_reference_distance','_al_texture_lod_get_continuous']"
     "-sMODULARIZE=1"
     "-sEXPORT_ES6=1"
     "-sENVIRONMENT='web'"
     "-sASYNCIFY=1"
-    "-sASYNCIFY_STACK_SIZE=65536"
+    "-sASYNCIFY_STACK_SIZE=131072"
+    "-sSTACK_SIZE=524288"
     "--bind"
 )
 

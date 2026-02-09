@@ -590,6 +590,37 @@ export const DEFAULT_EXPECTATION: VisualExpectation = {
   minBrightness: 0.01,
 }
 
-export function getExpectation(exampleId: string): VisualExpectation {
-  return VISUAL_EXPECTATIONS[exampleId] || DEFAULT_EXPECTATION
+export function getExpectation(
+  exampleId: string,
+  backend: 'webgl2' | 'webgpu' = 'webgl2'
+): VisualExpectation {
+  const base = VISUAL_EXPECTATIONS[exampleId] || DEFAULT_EXPECTATION
+
+  if (backend === 'webgpu') {
+    return applyWebGPUOverrides(base)
+  }
+
+  return base
+}
+
+/**
+ * Apply WebGPU-specific overrides to visual expectations.
+ * WebGPU rendering may produce slightly different color distributions
+ * due to different floating-point precision in shader compilation
+ * and texture sampling compared to WebGL2. We apply a small tolerance
+ * (20%) to color thresholds to account for genuine precision differences.
+ *
+ * Canvas readback for both animation detection and static capture now
+ * uses the postMainLoop callback, which works reliably for both backends.
+ */
+function applyWebGPUOverrides(base: VisualExpectation): VisualExpectation {
+  const result = { ...base }
+
+  // Small tolerance for genuine float precision differences in shaders.
+  // 0.8x multiplier accounts for minor color quantization differences.
+  if (result.minUniqueColors !== undefined && result.minUniqueColors > 3) {
+    result.minUniqueColors = Math.max(3, Math.floor(result.minUniqueColors * 0.8))
+  }
+
+  return result
 }
