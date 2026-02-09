@@ -430,6 +430,9 @@ public:
     /// Bind a storage texture for compute
     virtual void bindStorageTexture(int binding, TextureHandle handle) {}
 
+    /// Bind a uniform buffer for compute
+    virtual void bindUniformBuffer(int binding, BufferHandle handle) {}
+
     /// Dispatch compute work
     virtual void dispatch(
         ComputePipelineHandle pipeline,

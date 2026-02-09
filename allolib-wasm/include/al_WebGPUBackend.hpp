@@ -19,6 +19,7 @@
 
 #include "al_WebGraphicsBackend.hpp"
 #include <unordered_map>
+#include <map>
 #include <vector>
 
 #ifdef __EMSCRIPTEN__
@@ -161,6 +162,7 @@ public:
     void destroyComputePipeline(ComputePipelineHandle handle) override;
     void bindStorageBuffer(int binding, BufferHandle handle) override;
     void bindStorageTexture(int binding, TextureHandle handle) override;
+    void bindUniformBuffer(int binding, BufferHandle handle) override;
 
     void dispatch(
         ComputePipelineHandle pipeline,
@@ -370,6 +372,14 @@ private:
         WGPUPipelineLayout pipelineLayout = nullptr;
         WGPUBindGroup bindGroup = nullptr;
     };
+
+    // Compute binding tracking
+    struct ComputeBinding {
+        enum Type { StorageBuffer, StorageTexture, UniformBuffer } type;
+        uint64_t resourceId = 0;  // BufferHandle.id or TextureHandle.id
+    };
+    std::map<int, ComputeBinding> mPendingComputeBindings;
+    bool mComputeBindGroupDirty = true;
 
     // Resource maps (handle ID -> resource)
     std::unordered_map<uint64_t, BufferResource> mBuffers;

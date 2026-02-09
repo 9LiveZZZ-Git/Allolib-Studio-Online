@@ -16,6 +16,7 @@
 #include "al_WebGPUBackend.hpp"
 
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 #include <emscripten/html5_webgpu.h>
 #include <cstring>
 #include <cstdio>
@@ -2720,31 +2721,22 @@ ComputePipelineHandle WebGPUBackend::createComputePipeline(const ShaderDesc& des
         return {};
     }
 
-    // Create bind group layout (empty for now - would need reflection)
-    WGPUBindGroupLayoutDescriptor layoutDesc = {};
-    layoutDesc.entryCount = 0;
-    resource.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
-
-    // Create pipeline layout
-    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
-    pipelineLayoutDesc.bindGroupLayoutCount = 1;
-    pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
-    resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
-
-    // Create compute pipeline
+    // Create compute pipeline with auto layout (derives from WGSL reflection)
     WGPUComputePipelineDescriptor pipelineDesc = {};
-    pipelineDesc.layout = resource.pipelineLayout;
+    pipelineDesc.layout = nullptr;  // Auto layout
     pipelineDesc.compute.module = resource.module;
-    pipelineDesc.compute.entryPoint = "cs_main";
+    pipelineDesc.compute.entryPoint = "main";
 
     resource.pipeline = wgpuDeviceCreateComputePipeline(mDevice, &pipelineDesc);
     if (!resource.pipeline) {
         printf("[WebGPUBackend] Failed to create compute pipeline!\n");
-        wgpuPipelineLayoutRelease(resource.pipelineLayout);
-        wgpuBindGroupLayoutRelease(resource.bindGroupLayout);
         wgpuShaderModuleRelease(resource.module);
         return {};
     }
+
+    // Get auto-generated bind group layout from the pipeline
+    resource.bindGroupLayout = wgpuComputePipelineGetBindGroupLayout(resource.pipeline, 0);
+    resource.pipelineLayout = nullptr;  // Owned by pipeline when using auto layout
 
     uint64_t id = generateHandleId();
     mComputePipelines[id] = resource;
@@ -2767,15 +2759,18 @@ void WebGPUBackend::destroyComputePipeline(ComputePipelineHandle handle) {
 }
 
 void WebGPUBackend::bindStorageBuffer(int binding, BufferHandle handle) {
-    (void)binding;
-    (void)handle;
-    // Would need to rebuild bind group
+    mPendingComputeBindings[binding] = {ComputeBinding::StorageBuffer, handle.id};
+    mComputeBindGroupDirty = true;
 }
 
 void WebGPUBackend::bindStorageTexture(int binding, TextureHandle handle) {
-    (void)binding;
-    (void)handle;
-    // Would need to rebuild bind group
+    mPendingComputeBindings[binding] = {ComputeBinding::StorageTexture, handle.id};
+    mComputeBindGroupDirty = true;
+}
+
+void WebGPUBackend::bindUniformBuffer(int binding, BufferHandle handle) {
+    mPendingComputeBindings[binding] = {ComputeBinding::UniformBuffer, handle.id};
+    mComputeBindGroupDirty = true;
 }
 
 void WebGPUBackend::dispatch(
@@ -2789,6 +2784,70 @@ void WebGPUBackend::dispatch(
     auto it = mComputePipelines.find(pipeline.id);
     if (it == mComputePipelines.end()) return;
 
+    auto& compute = it->second;
+
+    // Rebuild bind group if bindings changed
+    if (mComputeBindGroupDirty && !mPendingComputeBindings.empty()) {
+        // Release old bind group
+        if (compute.bindGroup) {
+            wgpuBindGroupRelease(compute.bindGroup);
+            compute.bindGroup = nullptr;
+        }
+
+        // Get bind group layout from pipeline (auto layout)
+        WGPUBindGroupLayout layout = compute.bindGroupLayout;
+        if (!layout) {
+            printf("[WebGPUBackend] Compute pipeline has no bind group layout!\n");
+            return;
+        }
+
+        // Build entries from pending bindings
+        std::vector<WGPUBindGroupEntry> entries;
+        entries.reserve(mPendingComputeBindings.size());
+
+        for (auto& [binding, cb] : mPendingComputeBindings) {
+            WGPUBindGroupEntry entry = {};
+            entry.binding = (uint32_t)binding;
+
+            if (cb.type == ComputeBinding::StorageBuffer ||
+                cb.type == ComputeBinding::UniformBuffer) {
+                auto bufIt = mBuffers.find(cb.resourceId);
+                if (bufIt == mBuffers.end() || !bufIt->second.buffer) {
+                    printf("[WebGPUBackend] Compute binding %d: buffer %llu not found\n",
+                           binding, (unsigned long long)cb.resourceId);
+                    continue;
+                }
+                entry.buffer = bufIt->second.buffer;
+                entry.offset = 0;
+                entry.size = bufIt->second.size;
+            } else if (cb.type == ComputeBinding::StorageTexture) {
+                auto texIt = mTextures.find(cb.resourceId);
+                if (texIt == mTextures.end() || !texIt->second.view) {
+                    printf("[WebGPUBackend] Compute binding %d: texture %llu not found\n",
+                           binding, (unsigned long long)cb.resourceId);
+                    continue;
+                }
+                entry.textureView = texIt->second.view;
+            }
+
+            entries.push_back(entry);
+        }
+
+        // Create bind group
+        WGPUBindGroupDescriptor bgDesc = {};
+        bgDesc.layout = layout;
+        bgDesc.entryCount = entries.size();
+        bgDesc.entries = entries.data();
+
+        compute.bindGroup = wgpuDeviceCreateBindGroup(mDevice, &bgDesc);
+        if (!compute.bindGroup) {
+            printf("[WebGPUBackend] Failed to create compute bind group!\n");
+            return;
+        }
+
+        mComputeBindGroupDirty = false;
+    }
+
     // End render pass if active
     endRenderPass();
 
@@ -2796,9 +2855,9 @@ void WebGPUBackend::dispatch(
     WGPUComputePassDescriptor computePassDesc = {};
     mComputePassEncoder = wgpuCommandEncoderBeginComputePass(mCommandEncoder, &computePassDesc);
 
-    wgpuComputePassEncoderSetPipeline(mComputePassEncoder, it->second.pipeline);
-    if (it->second.bindGroup) {
-        wgpuComputePassEncoderSetBindGroup(mComputePassEncoder, 0, it->second.bindGroup, 0, nullptr);
+    wgpuComputePassEncoderSetPipeline(mComputePassEncoder, compute.pipeline);
+    if (compute.bindGroup) {
+        wgpuComputePassEncoderSetBindGroup(mComputePassEncoder, 0, compute.bindGroup, 0, nullptr);
     }
     wgpuComputePassEncoderDispatchWorkgroups(mComputePassEncoder, groupsX, groupsY, groupsZ);
 
@@ -2820,12 +2879,66 @@ void WebGPUBackend::readBuffer(
     size_t size,
     size_t offset
 ) {
-    // WebGPU buffer readback is async - would need callback
-    // For now, skip implementation
-    (void)handle;
-    (void)dest;
-    (void)size;
-    (void)offset;
+    auto it = mBuffers.find(handle.id);
+    if (it == mBuffers.end() || !it->second.buffer) return;
+    if (!dest || size == 0) return;
+
+    // End any active render pass before GPU copy
+    endRenderPass();
+
+    // Create a staging buffer with MapRead + CopyDst usage
+    WGPUBufferDescriptor stagingDesc = {};
+    stagingDesc.label = "readBuffer staging";
+    stagingDesc.size = size;
+    stagingDesc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    stagingDesc.mappedAtCreation = false;
+
+    WGPUBuffer staging = wgpuDeviceCreateBuffer(mDevice, &stagingDesc);
+    if (!staging) {
+        printf("[WebGPUBackend] Failed to create staging buffer for readBuffer\n");
+        return;
+    }
+
+    // Copy source buffer → staging buffer using a dedicated encoder
+    WGPUCommandEncoder copyEncoder = wgpuDeviceCreateCommandEncoder(mDevice, nullptr);
+    wgpuCommandEncoderCopyBufferToBuffer(copyEncoder, it->second.buffer, offset, staging, 0, size);
+
+    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(copyEncoder, nullptr);
+    wgpuQueueSubmit(mQueue, 1, &cmdBuf);
+    wgpuCommandBufferRelease(cmdBuf);
+    wgpuCommandEncoderRelease(copyEncoder);
+
+    // Map the staging buffer asynchronously
+    struct MapContext {
+        bool done = false;
+        WGPUBufferMapAsyncStatus status = WGPUBufferMapAsyncStatus_Unknown;
+    };
+    MapContext ctx;
+
+    wgpuBufferMapAsync(staging, WGPUMapMode_Read, 0, size,
+        [](WGPUBufferMapAsyncStatus status, void* userdata) {
+            auto* ctx = static_cast<MapContext*>(userdata);
+            ctx->status = status;
+            ctx->done = true;
+        }, &ctx);
+
+    // Spin with emscripten_sleep until the map completes (ASYNCIFY required)
+    while (!ctx.done) {
+        emscripten_sleep(1);
+    }
+
+    if (ctx.status == WGPUBufferMapAsyncStatus_Success) {
+        const void* mapped = wgpuBufferGetConstMappedRange(staging, 0, size);
+        if (mapped) {
+            memcpy(dest, mapped, size);
+        }
+        wgpuBufferUnmap(staging);
+    } else {
+        printf("[WebGPUBackend] readBuffer map failed with status %d\n", (int)ctx.status);
+    }
+
+    wgpuBufferDestroy(staging);
+    wgpuBufferRelease(staging);
 }
 
 void WebGPUBackend::copyBuffer(
@@ -3837,7 +3950,7 @@ WGPUBufferUsageFlags WebGPUBackend::toWGPUBufferUsage(BufferType type, BufferUsa
             flags |= WGPUBufferUsage_Uniform;
             break;
         case BufferType::Storage:
-            flags |= WGPUBufferUsage_Storage;
+            flags |= WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc;
             break;
     }
 

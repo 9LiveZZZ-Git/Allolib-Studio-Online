@@ -168,6 +168,13 @@ export const categoryGroups: CategoryGroup[] = [
           { id: 'textures', title: 'Textures' },
         ],
       },
+      {
+        id: 'gpu-compute',
+        title: 'Compute',
+        subcategories: [
+          { id: 'particles', title: 'Particles' },
+        ],
+      },
     ],
   },
 ]
@@ -180,6 +187,13 @@ const gpuCategories: ExampleCategory[] = [
     subcategories: [
       { id: 'shaders', title: 'Shaders' },
       { id: 'textures', title: 'Textures' },
+    ],
+  },
+  {
+    id: 'gpu-compute',
+    title: 'Compute',
+    subcategories: [
+      { id: 'particles', title: 'Particles' },
     ],
   },
 ]
@@ -12895,6 +12909,202 @@ public:
 };
 
 ALLOLIB_WEB_MAIN(GradientSphere)
+`,
+  },
+
+  // ==========================================================================
+  // GPU COMPUTE - Particles
+  // ==========================================================================
+  {
+    id: 'gpu-compute-particles',
+    title: 'GPU Compute Particles',
+    description: 'Particle system driven by a WebGPU compute shader',
+    category: 'gpu-compute',
+    subcategory: 'particles',
+    code: `/**
+ * GPU Compute Particles
+ * Features: WebGPU compute shader, 100k particles, ping-pong buffers
+ * Controls: WASD+QE navigation
+ *
+ * Demonstrates ComputeShader, GPUBuffer, GPUUniformBuffer, and PingPongBuffer
+ * wrappers for WebGPU compute. Particles orbit the origin with gravity.
+ *
+ * NOTE: WebGPU backend only — will not compile on WebGL2.
+ */
+#include "al_WebApp.hpp"
+#include "al_WebGPUCompute.hpp"
+#include "al_WebGPUBuffer.hpp"
+#include "al_WebPingPong.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+// Must match the WGSL struct layout (16-byte aligned)
+struct Particle {
+    float px, py, pz, _pad0;  // position + pad
+    float vx, vy, vz, _pad1;  // velocity + pad
+    float r, g, b, a;         // color
+};
+
+// Uniform params for compute shader
+struct SimParams {
+    float dt;
+    float gravity;
+    float damping;
+    float _pad;
+};
+
+static const char* computeWGSL = R"(
+struct Particle {
+    pos : vec4f,
+    vel : vec4f,
+    col : vec4f,
+};
+
+struct Params {
+    dt      : f32,
+    gravity : f32,
+    damping : f32,
+};
+
+@group(0) @binding(0) var<storage, read>       particlesIn  : array<Particle>;
+@group(0) @binding(1) var<storage, read_write>  particlesOut : array<Particle>;
+@group(0) @binding(2) var<uniform>              params       : Params;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+    let idx = gid.x;
+    if (idx >= arrayLength(&particlesIn)) { return; }
+
+    var p = particlesIn[idx];
+    let dt = params.dt;
+
+    // Gravity towards origin
+    let toCenter = -p.pos.xyz;
+    let dist = max(length(toCenter), 0.01);
+    let force = normalize(toCenter) * params.gravity / (dist * dist + 0.5);
+
+    // Tangential velocity for orbit
+    let tangent = cross(normalize(toCenter), vec3f(0.0, 1.0, 0.0));
+
+    p.vel = vec4f(
+        (p.vel.xyz + (force + tangent * 0.3) * dt) * params.damping,
+        0.0
+    );
+    p.pos = vec4f(p.pos.xyz + p.vel.xyz * dt, 1.0);
+
+    // Color by speed
+    let speed = length(p.vel.xyz);
+    p.col = vec4f(
+        clamp(speed * 2.0, 0.2, 1.0),
+        clamp(1.0 - speed, 0.1, 0.8),
+        clamp(dist * 0.3, 0.3, 1.0),
+        1.0
+    );
+
+    particlesOut[idx] = p;
+}
+)";
+
+class GPUComputeParticles : public WebApp {
+public:
+    static const int NUM_PARTICLES = 100000;
+    static const int WORKGROUP_SIZE = 256;
+
+    PingPongBuffer<Particle> particles;
+    GPUUniformBuffer<SimParams> simParamsBuffer;
+    ComputeShader computeShader;
+
+    Mesh pointMesh;
+    SimParams simParams;
+
+    void onCreate() override {
+        // Initialize particles in a sphere
+        std::vector<Particle> init(NUM_PARTICLES);
+        for (int i = 0; i < NUM_PARTICLES; i++) {
+            float theta = ((float)rand() / RAND_MAX) * 2.0f * M_PI;
+            float phi = acos(2.0f * ((float)rand() / RAND_MAX) - 1.0f);
+            float r = 1.0f + ((float)rand() / RAND_MAX) * 2.0f;
+
+            init[i].px = r * sin(phi) * cos(theta);
+            init[i].py = r * sin(phi) * sin(theta);
+            init[i].pz = r * cos(phi);
+            init[i]._pad0 = 1.0f;
+
+            // Small initial velocity
+            init[i].vx = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
+            init[i].vy = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
+            init[i].vz = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
+            init[i]._pad1 = 0.0f;
+
+            init[i].r = 0.5f;
+            init[i].g = 0.5f;
+            init[i].b = 1.0f;
+            init[i].a = 1.0f;
+        }
+
+        auto& b = *backend();
+
+        // Create GPU resources
+        particles.create(b, init);
+        simParamsBuffer.create(b);
+        computeShader.create(b, computeWGSL);
+
+        // Sim parameters
+        simParams.dt = 0.016f;
+        simParams.gravity = 5.0f;
+        simParams.damping = 0.998f;
+
+        // Mesh for rendering (we'll update vertices each frame from GPU data)
+        pointMesh.primitive(Mesh::POINTS);
+        pointMesh.vertices().resize(NUM_PARTICLES);
+        pointMesh.colors().resize(NUM_PARTICLES);
+
+        nav().pos(0, 0, 8);
+    }
+
+    void onAnimate(double dt) override {
+        simParams.dt = (float)std::min(dt, 0.033);
+
+        auto& b = *backend();
+
+        // Bind resources: in=previous, out=current, params=uniform
+        computeShader.bind(0, particles.previousHandle());
+        computeShader.bind(1, particles.currentHandle());
+        simParamsBuffer.upload(simParams);
+        computeShader.bindUniform(2, simParamsBuffer.handle());
+
+        // Dispatch compute
+        int numGroups = (NUM_PARTICLES + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+        computeShader.dispatch(numGroups);
+
+        // Swap ping-pong buffers for next frame
+        particles.swap();
+
+        // Read back particle data for CPU-side rendering
+        std::vector<Particle> data(NUM_PARTICLES);
+        particles.previous().readback(data);
+
+        for (int i = 0; i < NUM_PARTICLES; i++) {
+            pointMesh.vertices()[i] = Vec3f(data[i].px, data[i].py, data[i].pz);
+            pointMesh.colors()[i] = Color(data[i].r, data[i].g, data[i].b, data[i].a);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.0f, 0.0f, 0.05f);
+        g.depthTesting(true);
+        g.blending(true);
+        g.blendAdd();
+        g.pointSize(2.0f);
+        g.meshColor();
+        g.draw(pointMesh);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUComputeParticles)
 `,
   },
 ]
