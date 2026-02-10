@@ -317,6 +317,19 @@ public:
         PrimitiveType primitive = PrimitiveType::Triangles
     );
 
+    // ── GPU Particle Rendering (Phase 4) ────────────────────────────────
+
+    /// Draw GPU particles as billboarded quads directly from storage buffer
+    void drawParticles(BufferHandle particleBuffer, BufferHandle renderParamsBuffer, int particleCount);
+
+    /// Draw GPU particles with soft depth-aware fade at geometry intersections
+    void drawParticlesSoft(BufferHandle particleBuffer, BufferHandle renderParamsBuffer, int particleCount, float fadeDistance = 0.5f);
+
+    // ── GPU Fluid Rendering (Phase 5) ────────────────────────────────────
+
+    /// Draw fluid field as fullscreen quad from storage buffer
+    void drawFluidField(BufferHandle fieldBuffer, BufferHandle renderParamsBuffer, int cellCount);
+
 #ifdef __EMSCRIPTEN__
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
@@ -499,6 +512,34 @@ private:
     PBRMaterialData mPBRMaterial;
     PBRParamsData mPBRParams;
 
+    // Particle rendering state (Phase 4)
+    WGPURenderPipeline mParticlePipeline = nullptr;
+    WGPUBindGroupLayout mParticleBindGroupLayout = nullptr;
+    WGPUBuffer mParticleUniformBuffer = nullptr;
+    WGPUBindGroup mParticleBindGroup = nullptr;
+    BufferHandle mBoundParticleBuffer;
+    BufferHandle mBoundParticleRenderParams;
+    bool mParticleBindGroupDirty = true;
+
+    // Soft particle rendering state (Phase 6)
+    WGPURenderPipeline mSoftParticlePipeline = nullptr;
+    WGPUBindGroupLayout mSoftParticleBindGroupLayout = nullptr;
+    WGPUTexture mDepthCopyTexture = nullptr;
+    WGPUTextureView mDepthCopyView = nullptr;
+    WGPUSampler mDepthSampler = nullptr;
+    WGPUBindGroup mSoftParticleBindGroup = nullptr;
+    BufferHandle mBoundSoftParticleBuffer;
+    BufferHandle mBoundSoftParticleRenderParams;
+    bool mSoftParticleBindGroupDirty = true;
+
+    // Fluid field rendering state (Phase 5)
+    WGPURenderPipeline mFluidFieldPipeline = nullptr;
+    WGPUBindGroupLayout mFluidFieldBindGroupLayout = nullptr;
+    WGPUBindGroup mFluidFieldBindGroup = nullptr;
+    BufferHandle mBoundFluidFieldBuffer;
+    BufferHandle mBoundFluidRenderParams;
+    bool mFluidFieldBindGroupDirty = true;
+
     // Lighting data storage (matches WGSL struct layout)
     struct LightData {
         float position[4];    // w=0 for directional, w=1 for point
@@ -585,6 +626,12 @@ private:
     void updateSkyboxBindGroup();      // Phase 4: Skybox
     void updatePBRBindGroup();         // Phase 5: PBR
     void updateEnvReflectBindGroup();  // Phase 6: Environment reflections
+    void createParticlePipeline();     // Phase 4: GPU Particles
+    void updateParticleBindGroup(BufferHandle particleBuffer, BufferHandle renderParams);
+    void createSoftParticlePipeline(); // Phase 6: Soft Particles
+    void updateSoftParticleBindGroup(BufferHandle particleBuffer, BufferHandle renderParams);
+    void createFluidFieldPipeline();   // Phase 5: GPU Fluid
+    void updateFluidFieldBindGroup(BufferHandle fieldBuffer, BufferHandle renderParams);
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();

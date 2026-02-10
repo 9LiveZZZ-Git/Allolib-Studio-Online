@@ -26,6 +26,7 @@ export interface Example {
   category: string
   subcategory?: string
   code: string
+  webgpuOnly?: boolean
 }
 
 export interface MultiFileExample {
@@ -172,7 +173,11 @@ export const categoryGroups: CategoryGroup[] = [
         id: 'gpu-compute',
         title: 'Compute',
         subcategories: [
+          { id: 'tutorials', title: 'Tutorials' },
           { id: 'particles', title: 'Particles' },
+          { id: 'fluids', title: 'Fluids' },
+          { id: 'vfx', title: 'VFX' },
+          { id: 'audio', title: 'Audio' },
         ],
       },
     ],
@@ -193,7 +198,11 @@ const gpuCategories: ExampleCategory[] = [
     id: 'gpu-compute',
     title: 'Compute',
     subcategories: [
+      { id: 'tutorials', title: 'Tutorials' },
       { id: 'particles', title: 'Particles' },
+      { id: 'fluids', title: 'Fluids' },
+      { id: 'vfx', title: 'VFX' },
+      { id: 'audio', title: 'Audio' },
     ],
   },
 ]
@@ -12913,6 +12922,399 @@ ALLOLIB_WEB_MAIN(GradientSphere)
   },
 
   // ==========================================================================
+  // GPU COMPUTE - Tutorials
+  // ==========================================================================
+  {
+    id: 'gpu-tutorial-hello-compute',
+    title: 'Tutorial: Hello Compute',
+    description: 'Your first compute shader — fill a buffer with values on the GPU',
+    category: 'gpu-compute',
+    subcategory: 'tutorials',
+    webgpuOnly: true,
+    code: `/**
+ * Tutorial: Hello Compute
+ *
+ * Your first WebGPU compute shader! This example shows the bare
+ * minimum: create a storage buffer, run a compute shader that writes
+ * values into it, read the results back to the CPU, and print them.
+ *
+ * No particles, no rendering — just pure GPU computation.
+ *
+ * KEY CONCEPTS:
+ *   1. Storage buffer  — GPU memory the compute shader reads/writes
+ *   2. Compute shader  — a WGSL program that runs in parallel on the GPU
+ *   3. Workgroup       — a group of GPU threads (we use 64 here)
+ *   4. Dispatch        — the command that launches the compute shader
+ *   5. readBuffer      — copies GPU data back to the CPU so we can inspect it
+ *
+ * NOTE: Requires WebGPU backend (Settings > Graphics > WebGPU).
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUCompute.hpp"
+#include "al_WebGPUBuffer.hpp"
+#include <cstdio>
+
+using namespace al;
+
+// -----------------------------------------------------------
+// The WGSL compute shader source code.
+// Each GPU thread writes its own index into the output buffer.
+// -----------------------------------------------------------
+static const char* computeSource = R"(
+// A storage buffer bound at slot 0, writable
+@group(0) @binding(0) var<storage, read_write> output : array<f32>;
+
+// @compute    — marks this as a compute shader (not vertex/fragment)
+// @workgroup_size(64) — 64 threads per workgroup
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+    // gid.x is the global thread index (0, 1, 2, ...)
+    let index = gid.x;
+
+    // Guard: don't write past the end of the buffer
+    if (index >= arrayLength(&output)) { return; }
+
+    // Write the index squared — just to show we can compute!
+    output[index] = f32(index) * f32(index);
+}
+)";
+
+class HelloCompute : public App {
+public:
+    // How many values to compute
+    static const int COUNT = 256;
+
+    // GPU handles
+    ComputePipelineHandle pipeline;
+    BufferHandle buffer;
+    bool computed = false;
+
+    void onCreate() override {
+        // Step 1: Create a compute pipeline from the WGSL source
+        pipeline = backend()->createComputePipeline(computeSource);
+
+        // Step 2: Create a storage buffer (COUNT floats, 4 bytes each)
+        buffer = backend()->createStorageBuffer(COUNT * sizeof(float));
+
+        // Position the camera (we'll draw a simple visualization)
+        nav().pos(0, 0, 5);
+
+        printf("[HelloCompute] Created pipeline and buffer for %d values\\n", COUNT);
+    }
+
+    void onAnimate(double dt) override {
+        if (computed) return;  // Only run once
+        computed = true;
+
+        // Step 3: Bind the storage buffer to slot 0
+        backend()->setComputePipeline(pipeline);
+        backend()->bindStorageBuffer(0, buffer);
+
+        // Step 4: Dispatch — launch COUNT/64 = 4 workgroups
+        // Total threads = 4 workgroups * 64 threads/workgroup = 256 threads
+        backend()->dispatch(COUNT / 64, 1, 1);
+
+        // Step 5: Read results back to CPU
+        std::vector<float> results(COUNT);
+        backend()->readBuffer(buffer, results.data(), COUNT * sizeof(float));
+
+        // Print the first 16 values to verify
+        printf("[HelloCompute] Results (first 16 of %d):\\n", COUNT);
+        for (int i = 0; i < 16; i++) {
+            printf("  output[%d] = %.0f  (expected %d)\\n", i, results[i], i * i);
+        }
+        printf("[HelloCompute] Done! Check the console for output.\\n");
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.1f, 0.1f, 0.15f);
+
+        // Draw a simple sphere so we know the app is running
+        Mesh m;
+        addSphere(m, 0.5, 32, 32);
+        m.generateNormals();
+        g.depthTesting(true);
+        g.lighting(true);
+        g.color(0.3f, 0.8f, 0.5f);
+        g.draw(m);
+    }
+};
+
+ALLOLIB_WEB_MAIN(HelloCompute)
+`,
+  },
+  {
+    id: 'gpu-tutorial-particle-basics',
+    title: 'Tutorial: Particle Basics',
+    description: 'Step-by-step introduction to the GPU particle system',
+    category: 'gpu-compute',
+    subcategory: 'tutorials',
+    webgpuOnly: true,
+    code: `/**
+ * Tutorial: Particle Basics
+ *
+ * Step-by-step introduction to the WebGPU particle system.
+ * Covers the full lifecycle: create -> configure -> add emitter -> update -> draw.
+ *
+ * KEY CONCEPTS:
+ *   1. ParticleSystem    — manages GPU buffers, compute shaders, and rendering
+ *   2. ParticleEmitter   — defines where/how particles are spawned
+ *   3. ControlGUI        — interactive parameter sliders
+ *   4. update(dt)/draw() — the main loop pattern
+ *
+ * CONTROLS:
+ *   - WASD + QE to move the camera
+ *   - Use the parameter panel to adjust emission and physics
+ *
+ * NOTE: Requires WebGPU backend (Settings > Graphics > WebGPU).
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include <cmath>
+
+using namespace al;
+
+class ParticleBasics : public App {
+public:
+    // The particle system — this one object handles everything:
+    //   - GPU buffer allocation
+    //   - Compute shader for physics simulation
+    //   - Instanced rendering of particle quads
+    ParticleSystem ps;
+
+    // ControlGUI lets us add interactive sliders that appear in the UI.
+    // Each Parameter has: name, group, default, min, max
+    ControlGUI gui;
+    Parameter emitRate{"Emit Rate", "Emission", 5000.0f, 100.0f, 20000.0f};
+    Parameter gravity{"Gravity", "Physics", -2.0f, -10.0f, 2.0f};
+    Parameter turbulence{"Turbulence", "Physics", 1.0f, 0.0f, 5.0f};
+    Parameter size{"Particle Size", "Rendering", 0.06f, 0.01f, 0.2f};
+
+    void onCreate() override {
+        // Register parameters with the GUI panel
+        gui << emitRate << gravity << turbulence << size;
+
+        // --- Step 1: Create the particle system ---
+        // backend() returns the WebGPU backend handle
+        // 50000 is the maximum number of particles alive at once
+        ps.create(*backend(), 50000);
+
+        // --- Step 2: Configure global physics ---
+        // Gravity pulls particles down (negative Y)
+        ps.setGravity(Vec3f(0, gravity.get(), 0));
+        // Damping slows particles over time (0 = no damping, 1 = freeze)
+        ps.setDamping(0.1f);
+        // Turbulence adds random noise to velocity
+        ps.setTurbulence(turbulence.get(), 0.5f);
+
+        // --- Step 3: Add an emitter ---
+        // An emitter defines where and how particles are born
+        ParticleEmitterConfig emitter;
+        emitter.position  = Vec3f(0.0f, 0.0f, 0.0f);  // World position
+        emitter.direction = Vec3f(0.0f, 1.0f, 0.0f);   // Emit direction (up)
+        emitter.spread    = 0.5f;    // Cone spread (0=laser, 1=hemisphere)
+        emitter.minSpeed  = 1.0f;    // Min initial speed
+        emitter.maxSpeed  = 3.0f;    // Max initial speed
+        emitter.minLife   = 1.0f;    // Min lifetime in seconds
+        emitter.maxLife   = 3.0f;    // Max lifetime in seconds
+        emitter.emitRate  = (int)emitRate.get(); // Particles per second
+        emitter.color     = Vec4f(0.4f, 0.7f, 1.0f, 1.0f); // Start color (blue)
+        ps.addEmitter(emitter);
+
+        // Camera setup
+        nav().pos(0, 1, 6);
+    }
+
+    void onAnimate(double dt) override {
+        // --- Step 4: Update parameters from GUI sliders ---
+        ps.emitter(0).emitRate = (int)emitRate.get();
+        ps.setGravity(Vec3f(0, gravity.get(), 0));
+        ps.setTurbulence(turbulence.get(), 0.5f);
+        ps.setParticleSize(size.get());
+
+        // --- Step 5: Update the particle system ---
+        // This dispatches the compute shader to:
+        //   - Spawn new particles from emitters
+        //   - Apply gravity, damping, and turbulence
+        //   - Age particles and remove dead ones
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.1f);
+
+        // --- Step 6: Draw the particles ---
+        // Uses instanced rendering — one quad mesh drawn thousands of times,
+        // each positioned by the GPU-computed particle data
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(ParticleBasics)
+`,
+  },
+  {
+    id: 'gpu-tutorial-custom-forces',
+    title: 'Tutorial: Custom Forces',
+    description: 'Learn to use vector fields and collisions with particles',
+    category: 'gpu-compute',
+    subcategory: 'tutorials',
+    webgpuOnly: true,
+    code: `/**
+ * Tutorial: Custom Forces
+ *
+ * Builds on the Particle Basics tutorial by adding:
+ *   - Vector fields (forces applied everywhere in space)
+ *   - SDF colliders (shapes that particles bounce off)
+ *
+ * KEY CONCEPTS:
+ *   1. VectorFieldSystem — manages force fields on the GPU
+ *   2. SDFCollisionSystem — manages collision shapes on the GPU
+ *   3. Field types: Vortex, Attractor, Directional, Turbulence
+ *   4. Collider types: Sphere, Box, Plane, Capsule
+ *
+ * CONTROLS:
+ *   - WASD + QE to move the camera
+ *   - Use sliders to toggle and adjust forces/colliders
+ *
+ * NOTE: Requires WebGPU backend (Settings > Graphics > WebGPU).
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "al_WebGPUVectorField.hpp"
+#include "al_WebGPUCollision.hpp"
+#include <cmath>
+
+using namespace al;
+
+class CustomForces : public App {
+public:
+    ParticleSystem ps;
+    VectorFieldSystem vf;      // Manages up to 8 vector fields
+    SDFCollisionSystem cs;     // Manages up to 8 colliders
+
+    float time = 0;
+    int vortexIdx = -1;        // Index of our vortex field
+    int attractorIdx = -1;     // Index of our attractor field
+
+    ControlGUI gui;
+    Parameter vortexStrength{"Vortex", "Forces", 5.0f, 0.0f, 15.0f};
+    Parameter attractorStr{"Attractor", "Forces", 3.0f, 0.0f, 10.0f};
+    Parameter bounciness{"Bounciness", "Collision", 0.6f, 0.0f, 1.0f};
+    Parameter emitRate{"Emit Rate", "Emission", 8000.0f, 500.0f, 20000.0f};
+
+    void onCreate() override {
+        gui << vortexStrength << attractorStr << bounciness << emitRate;
+
+        // --- Create particle system ---
+        ps.create(*backend(), 80000);
+        ps.setGravity(Vec3f(0, -3.0f, 0));
+        ps.setDamping(0.15f);
+
+        // Emit particles from above, raining down
+        ParticleEmitterConfig em;
+        em.position  = Vec3f(0.0f, 3.0f, 0.0f);
+        em.direction = Vec3f(0.0f, -1.0f, 0.0f);
+        em.spread    = 0.6f;
+        em.minSpeed  = 1.0f;
+        em.maxSpeed  = 3.0f;
+        em.minLife   = 2.0f;
+        em.maxLife   = 5.0f;
+        em.emitRate  = (int)emitRate.get();
+        em.color     = Vec4f(1.0f, 0.6f, 0.2f, 1.0f);  // Orange
+        ps.addEmitter(em);
+
+        // --- Add vector fields ---
+        // A VORTEX spins particles around an axis
+        VectorFieldConfig vortex;
+        vortex.type     = VectorFieldType::Vortex;
+        vortex.position = Vec3f(0, 0, 0);      // Center of rotation
+        vortex.axis     = Vec3f(0, 1, 0);       // Spin around Y axis
+        vortex.strength = vortexStrength.get();
+        vortex.radius   = 4.0f;                 // Influence radius
+        vortexIdx = vf.addField(vortex);
+
+        // An ATTRACTOR pulls particles toward a point
+        VectorFieldConfig attractor;
+        attractor.type     = VectorFieldType::Attractor;
+        attractor.position = Vec3f(0, 0, 0);   // Pull toward origin
+        attractor.strength = attractorStr.get();
+        attractor.radius   = 5.0f;
+        attractorIdx = vf.addField(attractor);
+
+        // --- Add SDF colliders ---
+        // A PLANE collider — particles bounce off the ground
+        SDFColliderConfig ground;
+        ground.type       = ColliderType::Plane;
+        ground.position   = Vec3f(0, -2.0f, 0);  // Ground at y=-2
+        ground.normal     = Vec3f(0, 1, 0);       // Facing up
+        ground.bounciness = bounciness.get();
+        cs.addCollider(ground);
+
+        // A SPHERE collider — particles bounce off a ball
+        SDFColliderConfig ball;
+        ball.type       = ColliderType::Sphere;
+        ball.position   = Vec3f(0, 0, 0);
+        ball.radius     = 1.0f;
+        ball.bounciness = bounciness.get();
+        cs.addCollider(ball);
+
+        nav().pos(0, 2, 8);
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+
+        // Update parameters from GUI
+        ps.emitter(0).emitRate = (int)emitRate.get();
+
+        // Animate the vortex: rotate its axis over time
+        vf.updateField(vortexIdx, [&](VectorFieldConfig& f) {
+            f.strength = vortexStrength.get();
+            f.axis = Vec3f(sin(time * 0.5f), 1.0f, cos(time * 0.5f));
+        });
+
+        // Animate the attractor: pulse its strength
+        vf.updateField(attractorIdx, [&](VectorFieldConfig& f) {
+            f.strength = attractorStr.get() * (1.0f + 0.5f * sin(time * 2.0f));
+        });
+
+        // Update collider bounciness from slider
+        cs.updateCollider(0, [&](SDFColliderConfig& c) {
+            c.bounciness = bounciness.get();
+        });
+        cs.updateCollider(1, [&](SDFColliderConfig& c) {
+            c.bounciness = bounciness.get();
+        });
+
+        // Apply forces and collisions, then step physics
+        vf.apply(ps);   // Add vector field forces to particles
+        cs.apply(ps);   // Resolve collisions
+        ps.update(dt);  // Step simulation
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.08f);
+
+        // Draw a sphere to visualize the sphere collider
+        Mesh sphere;
+        addSphere(sphere, 1.0f, 32, 32);
+        sphere.generateNormals();
+        g.depthTesting(true);
+        g.lighting(true);
+        g.color(0.3f, 0.3f, 0.4f, 0.3f);
+        g.draw(sphere);
+
+        // Draw particles on top
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(CustomForces)
+`,
+  },
+
+  // ==========================================================================
   // GPU COMPUTE - Particles
   // ==========================================================================
   {
@@ -12921,17 +13323,20 @@ ALLOLIB_WEB_MAIN(GradientSphere)
     description: 'Particle system driven by a WebGPU compute shader',
     category: 'gpu-compute',
     subcategory: 'particles',
+    webgpuOnly: true,
     code: `/**
  * GPU Compute Particles
- * Features: WebGPU compute shader, 100k particles, ping-pong buffers
- * Controls: WASD+QE navigation
  *
- * Demonstrates ComputeShader, GPUBuffer, GPUUniformBuffer, and PingPongBuffer
- * wrappers for WebGPU compute. Particles orbit the origin with gravity.
+ * 100k particles orbiting the origin, driven by a WebGPU compute shader.
+ * Uses ping-pong buffers: each frame the compute shader reads from one
+ * buffer and writes to the other, then they swap.
+ *
+ * Features: ComputeShader, GPUBuffer, PingPongBuffer, ControlGUI parameters
+ * Controls: WASD+QE navigation, parameter sliders for physics tuning
  *
  * NOTE: WebGPU backend only — will not compile on WebGL2.
  */
-#include "al_WebApp.hpp"
+#include "al_playground_compat.hpp"
 #include "al_WebGPUCompute.hpp"
 #include "al_WebGPUBuffer.hpp"
 #include "al_WebPingPong.hpp"
@@ -12948,7 +13353,7 @@ struct Particle {
     float r, g, b, a;         // color
 };
 
-// Uniform params for compute shader
+// Uniform params passed to the compute shader each frame
 struct SimParams {
     float dt;
     float gravity;
@@ -13008,10 +13413,16 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 }
 )";
 
-class GPUComputeParticles : public WebApp {
+class GPUComputeParticles : public App {
 public:
     static const int NUM_PARTICLES = 100000;
     static const int WORKGROUP_SIZE = 256;
+
+    // Interactive parameters — appear as sliders in the Parameter Panel
+    ControlGUI gui;
+    Parameter gravity{"Gravity", "Physics", 5.0f, 0.0f, 20.0f};
+    Parameter damping{"Damping", "Physics", 0.998f, 0.9f, 1.0f};
+    Parameter pointSize{"Point Size", "Rendering", 2.0f, 1.0f, 8.0f};
 
     PingPongBuffer<Particle> particles;
     GPUUniformBuffer<SimParams> simParamsBuffer;
@@ -13021,6 +13432,9 @@ public:
     SimParams simParams;
 
     void onCreate() override {
+        // Register parameters with GUI — they appear in the Parameter Panel
+        gui << gravity << damping << pointSize;
+
         // Initialize particles in a sphere
         std::vector<Particle> init(NUM_PARTICLES);
         for (int i = 0; i < NUM_PARTICLES; i++) {
@@ -13033,7 +13447,6 @@ public:
             init[i].pz = r * cos(phi);
             init[i]._pad0 = 1.0f;
 
-            // Small initial velocity
             init[i].vx = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
             init[i].vy = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
             init[i].vz = ((float)rand() / RAND_MAX - 0.5f) * 0.5f;
@@ -13046,18 +13459,14 @@ public:
         }
 
         auto& b = *backend();
-
-        // Create GPU resources
         particles.create(b, init);
         simParamsBuffer.create(b);
         computeShader.create(b, computeWGSL);
 
-        // Sim parameters
         simParams.dt = 0.016f;
         simParams.gravity = 5.0f;
         simParams.damping = 0.998f;
 
-        // Mesh for rendering (we'll update vertices each frame from GPU data)
         pointMesh.primitive(Mesh::POINTS);
         pointMesh.vertices().resize(NUM_PARTICLES);
         pointMesh.colors().resize(NUM_PARTICLES);
@@ -13066,24 +13475,24 @@ public:
     }
 
     void onAnimate(double dt) override {
+        gui.draw();  // Sync parameter values from UI
+
+        // Read interactive parameters
         simParams.dt = (float)std::min(dt, 0.033);
+        simParams.gravity = gravity.get();
+        simParams.damping = damping.get();
 
-        auto& b = *backend();
-
-        // Bind resources: in=previous, out=current, params=uniform
+        // Dispatch compute shader
         computeShader.bind(0, particles.previousHandle());
         computeShader.bind(1, particles.currentHandle());
         simParamsBuffer.upload(simParams);
         computeShader.bindUniform(2, simParamsBuffer.handle());
 
-        // Dispatch compute
         int numGroups = (NUM_PARTICLES + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
         computeShader.dispatch(numGroups);
-
-        // Swap ping-pong buffers for next frame
         particles.swap();
 
-        // Read back particle data for CPU-side rendering
+        // Read back for CPU-side rendering
         std::vector<Particle> data(NUM_PARTICLES);
         particles.previous().readback(data);
 
@@ -13098,13 +13507,1788 @@ public:
         g.depthTesting(true);
         g.blending(true);
         g.blendAdd();
-        g.pointSize(2.0f);
+        g.pointSize(pointSize.get());
         g.meshColor();
         g.draw(pointMesh);
     }
 };
 
 ALLOLIB_WEB_MAIN(GPUComputeParticles)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Particle Fire (Phase 4)
+  // ==========================================================================
+  {
+    id: 'gpu-particle-fire',
+    title: 'GPU Particle Fire',
+    description: '200k GPU particles with fire effect — emit, update, and render entirely on GPU',
+    category: 'gpu-compute',
+    subcategory: 'particles',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Particle Fire
+ *
+ * 200k particles with fire-like behavior, fully simulated and rendered on GPU.
+ * No CPU readback needed — ParticleSystem handles emit, update, and instanced
+ * quad rendering entirely in WebGPU compute and render pipelines.
+ *
+ * Features: ParticleSystem, ControlGUI parameters, additive blending
+ * Controls: WASD+QE navigation, sliders for emission/physics tuning
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include <cmath>
+
+using namespace al;
+
+class GPUParticleFire : public App {
+public:
+    ParticleSystem ps;
+
+    // Interactive parameters — adjust fire behavior in real time
+    ControlGUI gui;
+    Parameter emitRate{"Emit Rate", "Emission", 30000.0f, 1000.0f, 60000.0f};
+    Parameter buoyancy{"Buoyancy", "Physics", 0.5f, -2.0f, 5.0f};
+    Parameter turbulence{"Turbulence", "Physics", 2.0f, 0.0f, 10.0f};
+    Parameter particleSize{"Size", "Rendering", 0.08f, 0.01f, 0.2f};
+
+    void onCreate() override {
+        gui << emitRate << buoyancy << turbulence << particleSize;
+
+        ps.create(*backend(), 200000);
+
+        // Fire emitter: emit from base pointing up
+        ParticleEmitterConfig fire;
+        fire.position = Vec3f(0.0f, -1.0f, 0.0f);
+        fire.direction = Vec3f(0.0f, 1.0f, 0.0f);
+        fire.spread = 0.3f;
+        fire.minSpeed = 1.5f;
+        fire.maxSpeed = 4.0f;
+        fire.minLifetime = 0.5f;
+        fire.maxLifetime = 1.5f;
+        fire.startColor = Color(1.0f, 0.5f, 0.1f, 1.0f);
+        fire.endColor = Color(1.0f, 0.9f, 0.2f, 0.0f);
+        fire.startSize = 0.08f;
+        fire.endSize = 0.03f;
+        fire.emitRate = 30000;
+        ps.addEmitter(fire);
+
+        ps.setGravity(Vec3f(0.0f, 0.5f, 0.0f));
+        ps.setDamping(1.5f);
+        ps.setTurbulence(2.0f, 3.0f);
+
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Apply interactive parameter values each frame
+        ps.emitter(0).emitRate = (int)emitRate.get();
+        ps.emitter(0).startSize = particleSize.get();
+        ps.setGravity(Vec3f(0.0f, buoyancy.get(), 0.0f));
+        ps.setTurbulence(turbulence.get(), 3.0f);
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.01f, 0.0f);
+        g.depthTesting(true);
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUParticleFire)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Particle Galaxy (Phase 4)
+  // ==========================================================================
+  {
+    id: 'gpu-particle-galaxy',
+    title: 'GPU Particle Galaxy',
+    description: '500k particles forming a spinning galaxy with gravitational orbits',
+    category: 'gpu-compute',
+    subcategory: 'particles',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Particle Galaxy
+ *
+ * 500k particles forming a spinning galaxy. Eight emitters are arranged
+ * in a ring with tangential velocity to create orbital motion.
+ * Adjust orbit radius, turbulence, and damping via the parameter panel.
+ *
+ * Features: ParticleSystem, multiple emitters, ControlGUI parameters
+ * Controls: WASD+QE navigation, parameter sliders
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include <cmath>
+
+using namespace al;
+
+class GPUParticleGalaxy : public App {
+public:
+    ParticleSystem ps;
+
+    // Interactive parameters for galaxy tuning
+    ControlGUI gui;
+    Parameter orbitRadius{"Orbit Radius", "Galaxy", 1.5f, 0.5f, 5.0f};
+    Parameter turbulence{"Turbulence", "Physics", 0.5f, 0.0f, 5.0f};
+    Parameter dampingParam{"Damping", "Physics", 0.1f, 0.0f, 2.0f};
+    Parameter emitRateParam{"Emit Rate", "Emission", 8000.0f, 1000.0f, 20000.0f};
+
+    static const int NUM_EMITTERS = 8;
+
+    void onCreate() override {
+        gui << orbitRadius << turbulence << dampingParam << emitRateParam;
+
+        ps.create(*backend(), 500000);
+
+        for (int i = 0; i < NUM_EMITTERS; i++) {
+            float angle = (float)i / NUM_EMITTERS * 2.0f * M_PI;
+            float radius = 1.5f;
+
+            ParticleEmitterConfig em;
+            em.position = Vec3f(cos(angle) * radius, 0.0f, sin(angle) * radius);
+            em.direction = Vec3f(-sin(angle), 0.1f, cos(angle));
+            em.spread = 0.8f;
+            em.minSpeed = 0.5f;
+            em.maxSpeed = 2.0f;
+            em.minLifetime = 5.0f;
+            em.maxLifetime = 10.0f;
+            em.startColor = Color(0.6f, 0.7f, 1.0f, 0.8f);
+            em.endColor = Color(0.3f, 0.4f, 0.9f, 0.2f);
+            em.startSize = 0.04f;
+            em.endSize = 0.02f;
+            em.emitRate = 8000;
+            ps.addEmitter(em);
+        }
+
+        ps.setGravity(Vec3f(0.0f, -0.1f, 0.0f));
+        ps.setDamping(0.1f);
+        ps.setTurbulence(0.5f, 0.3f);
+
+        nav().pos(0, 3, 6);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Update emitter positions based on orbit radius
+        float r = orbitRadius.get();
+        for (int i = 0; i < NUM_EMITTERS; i++) {
+            float angle = (float)i / NUM_EMITTERS * 2.0f * M_PI;
+            ps.emitter(i).position = Vec3f(cos(angle) * r, 0.0f, sin(angle) * r);
+            ps.emitter(i).direction = Vec3f(-sin(angle), 0.1f, cos(angle));
+            ps.emitter(i).emitRate = (int)emitRateParam.get();
+        }
+
+        ps.setDamping(dampingParam.get());
+        ps.setTurbulence(turbulence.get(), 0.3f);
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.0f, 0.0f, 0.02f);
+        g.depthTesting(true);
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUParticleGalaxy)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Particle Smoke (Phase 4)
+  // ==========================================================================
+  {
+    id: 'gpu-particle-smoke',
+    title: 'GPU Particle Smoke',
+    description: '100k particles simulating billowing smoke with strong turbulence',
+    category: 'gpu-compute',
+    subcategory: 'particles',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Particle Smoke
+ *
+ * 100k particles simulating billowing smoke. Strong turbulence (curl noise)
+ * on the GPU creates organic, wispy motion. Particles expand as they rise
+ * and fade to transparent.
+ *
+ * Features: ParticleSystem, turbulence/noise, ControlGUI parameters
+ * Controls: WASD+QE navigation, sliders for smoke behavior
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include <cmath>
+
+using namespace al;
+
+class GPUParticleSmoke : public App {
+public:
+    ParticleSystem ps;
+
+    // Interactive parameters for smoke tuning
+    ControlGUI gui;
+    Parameter emitRate{"Emit Rate", "Emission", 8000.0f, 1000.0f, 30000.0f};
+    Parameter buoyancy{"Buoyancy", "Physics", 0.3f, -1.0f, 3.0f};
+    Parameter turbStrength{"Turbulence", "Physics", 5.0f, 0.0f, 15.0f};
+    Parameter spread{"Spread", "Emission", 0.6f, 0.1f, 1.5f};
+
+    void onCreate() override {
+        gui << emitRate << buoyancy << turbStrength << spread;
+
+        ps.create(*backend(), 100000);
+
+        ParticleEmitterConfig smoke;
+        smoke.position = Vec3f(0.0f, -0.5f, 0.0f);
+        smoke.direction = Vec3f(0.0f, 1.0f, 0.0f);
+        smoke.spread = 0.6f;
+        smoke.minSpeed = 0.5f;
+        smoke.maxSpeed = 1.5f;
+        smoke.minLifetime = 2.0f;
+        smoke.maxLifetime = 4.0f;
+        smoke.startColor = Color(0.4f, 0.4f, 0.4f, 0.7f);
+        smoke.endColor = Color(0.2f, 0.2f, 0.2f, 0.0f);
+        smoke.startSize = 0.1f;
+        smoke.endSize = 0.25f;
+        smoke.emitRate = 8000;
+        ps.addEmitter(smoke);
+
+        ps.setGravity(Vec3f(0.0f, 0.3f, 0.0f));
+        ps.setDamping(0.8f);
+        ps.setTurbulence(1.5f, 5.0f);
+
+        nav().pos(0, 1, 5);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Apply interactive parameters
+        ps.emitter(0).emitRate = (int)emitRate.get();
+        ps.emitter(0).spread = spread.get();
+        ps.setGravity(Vec3f(0.0f, buoyancy.get(), 0.0f));
+        ps.setTurbulence(1.5f, turbStrength.get());
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.05f, 0.08f);
+        g.depthTesting(true);
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUParticleSmoke)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - Audio-Reactive GPU Particles (Phase 7)
+  // ==========================================================================
+  {
+    id: 'gpu-audio-particles',
+    title: 'Audio-Reactive Particles',
+    description: 'GPU particles driven by audio energy — louder = more particles, bigger, more chaotic',
+    category: 'gpu-compute',
+    subcategory: 'particles',
+    webgpuOnly: true,
+    code: `/**
+ * Audio-Reactive GPU Particles
+ *
+ * A GPU particle system that responds to audio energy in real time.
+ * A sine oscillator generates sound; its RMS energy is measured in
+ * onSound() and used in onAnimate() to drive:
+ *   - Emit rate (louder = more particles)
+ *   - Particle start size (louder = bigger)
+ *   - Turbulence strength (louder = more chaos)
+ *   - Color shift (quiet = blue, loud = orange)
+ *
+ * Use the parameter panel to adjust frequency, amplitude, and sensitivity.
+ *
+ * Features: ParticleSystem, audio synthesis (Gamma), ControlGUI parameters
+ * Controls: Parameter sliders for audio and particle behavior
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+
+class GPUAudioParticles : public App {
+    ParticleSystem ps;
+    gam::Sine<> osc{220.0f};
+
+    // Audio energy measured in onSound(), read in onAnimate()
+    float audioEnergy = 0.0f;
+    float smoothedEnergy = 0.0f;
+
+    // Interactive parameters
+    ControlGUI gui;
+    Parameter frequency{"Frequency", "Audio", 220.0f, 50.0f, 1000.0f};
+    Parameter amplitude{"Amplitude", "Audio", 0.3f, 0.0f, 1.0f};
+    Parameter sensitivity{"Sensitivity", "Reactive", 5.0f, 1.0f, 20.0f};
+    Parameter baseEmitRate{"Base Emit Rate", "Particles", 5000.0f, 500.0f, 20000.0f};
+
+    void onCreate() override {
+        gui << frequency << amplitude << sensitivity << baseEmitRate;
+
+        // Enable audio output
+        configureWebAudio(44100, 128, 2, 0);
+
+        ps.create(*backend(), 200000);
+
+        // Upward fountain emitter
+        ParticleEmitterConfig em;
+        em.position = Vec3f(0.0f, -1.5f, 0.0f);
+        em.direction = Vec3f(0.0f, 1.0f, 0.0f);
+        em.spread = 0.5f;
+        em.minSpeed = 2.0f;
+        em.maxSpeed = 5.0f;
+        em.minLifetime = 1.0f;
+        em.maxLifetime = 3.0f;
+        em.startColor = Color(0.3f, 0.5f, 1.0f, 1.0f);  // blue (quiet)
+        em.endColor = Color(0.1f, 0.1f, 0.3f, 0.0f);
+        em.startSize = 0.04f;
+        em.endSize = 0.01f;
+        em.emitRate = 5000;
+        ps.addEmitter(em);
+
+        ps.setGravity(Vec3f(0.0f, -2.0f, 0.0f));
+        ps.setDamping(0.5f);
+        ps.setTurbulence(1.0f, 1.0f);
+
+        nav().pos(0, 1, 6);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Smooth the audio energy to avoid jitter
+        smoothedEnergy += (audioEnergy - smoothedEnergy) * 0.15f;
+        float e = smoothedEnergy * sensitivity.get();
+
+        // Audio drives emission rate
+        float rate = baseEmitRate.get() + e * 30000.0f;
+        ps.emitter(0).emitRate = (int)fminf(rate, 60000.0f);
+
+        // Audio drives particle size
+        ps.emitter(0).startSize = 0.04f + e * 0.15f;
+
+        // Audio drives turbulence
+        ps.setTurbulence(1.0f, 1.0f + e * 8.0f);
+
+        // Audio drives color: quiet = blue, loud = orange
+        float r = fminf(0.3f + e * 2.0f, 1.0f);
+        float g = fminf(0.5f - e * 0.3f, 0.7f);
+        float b = fmaxf(1.0f - e * 2.0f, 0.1f);
+        ps.emitter(0).startColor = Color(r, g, b, 1.0f);
+
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        g.depthTesting(true);
+        ps.draw(g);
+    }
+
+    void onSound(AudioIOData& io) override {
+        osc.freq(frequency.get());
+        float amp = amplitude.get();
+        float rms = 0.0f;
+        int count = 0;
+
+        while (io()) {
+            float sample = osc() * amp;
+            rms += sample * sample;
+            count++;
+            io.out(0) = sample;
+            io.out(1) = sample;
+        }
+
+        // Compute RMS energy for this buffer
+        if (count > 0) {
+            audioEnergy = sqrtf(rms / (float)count);
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUAudioParticles)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Fluid 2D (Phase 5)
+  // ==========================================================================
+  {
+    id: 'gpu-fluid-2d',
+    title: 'GPU Fluid 2D',
+    description: 'Interactive 2D fluid simulation — drag mouse to inject colorful dye',
+    category: 'gpu-compute',
+    subcategory: 'fluids',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Fluid 2D — Interactive Navier-Stokes
+ *
+ * Real-time 2D fluid simulation on the GPU using WebGPU compute shaders.
+ * Drag the mouse to inject colored dye and forces into the fluid.
+ * Colors cycle automatically through the rainbow.
+ *
+ * Technique: Stable Fluids (Stam 1999)
+ *   - Semi-Lagrangian advection
+ *   - Jacobi pressure solver (configurable iterations)
+ *   - Gaussian force/dye splat at mouse position
+ *
+ * Controls: Click and drag to interact, parameter sliders for fluid tuning
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUFluid2D.hpp"
+
+using namespace al;
+
+class GPUFluid2D : public App {
+    FluidSim2D fluid;
+    float hue = 0.0f;
+    float prevMouseX = -1, prevMouseY = -1;
+
+    // Interactive parameters — tune fluid behavior in real time
+    ControlGUI gui;
+    Parameter dissipation{"Dye Dissipation", "Fluid", 0.995f, 0.9f, 1.0f};
+    Parameter velDissipation{"Vel Dissipation", "Fluid", 0.999f, 0.9f, 1.0f};
+    Parameter forceStrength{"Force", "Interaction", 500.0f, 50.0f, 2000.0f};
+    Parameter forceRadius{"Radius", "Interaction", 0.02f, 0.005f, 0.1f};
+
+    void hsvToRgb(float h, float s, float v, float& r, float& g, float& b) {
+        float c = v * s;
+        float x = c * (1.0f - fabsf(fmodf(h * 6.0f, 2.0f) - 1.0f));
+        float m = v - c;
+        if (h < 1.0f/6) { r=c; g=x; b=0; }
+        else if (h < 2.0f/6) { r=x; g=c; b=0; }
+        else if (h < 3.0f/6) { r=0; g=c; b=x; }
+        else if (h < 4.0f/6) { r=0; g=x; b=c; }
+        else if (h < 5.0f/6) { r=x; g=0; b=c; }
+        else { r=c; g=0; b=x; }
+        r += m; g += m; b += m;
+    }
+
+    void onCreate() override {
+        gui << dissipation << velDissipation << forceStrength << forceRadius;
+
+        fluid.create(*backend(), 512, 512);
+        fluid.setDyeDissipation(0.995f);
+        fluid.setVelDissipation(0.999f);
+        fluid.setPressureIterations(30);
+        fluid.setForceRadius(0.02f);
+        fluid.setForceStrength(500.0f);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Apply interactive parameters
+        fluid.setDyeDissipation(dissipation.get());
+        fluid.setVelDissipation(velDissipation.get());
+        fluid.setForceStrength(forceStrength.get());
+        fluid.setForceRadius(forceRadius.get());
+
+        hue = fmodf(hue + (float)dt * 0.15f, 1.0f);
+        fluid.step(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+        fluid.draw(g, 0, 1.0f);
+    }
+
+    bool onMouseDrag(const Mouse& m) override {
+        float normX = (float)m.x() / (float)width();
+        float normY = 1.0f - (float)m.y() / (float)height();
+
+        float dx = 0, dy = 0;
+        if (prevMouseX >= 0) {
+            dx = (normX - prevMouseX) * 20.0f;
+            dy = (normY - prevMouseY) * 20.0f;
+        }
+        prevMouseX = normX;
+        prevMouseY = normY;
+
+        float r, g, b;
+        hsvToRgb(hue, 1.0f, 1.0f, r, g, b);
+
+        fluid.addForce(normX, normY, dx, dy, r, g, b);
+        return true;
+    }
+
+    bool onMouseUp(const Mouse& m) override {
+        prevMouseX = -1;
+        prevMouseY = -1;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUFluid2D)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Smoke 3D (Phase 5)
+  // ==========================================================================
+  {
+    id: 'gpu-smoke-3d',
+    title: 'GPU Smoke 3D',
+    description: '3D volumetric smoke driven by buoyancy on a 64x64x64 grid',
+    category: 'gpu-compute',
+    subcategory: 'fluids',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Smoke 3D — Volumetric Buoyant Smoke
+ *
+ * 3D Navier-Stokes with temperature-driven buoyancy on a 64^3 grid.
+ * A heat source at the bottom emits hot smoke that rises, curls, and dissipates.
+ * Rendered as a point cloud using the GPU particle renderer.
+ *
+ * Adjust buoyancy and heat rate to change smoke behavior in real time.
+ *
+ * Controls: Auto-orbiting camera, parameter sliders for smoke tuning
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUFluid3D.hpp"
+
+using namespace al;
+
+class GPUSmoke3D : public App {
+    FluidSim3D smoke;
+    float angle = 0;
+
+    // Interactive parameters for smoke control
+    ControlGUI gui;
+    Parameter buoyancy{"Buoyancy", "Physics", 3.0f, 0.0f, 10.0f};
+    Parameter dissipation{"Dissipation", "Fluid", 0.985f, 0.9f, 1.0f};
+    Parameter heatRate{"Heat Rate", "Source", 3.0f, 0.0f, 10.0f};
+    Parameter densityRate{"Density Rate", "Source", 2.0f, 0.0f, 8.0f};
+
+    void onCreate() override {
+        gui << buoyancy << dissipation << heatRate << densityRate;
+
+        smoke.create(*backend(), 64, 64, 64);
+        smoke.setBuoyancy(3.0f);
+        smoke.setDensityDissipation(0.985f);
+        smoke.setPressureIterations(20);
+        smoke.setHeatSource(0.5f, 0.08f, 0.5f, 0.07f);
+        smoke.setHeatRate(3.0f);
+        smoke.setDensityRate(2.0f);
+        smoke.setRenderScale(4.0f);
+        smoke.setDensityThreshold(0.01f);
+
+        nav().pos(0, 1, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Apply interactive parameters
+        smoke.setBuoyancy(buoyancy.get());
+        smoke.setDensityDissipation(dissipation.get());
+        smoke.setHeatRate(heatRate.get());
+        smoke.setDensityRate(densityRate.get());
+
+        angle += (float)dt * 0.3f;
+        smoke.step(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        g.depthTesting(true);
+
+        float radius = 8.0f;
+        nav().pos(Vec3f(
+            sinf(angle) * radius,
+            2.0f,
+            cosf(angle) * radius
+        ));
+        nav().faceToward(Vec3f(0, 0.5f, 0));
+
+        smoke.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUSmoke3D)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - GPU Ink Flow (Phase 5)
+  // ==========================================================================
+  {
+    id: 'gpu-ink-flow',
+    title: 'GPU Ink Flow',
+    description: 'Multi-color ink simulation with automatic swirling injection points',
+    category: 'gpu-compute',
+    subcategory: 'fluids',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Ink Flow — Automatic Multi-Color Fluid
+ *
+ * Multiple ink injection points create flowing, swirling patterns.
+ * Each source has a different color and orbiting position.
+ * Low dissipation keeps ink trails visible for a long time.
+ *
+ * Adjust dissipation, force strength, and orbit speed via the parameter panel.
+ *
+ * Controls: Auto-animated (no mouse needed), parameter sliders for tuning
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUFluid2D.hpp"
+
+using namespace al;
+
+class GPUInkFlow : public App {
+    FluidSim2D fluid;
+    float time = 0;
+
+    // Interactive parameters for ink behavior
+    ControlGUI gui;
+    Parameter dissipation{"Dye Dissipation", "Fluid", 0.999f, 0.95f, 1.0f};
+    Parameter forceStrength{"Force", "Fluid", 300.0f, 50.0f, 1000.0f};
+    Parameter numSources{"Sources", "Ink", 5.0f, 1.0f, 8.0f};
+    Parameter orbitSpeed{"Orbit Speed", "Ink", 1.0f, 0.1f, 3.0f};
+
+    struct InkSource {
+        float hue;
+        float orbitRadius;
+        float orbitSpeed;
+        float phase;
+    };
+
+    static const int MAX_SOURCES = 8;
+    InkSource sources[MAX_SOURCES];
+
+    void hsvToRgb(float h, float s, float v, float& r, float& g, float& b) {
+        float c = v * s;
+        float x = c * (1.0f - fabsf(fmodf(h * 6.0f, 2.0f) - 1.0f));
+        float m = v - c;
+        if (h < 1.0f/6) { r=c; g=x; b=0; }
+        else if (h < 2.0f/6) { r=x; g=c; b=0; }
+        else if (h < 3.0f/6) { r=0; g=c; b=x; }
+        else if (h < 4.0f/6) { r=0; g=x; b=c; }
+        else if (h < 5.0f/6) { r=x; g=0; b=c; }
+        else { r=c; g=0; b=x; }
+        r += m; g += m; b += m;
+    }
+
+    void onCreate() override {
+        gui << dissipation << forceStrength << numSources << orbitSpeed;
+
+        fluid.create(*backend(), 512, 512);
+        fluid.setDyeDissipation(0.999f);
+        fluid.setVelDissipation(0.998f);
+        fluid.setPressureIterations(30);
+        fluid.setForceRadius(0.015f);
+        fluid.setForceStrength(300.0f);
+
+        for (int i = 0; i < MAX_SOURCES; i++) {
+            sources[i].hue = (float)i / MAX_SOURCES;
+            sources[i].orbitRadius = 0.15f + (float)i * 0.04f;
+            sources[i].orbitSpeed = 0.5f + (float)i * 0.2f;
+            sources[i].phase = (float)i * 6.28318f / MAX_SOURCES;
+        }
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Apply interactive parameters
+        fluid.setDyeDissipation(dissipation.get());
+        fluid.setForceStrength(forceStrength.get());
+
+        time += (float)dt;
+        float speedMul = orbitSpeed.get();
+        int activeSources = (int)numSources.get();
+
+        // Inject ink from each active source
+        for (int i = 0; i < activeSources; i++) {
+            auto& src = sources[i];
+            float angle = time * src.orbitSpeed * speedMul + src.phase;
+            float prevAngle = angle - (float)dt * src.orbitSpeed * speedMul;
+
+            float x = 0.5f + cosf(angle) * src.orbitRadius;
+            float y = 0.5f + sinf(angle) * src.orbitRadius;
+            float px = 0.5f + cosf(prevAngle) * src.orbitRadius;
+            float py = 0.5f + sinf(prevAngle) * src.orbitRadius;
+
+            float dx = (x - px) * 15.0f;
+            float dy = (y - py) * 15.0f;
+
+            float r, g, b;
+            float h = fmodf(src.hue + time * 0.02f, 1.0f);
+            hsvToRgb(h, 0.9f, 1.0f, r, g, b);
+
+            fluid.addForce(x, y, dx, dy, r, g, b);
+        }
+
+        fluid.step(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0, 0, 0);
+        fluid.draw(g, 0, 1.2f);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUInkFlow)
+`,
+  },
+
+  // ==========================================================================
+  // GPU COMPUTE — VFX (Phase 6)
+  // ==========================================================================
+
+  {
+    id: 'gpu-vfx-forcefields',
+    title: 'GPU Force Fields',
+    description: 'Particle fountain with animated vortex, attractor, and turbulence vector fields',
+    category: 'gpu-compute',
+    subcategory: 'vfx',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Force Fields — Animated Vector Fields
+ *
+ * A particle fountain subjected to three force fields:
+ *   - Vortex: spins particles around Y axis (axis rotates over time)
+ *   - Attractor: pulls particles toward a pulsing center
+ *   - Turbulence: adds chaotic displacement
+ *
+ * Use the parameter panel to adjust field strengths and emission rate.
+ * All force calculations run on the GPU via compute shaders.
+ *
+ * Features: VectorFieldSystem, ParticleSystem, ControlGUI parameters
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "al_WebGPUVectorField.hpp"
+
+using namespace al;
+
+class GPUForceFields : public App {
+    ParticleSystem ps;
+    VectorFieldSystem vf;
+    float time = 0;
+    int vortexIdx, attractorIdx, turbIdx;
+
+    // Interactive parameters — control field strengths in real time
+    ControlGUI gui;
+    Parameter vortexStrength{"Vortex", "Fields", 5.0f, 0.0f, 20.0f};
+    Parameter attractorStrength{"Attractor", "Fields", 8.0f, 0.0f, 20.0f};
+    Parameter turbStrength{"Turbulence", "Fields", 3.0f, 0.0f, 10.0f};
+    Parameter emitRateParam{"Emit Rate", "Emission", 15000.0f, 1000.0f, 40000.0f};
+
+    void onCreate() override {
+        gui << vortexStrength << attractorStrength << turbStrength << emitRateParam;
+
+        ps.create(*backend(), 150000);
+        ps.setGravity(Vec3f(0, -2.0f, 0));
+        ps.setDamping(0.3f);
+        ps.setTurbulence(0.5f, 0.2f);
+
+        ParticleEmitterConfig em;
+        em.position = Vec3f(0, -1.5f, 0);
+        em.direction = Vec3f(0, 1, 0);
+        em.spread = 0.3f;
+        em.minSpeed = 3.0f;
+        em.maxSpeed = 5.0f;
+        em.emitRate = 15000;
+        em.minLifetime = 2.0f;
+        em.maxLifetime = 4.0f;
+        em.startColor = Color(1.0f, 0.6f, 0.2f, 1.0f);
+        em.endColor = Color(0.2f, 0.1f, 1.0f, 0.0f);
+        em.startSize = 0.04f;
+        em.endSize = 0.01f;
+        ps.addEmitter(em);
+
+        vf.create(*backend());
+        vortexIdx = vf.addField(0, Vec3f(0, 0, 0), Vec3f(0, 1, 0), 5.0f, 3.0f);
+        attractorIdx = vf.addField(1, Vec3f(0, 1, 0), Vec3f(0, 0, 0), 8.0f);
+        turbIdx = vf.addField(3, Vec3f(0, 0, 0), Vec3f(0, 0, 0), 3.0f, 2.0f);
+
+        nav().pos(0, 1, 6);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        time += (float)dt;
+
+        // Apply interactive parameters
+        ps.emitter(0).emitRate = (int)emitRateParam.get();
+
+        // Animate vortex axis with user-controlled strength
+        float tiltAngle = sinf(time * 0.3f) * 0.5f;
+        Vec3f axis(sinf(tiltAngle), cosf(tiltAngle), 0);
+        float vStr = vortexStrength.get();
+        vf.updateField(vortexIdx, Vec3f(0, 0, 0), axis,
+                       vStr + sinf(time) * (vStr * 0.4f), 3.0f);
+
+        // Pulse attractor with user-controlled base strength
+        float aBase = attractorStrength.get();
+        float aStr = aBase + sinf(time * 2.0f) * (aBase * 0.5f);
+        float ay = 1.0f + sinf(time * 0.5f) * 0.5f;
+        vf.updateField(attractorIdx, Vec3f(0, ay, 0), Vec3f(0, 0, 0), aStr);
+
+        // Update turbulence strength
+        vf.updateField(turbIdx, Vec3f(0, 0, 0), Vec3f(0, 0, 0),
+                       turbStrength.get(), 2.0f);
+
+        ps.update(dt);
+        vf.apply(ps, (float)dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUForceFields)
+`,
+  },
+  {
+    id: 'gpu-vfx-collisions',
+    title: 'GPU SDF Collisions',
+    description: 'Particles rain down and bounce off ground plane and animated sphere colliders',
+    category: 'gpu-compute',
+    subcategory: 'vfx',
+    webgpuOnly: true,
+    code: `/**
+ * GPU SDF Collisions — Bouncing Particles
+ *
+ * Particles rain from above and collide with:
+ *   - A ground plane
+ *   - Three spheres that orbit and bounce
+ *
+ * Adjust gravity, bounce factor, and sphere size via the parameter panel.
+ * All collision detection runs on the GPU via compute shaders using
+ * signed distance functions (SDFs) for each primitive shape.
+ *
+ * Features: SDFCollisionSystem, ParticleSystem, ControlGUI parameters
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "al_WebGPUCollision.hpp"
+
+using namespace al;
+
+class GPUCollisions : public App {
+    ParticleSystem ps;
+    SDFCollisionSystem col;
+    float time = 0;
+    int groundIdx;
+    int sphereIdx[3];
+
+    // Interactive parameters for collision tuning
+    ControlGUI gui;
+    Parameter gravityParam{"Gravity", "Physics", 9.8f, 0.0f, 20.0f};
+    Parameter restitution{"Bounce", "Collision", 0.4f, 0.0f, 1.0f};
+    Parameter emitRateParam{"Emit Rate", "Emission", 12000.0f, 1000.0f, 30000.0f};
+    Parameter sphereSize{"Sphere Size", "Collision", 0.6f, 0.1f, 2.0f};
+
+    void onCreate() override {
+        gui << gravityParam << restitution << emitRateParam << sphereSize;
+
+        ps.create(*backend(), 120000);
+        ps.setGravity(Vec3f(0, -9.8f, 0));
+        ps.setDamping(0.1f);
+        ps.setTurbulence(0.3f, 0.1f);
+
+        ParticleEmitterConfig em;
+        em.position = Vec3f(0, 4, 0);
+        em.direction = Vec3f(0, -1, 0);
+        em.spread = 0.8f;
+        em.minSpeed = 1.0f;
+        em.maxSpeed = 3.0f;
+        em.emitRate = 12000;
+        em.minLifetime = 3.0f;
+        em.maxLifetime = 5.0f;
+        em.startColor = Color(0.4f, 0.7f, 1.0f, 1.0f);
+        em.endColor = Color(0.1f, 0.3f, 0.8f, 0.0f);
+        em.startSize = 0.03f;
+        em.endSize = 0.015f;
+        ps.addEmitter(em);
+
+        col.create(*backend());
+        groundIdx = col.addPlane(Vec3f(0, -2, 0), Vec3f(0, 1, 0), 0.4f);
+        col.setFriction(groundIdx, 0.3f);
+
+        for (int i = 0; i < 3; i++) {
+            float angle = (float)i * 2.094f;
+            Vec3f pos(cosf(angle) * 1.5f, 0.0f, sinf(angle) * 1.5f);
+            sphereIdx[i] = col.addSphere(pos, 0.6f, 0.6f);
+        }
+
+        nav().pos(0, 2, 8);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        time += (float)dt;
+
+        // Apply interactive parameters
+        ps.setGravity(Vec3f(0, -gravityParam.get(), 0));
+        ps.emitter(0).emitRate = (int)emitRateParam.get();
+
+        // Animate sphere positions and update size/restitution from sliders
+        float sRadius = sphereSize.get();
+        for (int i = 0; i < 3; i++) {
+            float phase = (float)i * 2.094f;
+            float angle = time * 0.5f + phase;
+            float radius = 1.5f + sinf(time * 0.3f + phase) * 0.5f;
+            float y = sinf(time * 1.5f + phase) * 0.8f;
+            Vec3f pos(cosf(angle) * radius, y, sinf(angle) * radius);
+            col.updateCollider(sphereIdx[i], pos);
+        }
+
+        ps.update(dt);
+        col.apply(ps, (float)dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.03f, 0.08f);
+        ps.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUCollisions)
+`,
+  },
+  {
+    id: 'gpu-vfx-showcase',
+    title: 'GPU VFX Showcase',
+    description: 'Combined vector fields, collisions, procedural shapes, and multiple emitters',
+    category: 'gpu-compute',
+    subcategory: 'vfx',
+    webgpuOnly: true,
+    code: `/**
+ * GPU VFX Showcase — Combined Effects
+ *
+ * Combines multiple advanced VFX features:
+ *   - 3 particle systems with different procedural shapes
+ *   - Vector fields: central vortex + attractor
+ *   - SDF collisions: ground plane + central sphere
+ *   - Shape modes: stars (1), rings (2), sparks (3)
+ *
+ * Use the parameter panel to adjust vortex/attractor strength,
+ * emission rate, and star shape mode in real time.
+ *
+ * Features: VectorFieldSystem, SDFCollisionSystem, procedural shapes, ControlGUI
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "al_WebGPUVectorField.hpp"
+#include "al_WebGPUCollision.hpp"
+
+using namespace al;
+
+class GPUVFXShowcase : public App {
+    ParticleSystem psStars, psSparks, psRings;
+    VectorFieldSystem vf;
+    SDFCollisionSystem col;
+    float time = 0;
+    int vortexIdx, attractorIdx;
+
+    // Interactive parameters
+    ControlGUI gui;
+    Parameter vortexStr{"Vortex", "Fields", 4.0f, 0.0f, 15.0f};
+    Parameter attractorStr{"Attractor", "Fields", 5.0f, 0.0f, 15.0f};
+    Parameter emitRateParam{"Emit Rate", "Emission", 8000.0f, 1000.0f, 20000.0f};
+    Parameter starGravity{"Gravity", "Physics", 3.0f, 0.0f, 10.0f};
+
+    void onCreate() override {
+        gui << vortexStr << attractorStr << emitRateParam << starGravity;
+
+        // --- Star particles (central fountain, shape mode 1 = star) ---
+        psStars.create(*backend(), 80000);
+        psStars.setGravity(Vec3f(0, -3.0f, 0));
+        psStars.setDamping(0.4f);
+        psStars.setShapeMode(1);
+
+        ParticleEmitterConfig emStars;
+        emStars.position = Vec3f(0, -1, 0);
+        emStars.direction = Vec3f(0, 1, 0);
+        emStars.spread = 0.4f;
+        emStars.minSpeed = 3.0f;
+        emStars.maxSpeed = 6.0f;
+        emStars.emitRate = 8000;
+        emStars.minLifetime = 1.5f;
+        emStars.maxLifetime = 3.0f;
+        emStars.startColor = Color(1.0f, 0.9f, 0.3f, 1.0f);
+        emStars.endColor = Color(1.0f, 0.2f, 0.0f, 0.0f);
+        emStars.startSize = 0.08f;
+        emStars.endSize = 0.03f;
+        psStars.addEmitter(emStars);
+
+        // --- Spark particles (side jets, shape mode 3 = spark) ---
+        psSparks.create(*backend(), 60000);
+        psSparks.setGravity(Vec3f(0, -5.0f, 0));
+        psSparks.setDamping(0.2f);
+        psSparks.setShapeMode(3);
+
+        ParticleEmitterConfig emSparksL;
+        emSparksL.position = Vec3f(-2, 0, 0);
+        emSparksL.direction = Vec3f(1, 1, 0);
+        emSparksL.spread = 0.3f;
+        emSparksL.minSpeed = 4.0f;
+        emSparksL.maxSpeed = 7.0f;
+        emSparksL.emitRate = 6000;
+        emSparksL.minLifetime = 0.8f;
+        emSparksL.maxLifetime = 1.5f;
+        emSparksL.startColor = Color(0.3f, 0.6f, 1.0f, 1.0f);
+        emSparksL.endColor = Color(0.1f, 0.1f, 0.5f, 0.0f);
+        emSparksL.startSize = 0.06f;
+        emSparksL.endSize = 0.02f;
+        psSparks.addEmitter(emSparksL);
+
+        ParticleEmitterConfig emSparksR;
+        emSparksR.position = Vec3f(2, 0, 0);
+        emSparksR.direction = Vec3f(-1, 1, 0);
+        emSparksR.spread = 0.3f;
+        emSparksR.minSpeed = 4.0f;
+        emSparksR.maxSpeed = 7.0f;
+        emSparksR.emitRate = 6000;
+        emSparksR.minLifetime = 0.8f;
+        emSparksR.maxLifetime = 1.5f;
+        emSparksR.startColor = Color(1.0f, 0.3f, 0.6f, 1.0f);
+        emSparksR.endColor = Color(0.5f, 0.1f, 0.3f, 0.0f);
+        emSparksR.startSize = 0.06f;
+        emSparksR.endSize = 0.02f;
+        psSparks.addEmitter(emSparksR);
+
+        // --- Ring particles (ambient floaters, shape mode 2 = ring) ---
+        psRings.create(*backend(), 40000);
+        psRings.setGravity(Vec3f(0, 0.5f, 0));
+        psRings.setDamping(0.6f);
+        psRings.setShapeMode(2);
+
+        ParticleEmitterConfig emRings;
+        emRings.position = Vec3f(0, -2, 0);
+        emRings.direction = Vec3f(0, 1, 0);
+        emRings.spread = 1.2f;
+        emRings.minSpeed = 0.5f;
+        emRings.maxSpeed = 1.5f;
+        emRings.emitRate = 3000;
+        emRings.minLifetime = 3.0f;
+        emRings.maxLifetime = 6.0f;
+        emRings.startColor = Color(0.2f, 1.0f, 0.5f, 0.8f);
+        emRings.endColor = Color(0.0f, 0.3f, 0.2f, 0.0f);
+        emRings.startSize = 0.1f;
+        emRings.endSize = 0.15f;
+        psRings.addEmitter(emRings);
+
+        // --- Vector fields ---
+        vf.create(*backend());
+        vortexIdx = vf.addField(0, Vec3f(0, 0, 0), Vec3f(0, 1, 0), 4.0f, 3.0f);
+        attractorIdx = vf.addField(1, Vec3f(0, 1, 0), Vec3f(0, 0, 0), 5.0f);
+
+        // --- Collisions ---
+        col.create(*backend());
+        col.addPlane(Vec3f(0, -2, 0), Vec3f(0, 1, 0), 0.3f);
+        col.addSphere(Vec3f(0, 0.5f, 0), 0.8f, 0.5f);
+
+        nav().pos(0, 1.5f, 8);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        time += (float)dt;
+
+        // Apply interactive parameters
+        psStars.setGravity(Vec3f(0, -starGravity.get(), 0));
+        psStars.emitter(0).emitRate = (int)emitRateParam.get();
+
+        // Update vector field strengths from sliders
+        vf.updateField(vortexIdx, Vec3f(0, 0, 0), Vec3f(0, 1, 0),
+                       vortexStr.get(), 3.0f);
+        vf.updateField(attractorIdx, Vec3f(0, 1, 0), Vec3f(0, 0, 0),
+                       attractorStr.get());
+
+        psStars.update(dt);
+        psSparks.update(dt);
+        psRings.update(dt);
+
+        float fdt = (float)dt;
+        vf.apply(psStars, fdt);
+        vf.apply(psSparks, fdt);
+
+        col.apply(psStars, fdt);
+        col.apply(psSparks, fdt);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.01f, 0.04f);
+        psRings.draw(g);
+        psStars.draw(g);
+        psSparks.draw(g);
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUVFXShowcase)
+`,
+  },
+  // ==========================================================================
+  // GPU COMPUTE - Audio (Phase 9)
+  // ==========================================================================
+  {
+    id: 'gpu-audio-spectrum',
+    title: 'GPU Audio Spectrum',
+    description: 'GPU FFT spectrum analyzer — sine oscillator frequencies displayed as colored bars',
+    category: 'gpu-compute',
+    subcategory: 'audio',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Audio Spectrum Analyzer
+ *
+ * Uses AudioVisualBridge to run a GPU FFT on audio input,
+ * then reads back the frequency magnitudes to draw colored
+ * spectrum bars. A sine oscillator generates the audio.
+ *
+ * Features: AudioVisualBridge, GPUFFT, ControlGUI parameters
+ * Controls: Frequency, amplitude, FFT sensitivity
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebAudioVisualBridge.hpp"
+#include "Gamma/Oscillator.h"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class GPUAudioSpectrum : public App {
+    AudioVisualBridge bridge;
+    gam::Sine<> osc{440.0f};
+    Mesh barMesh;
+    std::vector<float> spectrum;
+    int numBars = 64;
+
+    ControlGUI gui;
+    Parameter frequency{"Frequency", "Audio", 440.0f, 50.0f, 2000.0f};
+    Parameter amplitude{"Amplitude", "Audio", 0.3f, 0.0f, 1.0f};
+    Parameter sensitivity{"Sensitivity", "Display", 5.0f, 1.0f, 20.0f};
+    Parameter barWidth{"Bar Width", "Display", 0.8f, 0.2f, 1.0f};
+
+    void onCreate() override {
+        gui << frequency << amplitude << sensitivity << barWidth;
+        configureWebAudio(44100, 128, 2, 0);
+        bridge.create(*backend(), 1024, 44100);
+        nav().pos(0, 0, 5);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        bridge.analyze();
+
+        // Readback spectrum for visualization
+        const auto& mags = bridge.readbackSpectrum();
+        int numBins = bridge.numBins();
+
+        // Build bar mesh
+        barMesh.reset();
+        barMesh.primitive(Mesh::TRIANGLES);
+
+        float totalWidth = 8.0f;
+        float bw = totalWidth / (float)numBars * barWidth.get();
+        float gap = totalWidth / (float)numBars;
+        float startX = -totalWidth / 2.0f;
+        float sens = sensitivity.get();
+
+        for (int i = 0; i < numBars && i < numBins; i++) {
+            // Average bins for this bar
+            int binStart = i * numBins / numBars;
+            int binEnd = (i + 1) * numBins / numBars;
+            float avg = 0.0f;
+            int count = 0;
+            for (int b = binStart; b < binEnd && b < numBins; b++) {
+                avg += mags[b];
+                count++;
+            }
+            if (count > 0) avg /= (float)count;
+
+            float height = avg * sens;
+            height = fminf(height, 4.0f);
+
+            float x = startX + i * gap;
+            float y0 = -2.0f;
+            float y1 = y0 + height;
+
+            // Color by frequency: red (low) -> green (mid) -> blue (high)
+            float t = (float)i / (float)numBars;
+            float r = fmaxf(1.0f - t * 2.0f, 0.0f);
+            float g = 1.0f - fabsf(t - 0.5f) * 2.0f;
+            float b = fmaxf(t * 2.0f - 1.0f, 0.0f);
+            Color c(r, g, b, 0.9f);
+
+            // Two triangles for a bar
+            int vi = barMesh.vertices().size();
+            barMesh.vertex(x, y0, 0);       barMesh.color(c);
+            barMesh.vertex(x + bw, y0, 0);  barMesh.color(c);
+            barMesh.vertex(x + bw, y1, 0);  barMesh.color(c);
+            barMesh.vertex(x, y1, 0);        barMesh.color(c);
+            barMesh.index(vi); barMesh.index(vi+1); barMesh.index(vi+2);
+            barMesh.index(vi); barMesh.index(vi+2); barMesh.index(vi+3);
+        }
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.02f, 0.08f);
+        g.depthTesting(false);
+        g.blending(true);
+        g.blendTrans();
+        g.meshColor();
+        g.draw(barMesh);
+    }
+
+    void onSound(AudioIOData& io) override {
+        osc.freq(frequency.get());
+        float amp = amplitude.get();
+        while (io()) {
+            float s = osc() * amp;
+            io.out(0) = s;
+            io.out(1) = s;
+            bridge.pushAudio(&s, 1);
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUAudioSpectrum)
+`,
+  },
+  {
+    id: 'gpu-audio-reactive-fluid',
+    title: 'Audio-Reactive Fluid',
+    description: 'Fluid simulation driven by audio — bass injects force, treble injects dye, beats cause color bursts',
+    category: 'gpu-compute',
+    subcategory: 'audio',
+    webgpuOnly: true,
+    code: `/**
+ * Audio-Reactive Fluid Simulation
+ *
+ * Combines AudioVisualBridge with WebGPUFluid2D:
+ *   - Bass energy → inject force at center
+ *   - Treble energy → inject dye with hue shift
+ *   - Beat detection → color burst
+ *
+ * Features: AudioVisualBridge, FluidSim2D, beat detection, ControlGUI
+ * Controls: Bass/treble sensitivity, fluid viscosity
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebAudioVisualBridge.hpp"
+#include "al_WebGPUFluid2D.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+
+class AudioReactiveFluid : public App {
+    AudioVisualBridge bridge;
+    FluidSim2D fluid;
+    gam::Sine<> osc{220.0f};
+    gam::Sine<> lfo{0.5f};  // slow modulation
+    float time = 0.0f;
+
+    ControlGUI gui;
+    Parameter frequency{"Frequency", "Audio", 220.0f, 50.0f, 1000.0f};
+    Parameter amplitude{"Amplitude", "Audio", 0.4f, 0.0f, 1.0f};
+    Parameter bassSens{"Bass Sensitivity", "Reactive", 8.0f, 1.0f, 20.0f};
+    Parameter trebleSens{"Treble Sensitivity", "Reactive", 6.0f, 1.0f, 20.0f};
+
+    void onCreate() override {
+        gui << frequency << amplitude << bassSens << trebleSens;
+        configureWebAudio(44100, 128, 2, 0);
+        bridge.create(*backend(), 1024, 44100);
+        bridge.setBeatSensitivity(1.4f);
+        fluid.create(*backend(), 256, 256);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        bridge.analyze();
+        float fdt = (float)fmin(dt, 0.033);
+        time += fdt;
+
+        float bass = bridge.bassEnergy() * bassSens.get();
+        float treble = bridge.trebleEnergy() * trebleSens.get();
+        bool beat = bridge.beatDetected();
+
+        // Bass → force at center (upward push)
+        if (bass > 0.05f) {
+            float angle = time * 0.5f;
+            float fx = sinf(angle) * bass * 3.0f;
+            float fy = cosf(angle) * bass * 3.0f;
+            fluid.addForce(0.5f, 0.5f, fx, fy, 0.8f, 0.2f, 0.1f);
+        }
+
+        // Treble → dye injection with rotating position
+        if (treble > 0.03f) {
+            float tx = 0.5f + sinf(time * 1.5f) * 0.2f;
+            float ty = 0.5f + cosf(time * 1.5f) * 0.2f;
+            // Color cycles through hue
+            float hue = fmodf(time * 0.3f, 1.0f);
+            float r = fmaxf(0.0f, sinf(hue * 6.28f) * 0.5f + 0.5f);
+            float g = fmaxf(0.0f, sinf((hue + 0.33f) * 6.28f) * 0.5f + 0.5f);
+            float b = fmaxf(0.0f, sinf((hue + 0.66f) * 6.28f) * 0.5f + 0.5f);
+            fluid.addForce(tx, ty, 0, treble * 2.0f, r, g, b);
+        }
+
+        // Beat → bright burst from center
+        if (beat) {
+            for (int i = 0; i < 4; i++) {
+                float a = (float)i * 1.57f + time;
+                float bx = 0.5f + cosf(a) * 0.15f;
+                float by = 0.5f + sinf(a) * 0.15f;
+                float fx = cosf(a) * 8.0f;
+                float fy = sinf(a) * 8.0f;
+                fluid.addForce(bx, by, fx, fy, 1.0f, 1.0f, 1.0f);
+            }
+        }
+
+        fluid.step(fdt);
+    }
+
+    void onDraw(Graphics& g) override {
+        fluid.draw(g);
+    }
+
+    void onSound(AudioIOData& io) override {
+        osc.freq(frequency.get());
+        float amp = amplitude.get();
+        float mod = lfo() * 0.5f + 0.5f;
+        while (io()) {
+            float s = osc() * amp * mod;
+            io.out(0) = s;
+            io.out(1) = s;
+            bridge.pushAudio(&s, 1);
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(AudioReactiveFluid)
+`,
+  },
+  {
+    id: 'gpu-granular-synth',
+    title: 'GPU Granular Synth',
+    description: '5000 simultaneous grains on the GPU — granular synthesis with real-time parameter control',
+    category: 'gpu-compute',
+    subcategory: 'audio',
+    webgpuOnly: true,
+    code: `/**
+ * GPU Granular Synthesizer
+ *
+ * 5000 grains simulated on the GPU using compute shaders.
+ * Source audio is a sine wavetable. Grains are emitted,
+ * advanced, and mixed entirely on the GPU, then read back
+ * to CPU for audio output.
+ *
+ * Uses fixed-point atomic adds for grain mixing (WGSL has
+ * no atomicAdd for f32). Double-buffered readback.
+ *
+ * Features: GranularSynth, ControlGUI parameters
+ * Controls: Source position, grain duration, playback rate, emit rate
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUGranular.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class GPUGranularSynth : public App {
+    GranularSynth granular;
+    Mesh sphere;
+
+    ControlGUI gui;
+    Parameter sourcePos{"Source Pos", "Grain", 0.5f, 0.0f, 1.0f};
+    Parameter grainDur{"Duration (ms)", "Grain", 50.0f, 10.0f, 200.0f};
+    Parameter playRate{"Playback Rate", "Grain", 1.0f, 0.25f, 4.0f};
+    Parameter emitRate{"Emit Rate", "Emission", 200.0f, 10.0f, 1000.0f};
+
+    // Sine wavetable as source
+    static const int TABLE_SIZE = 44100;
+    std::vector<float> wavetable;
+
+    void onCreate() override {
+        gui << sourcePos << grainDur << playRate << emitRate;
+        configureWebAudio(44100, 2048, 2, 0);
+
+        granular.create(*backend(), 5000, 2048);
+
+        // Generate sine wavetable (1 second at 440 Hz)
+        wavetable.resize(TABLE_SIZE);
+        for (int i = 0; i < TABLE_SIZE; i++) {
+            float t = (float)i / 44100.0f;
+            wavetable[i] = sinf(2.0f * M_PI * 440.0f * t) * 0.5f;
+        }
+        granular.setSourceAudio(wavetable.data(), TABLE_SIZE);
+
+        addSphere(sphere, 0.5, 30, 30);
+        sphere.generateNormals();
+        nav().pos(0, 0, 4);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+
+        // Update emit parameters from GUI
+        GrainEmitParams ep;
+        float pos = sourcePos.get() * TABLE_SIZE;
+        float spread = TABLE_SIZE * 0.1f;
+        ep.sourcePosMin = fmaxf(0.0f, pos - spread);
+        ep.sourcePosMax = fminf((float)TABLE_SIZE, pos + spread);
+        ep.durationMin = grainDur.get() * 0.001f * 0.5f;
+        ep.durationMax = grainDur.get() * 0.001f * 1.5f;
+        ep.rateMin = playRate.get() * 0.8f;
+        ep.rateMax = playRate.get() * 1.2f;
+        ep.amplitudeMin = 0.05f;
+        ep.amplitudeMax = 0.15f;
+        ep.panMin = -0.8f;
+        ep.panMax = 0.8f;
+        ep.emitCount = 0;
+        ep.time = 0;
+        granular.setEmitParams(ep);
+
+        granular.update(dt, (int)emitRate.get());
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.03f, 0.08f);
+        g.depthTesting(true);
+        g.lighting(true);
+
+        // Pulsing sphere visualization
+        float scale = 0.5f + sourcePos.get() * 0.3f;
+        g.pushMatrix();
+        g.scale(scale);
+        g.color(0.4f, 0.6f, 1.0f);
+        g.draw(sphere);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        int frames = io.framesPerBuffer();
+        std::vector<float> bufL(frames), bufR(frames);
+        granular.fillAudioBuffer(bufL.data(), bufR.data(), frames);
+        for (int i = 0; i < frames; i++) {
+            io.out(0, i) += bufL[i];
+            io.out(1, i) += bufR[i];
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(GPUGranularSynth)
+`,
+  },
+  {
+    id: 'gpu-audio-beat-particles',
+    title: 'Beat-Driven Particles',
+    description: 'GPU particles that burst on detected beats — rhythmic oscillator drives emission patterns',
+    category: 'gpu-compute',
+    subcategory: 'audio',
+    webgpuOnly: true,
+    code: `/**
+ * Beat-Driven GPU Particles
+ *
+ * AudioVisualBridge detects beats from a rhythmic oscillator
+ * (amplitude modulated at ~2Hz). On each beat:
+ *   - Burst of particles emitted
+ *   - Bright color flash
+ *   - Increased turbulence
+ * Between beats: gentle ambient emission.
+ *
+ * Features: AudioVisualBridge, ParticleSystem, beat detection, ControlGUI
+ * Controls: Beat sensitivity, emit burst size, ambient rate
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebAudioVisualBridge.hpp"
+#include "al_WebGPUParticles.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+
+using namespace al;
+
+class BeatDrivenParticles : public App {
+    AudioVisualBridge bridge;
+    ParticleSystem ps;
+    gam::Sine<> osc{330.0f};
+    gam::Sine<> beatLFO{2.0f};  // ~120 BPM feel
+    float beatFlash = 0.0f;
+
+    ControlGUI gui;
+    Parameter beatSens{"Beat Sensitivity", "Audio", 1.4f, 1.0f, 3.0f};
+    Parameter burstSize{"Burst Size", "Particles", 15000.0f, 5000.0f, 40000.0f};
+    Parameter ambientRate{"Ambient Rate", "Particles", 3000.0f, 500.0f, 10000.0f};
+    Parameter frequency{"Frequency", "Audio", 330.0f, 100.0f, 1000.0f};
+
+    void onCreate() override {
+        gui << beatSens << burstSize << ambientRate << frequency;
+        configureWebAudio(44100, 128, 2, 0);
+        bridge.create(*backend(), 1024, 44100);
+
+        ps.create(*backend(), 300000);
+        ps.setGravity(Vec3f(0, -3.0f, 0));
+        ps.setDamping(0.4f);
+        ps.setTurbulence(0.8f, 1.5f);
+
+        ParticleEmitterConfig em;
+        em.position = Vec3f(0, -1.5f, 0);
+        em.direction = Vec3f(0, 1, 0);
+        em.spread = 0.6f;
+        em.minSpeed = 2.0f;
+        em.maxSpeed = 5.0f;
+        em.minLifetime = 1.5f;
+        em.maxLifetime = 3.0f;
+        em.startColor = Color(0.2f, 0.3f, 0.8f, 1.0f);
+        em.endColor = Color(0.1f, 0.1f, 0.3f, 0.0f);
+        em.startSize = 0.04f;
+        em.endSize = 0.01f;
+        em.emitRate = 3000;
+        ps.addEmitter(em);
+
+        nav().pos(0, 1, 8);
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        bridge.setBeatSensitivity(beatSens.get());
+        bridge.analyze();
+
+        bool beat = bridge.beatDetected();
+        float bass = bridge.bassEnergy();
+
+        // Decay flash
+        beatFlash *= 0.9f;
+
+        if (beat) {
+            // Burst!
+            ps.emitter(0).emitRate = (int)burstSize.get();
+            ps.emitter(0).startColor = Color(1.0f, 0.9f, 0.3f, 1.0f);
+            ps.emitter(0).startSize = 0.08f;
+            ps.setTurbulence(1.5f, 6.0f);
+            beatFlash = 1.0f;
+        } else {
+            // Ambient
+            ps.emitter(0).emitRate = (int)ambientRate.get();
+            float t = bass * 3.0f;
+            ps.emitter(0).startColor = Color(0.2f + t * 0.3f, 0.3f, 0.8f - t * 0.3f, 1.0f);
+            ps.emitter(0).startSize = 0.04f;
+            ps.setTurbulence(0.8f, 1.5f);
+        }
+
+        ps.update(dt);
+    }
+
+    void onDraw(Graphics& g) override {
+        float bg = 0.02f + beatFlash * 0.03f;
+        g.clear(bg, bg * 0.5f, bg * 1.5f);
+        g.depthTesting(true);
+        ps.draw(g);
+    }
+
+    void onSound(AudioIOData& io) override {
+        osc.freq(frequency.get());
+        float beat = beatLFO();
+        float envelope = fmaxf(beat, 0.0f);  // half-wave rectify for rhythmic feel
+        envelope = envelope * envelope;        // sharpen the pulse
+        while (io()) {
+            float s = osc() * envelope * 0.4f;
+            io.out(0) = s;
+            io.out(1) = s;
+            bridge.pushAudio(&s, 1);
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(BeatDrivenParticles)
+`,
+  },
+  {
+    id: 'gpu-audio-frequency-landscape',
+    title: 'Frequency Landscape',
+    description: 'Rolling 3D terrain generated from audio spectrum history — frequency on X, time on Z, magnitude as height',
+    category: 'gpu-compute',
+    subcategory: 'audio',
+    webgpuOnly: true,
+    code: `/**
+ * Frequency Landscape
+ *
+ * AudioVisualBridge performs GPU FFT. Spectrum magnitudes are
+ * read back and stored in a rolling 2D history buffer:
+ *   X = frequency bin, Z = time (newest at front)
+ *   Y = magnitude (height)
+ *
+ * A mesh grid is built each frame, colored by frequency band
+ * (red=bass, green=mid, blue=treble). Lighting is enabled for
+ * depth perception.
+ *
+ * Features: AudioVisualBridge, Mesh grid, ControlGUI
+ * Controls: Frequency, amplitude, height scale, rotation
+ *
+ * NOTE: WebGPU backend only. Audio requires user gesture to start.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebAudioVisualBridge.hpp"
+#include "Gamma/Oscillator.h"
+#include <cmath>
+#include <vector>
+
+using namespace al;
+
+class FrequencyLandscape : public App {
+    AudioVisualBridge bridge;
+    gam::Sine<> osc{440.0f};
+    gam::Sine<> lfo{0.1f};
+
+    static const int HIST_DEPTH = 64;
+    static const int NUM_BARS = 64;
+    float history[HIST_DEPTH][NUM_BARS];
+    int histIdx = 0;
+    Mesh terrain;
+
+    ControlGUI gui;
+    Parameter frequency{"Frequency", "Audio", 440.0f, 50.0f, 2000.0f};
+    Parameter amplitude{"Amplitude", "Audio", 0.3f, 0.0f, 1.0f};
+    Parameter heightScale{"Height Scale", "Display", 3.0f, 0.5f, 10.0f};
+    Parameter rotSpeed{"Rotation", "Display", 0.1f, 0.0f, 0.5f};
+
+    float time = 0;
+
+    void onCreate() override {
+        gui << frequency << amplitude << heightScale << rotSpeed;
+        configureWebAudio(44100, 128, 2, 0);
+        bridge.create(*backend(), 1024, 44100);
+
+        memset(history, 0, sizeof(history));
+        nav().pos(0, 3, 8);
+        nav().faceToward(Vec3f(0, 0, 0));
+    }
+
+    void onAnimate(double dt) override {
+        gui.draw();
+        bridge.analyze();
+        time += (float)dt;
+
+        // Readback spectrum and store in history
+        const auto& mags = bridge.readbackSpectrum();
+        int numBins = bridge.numBins();
+
+        for (int i = 0; i < NUM_BARS; i++) {
+            int binStart = i * numBins / NUM_BARS;
+            int binEnd = (i + 1) * numBins / NUM_BARS;
+            float avg = 0.0f;
+            int count = 0;
+            for (int b = binStart; b < binEnd && b < numBins; b++) {
+                avg += mags[b];
+                count++;
+            }
+            if (count > 0) avg /= (float)count;
+            history[histIdx][i] = avg;
+        }
+        histIdx = (histIdx + 1) % HIST_DEPTH;
+
+        // Build terrain mesh
+        terrain.reset();
+        terrain.primitive(Mesh::TRIANGLES);
+
+        float xScale = 8.0f / NUM_BARS;
+        float zScale = 6.0f / HIST_DEPTH;
+        float hScale = heightScale.get();
+        float xOff = -4.0f;
+        float zOff = -3.0f;
+
+        for (int z = 0; z < HIST_DEPTH - 1; z++) {
+            int zIdx = (histIdx + z) % HIST_DEPTH;
+            int zNext = (histIdx + z + 1) % HIST_DEPTH;
+
+            for (int x = 0; x < NUM_BARS - 1; x++) {
+                float x0 = xOff + x * xScale;
+                float x1 = xOff + (x + 1) * xScale;
+                float z0 = zOff + z * zScale;
+                float z1 = zOff + (z + 1) * zScale;
+
+                float h00 = history[zIdx][x] * hScale;
+                float h10 = history[zIdx][x + 1] * hScale;
+                float h01 = history[zNext][x] * hScale;
+                float h11 = history[zNext][x + 1] * hScale;
+
+                // Color by frequency band
+                float t = (float)x / NUM_BARS;
+                float r = fmaxf(1.0f - t * 2.5f, 0.0f);
+                float g = 1.0f - fabsf(t - 0.4f) * 2.5f;
+                g = fmaxf(g, 0.0f);
+                float b = fmaxf(t * 2.0f - 0.8f, 0.0f);
+                float brightness = 0.3f + (h00 + h10 + h01 + h11) * 0.25f;
+                Color c(r * brightness, g * brightness, b * brightness + 0.1f, 1.0f);
+
+                int vi = terrain.vertices().size();
+                terrain.vertex(x0, h00, z0); terrain.color(c);
+                terrain.vertex(x1, h10, z0); terrain.color(c);
+                terrain.vertex(x1, h11, z1); terrain.color(c);
+                terrain.vertex(x0, h01, z1); terrain.color(c);
+                terrain.index(vi); terrain.index(vi+1); terrain.index(vi+2);
+                terrain.index(vi); terrain.index(vi+2); terrain.index(vi+3);
+            }
+        }
+        terrain.generateNormals();
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.02f, 0.02f, 0.05f);
+        g.depthTesting(true);
+        g.lighting(true);
+        g.meshColor();
+
+        g.pushMatrix();
+        g.rotate(time * rotSpeed.get() * 60.0f, 0, 1, 0);
+        g.draw(terrain);
+        g.popMatrix();
+    }
+
+    void onSound(AudioIOData& io) override {
+        float freq = frequency.get() + lfo() * 100.0f;
+        osc.freq(freq);
+        float amp = amplitude.get();
+        while (io()) {
+            float s = osc() * amp;
+            io.out(0) = s;
+            io.out(1) = s;
+            bridge.pushAudio(&s, 1);
+        }
+    }
+};
+
+ALLOLIB_WEB_MAIN(FrequencyLandscape)
 `,
   },
 ]

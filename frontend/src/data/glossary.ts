@@ -46,6 +46,9 @@ export const categories: GlossaryCategory[] = [
 
   // Studio Extended Features
   { id: 'studio', title: 'Studio Features', description: 'Extended features: OBJ loading, HDR environments, PBR materials, LOD, quality management' },
+
+  // GPU Compute
+  { id: 'gpu-compute', title: 'GPU Compute', description: 'WebGPU compute shaders: particles, fluids, vector fields, collisions, and parallel computation' },
 ]
 
 export const glossary: GlossaryEntry[] = [
@@ -3859,6 +3862,214 @@ if (getBackendType() == BackendType::WebGPU) {
     definition: 'Default graphics backend for AlloLib Studio. Based on OpenGL ES 3.0, provides broad browser compatibility. Use WebGPU for improved performance on supported browsers.',
     platforms: ['web'],
     relatedTerms: ['WebGPU', 'GraphicsBackend'],
+  },
+
+  // ============================================================================
+  // GPU COMPUTE
+  // ============================================================================
+  {
+    term: 'Compute Shader',
+    category: 'gpu-compute',
+    definition: 'A GPU program for general-purpose parallel computation, not tied to rendering. Runs thousands of threads simultaneously to process data like particle physics, fluid dynamics, or image processing.',
+    example: `// Create and dispatch a compute shader
+auto pipeline = g.createComputePipeline(wgslSource);
+g.setComputePipeline(pipeline);
+g.bindStorageBuffer(0, particleBuffer);
+g.dispatch(numParticles / 64, 1, 1);`,
+    platforms: ['web'],
+    relatedTerms: ['WGSL', 'Dispatch', 'Workgroup', 'Storage Buffer'],
+  },
+  {
+    term: 'Storage Buffer',
+    category: 'gpu-compute',
+    definition: 'GPU memory that is both readable and writable by compute shaders. Used for particle positions, velocities, fluid grids, and any large dataset processed on the GPU.',
+    syntax: 'auto buf = g.createStorageBuffer(sizeInBytes)',
+    example: `// Create a buffer for 100k particles (each 32 bytes)
+auto buf = g.createStorageBuffer(100000 * 32);
+g.bindStorageBuffer(0, buf);  // Bind to slot 0`,
+    platforms: ['web'],
+    relatedTerms: ['Compute Shader', 'Uniform Buffer', 'Ping-Pong Buffer'],
+  },
+  {
+    term: 'Uniform Buffer',
+    category: 'gpu-compute',
+    definition: 'Read-only GPU memory for passing small parameter blocks (time, mouse position, simulation constants) to compute or render shaders. Faster than storage buffers for small, frequently-updated data.',
+    syntax: 'g.bindUniformBuffer(binding, buffer)',
+    platforms: ['web'],
+    relatedTerms: ['Storage Buffer', 'Compute Shader'],
+  },
+  {
+    term: 'Workgroup',
+    category: 'gpu-compute',
+    definition: 'A group of GPU threads (invocations) that execute a compute shader together and can share local memory. Common sizes: 64 for 1D, 8x8 for 2D, 4x4x4 for 3D. The total invocations = workgroups x workgroup_size.',
+    example: `// WGSL: declare workgroup size
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    let index = id.x;
+    // process particle[index]
+}`,
+    platforms: ['web'],
+    relatedTerms: ['Compute Shader', 'Dispatch'],
+  },
+  {
+    term: 'Dispatch',
+    category: 'gpu-compute',
+    definition: 'Command to launch a compute shader with a specified number of workgroups in X, Y, and Z dimensions. Total threads = workgroups * workgroup_size.',
+    syntax: 'g.dispatch(groupsX, groupsY, groupsZ)',
+    example: `// Launch 100k threads with workgroup_size=64
+g.dispatch(100000 / 64, 1, 1);  // 1563 workgroups`,
+    platforms: ['web'],
+    relatedTerms: ['Compute Shader', 'Workgroup'],
+  },
+  {
+    term: 'Ping-Pong Buffer',
+    category: 'gpu-compute',
+    definition: 'Double-buffering technique for compute shaders. Read from buffer A, write to buffer B, then swap. Prevents read-write conflicts when each element depends on neighbors (e.g., fluid simulation).',
+    example: `// WebPingPong helper manages the swap
+WebPingPong pp(g, bufferSize);
+pp.swap();  // After each compute step
+auto readBuf = pp.read();   // Current state
+auto writeBuf = pp.write(); // Write target`,
+    platforms: ['web'],
+    relatedTerms: ['Storage Buffer', 'Compute Shader'],
+  },
+  {
+    term: 'ParticleSystem',
+    category: 'gpu-compute',
+    definition: 'GPU-driven particle system that handles emission, physics simulation, and rendering entirely on the GPU. Supports millions of particles with configurable emitters, gravity, turbulence, and lifetime.',
+    syntax: 'WebGPUParticleSystem ps(g, maxParticles)',
+    example: `WebGPUParticleSystem ps(g, 100000);
+ps.addEmitter({.position={0,0,0}, .emitRate=5000});
+// In onAnimate:
+ps.update(dt);
+// In onDraw:
+ps.draw(g);`,
+    platforms: ['web'],
+    relatedTerms: ['Compute Shader', 'Vector Field', 'SDF Collision'],
+  },
+  {
+    term: 'Vector Field',
+    category: 'gpu-compute',
+    definition: 'A force function applied at every point in space, influencing particle motion. Types include vortex (spinning), attractor (pulling toward point), directional (uniform push), and turbulence (noise-based chaos).',
+    example: `WebGPUVectorFieldSystem vf(g);
+vf.addField({
+    .type = VectorFieldType::Vortex,
+    .position = {0, 0, 0},
+    .strength = 5.0f,
+    .radius = 3.0f
+});`,
+    platforms: ['web'],
+    relatedTerms: ['ParticleSystem', 'Compute Shader'],
+  },
+  {
+    term: 'SDF Collision',
+    category: 'gpu-compute',
+    definition: 'Signed Distance Function collision detection on the GPU. Mathematical shape representations (sphere, box, plane, capsule) that particles bounce off. The distance function tells how far a point is from the surface.',
+    example: `WebGPUCollisionSystem cs(g);
+cs.addCollider({
+    .type = ColliderType::Sphere,
+    .position = {0, 0, 0},
+    .radius = 1.0f,
+    .bounciness = 0.7f
+});`,
+    platforms: ['web'],
+    relatedTerms: ['ParticleSystem', 'Compute Shader'],
+  },
+  {
+    term: 'Instanced Rendering',
+    category: 'gpu-compute',
+    definition: 'Drawing many copies of a mesh with per-instance data from a storage buffer. Used for particle quads — one quad mesh is drawn N times, each positioned by GPU-computed particle data.',
+    platforms: ['web'],
+    relatedTerms: ['ParticleSystem', 'Storage Buffer'],
+  },
+  {
+    term: 'Fluid Simulation',
+    category: 'gpu-compute',
+    definition: 'GPU-accelerated Navier-Stokes fluid solver. Uses compute shaders for advection, divergence, pressure solving, and gradient subtraction steps. Available in 2D (WebGPUFluid2D) and 3D (WebGPUFluid3D) variants.',
+    example: `WebGPUFluid2D fluid(g, 256, 256);
+// In onAnimate:
+fluid.addForce(mouseX, mouseY, forceX, forceY);
+fluid.step(dt);
+// In onDraw:
+fluid.draw(g);`,
+    platforms: ['web'],
+    relatedTerms: ['Compute Shader', 'Ping-Pong Buffer', 'Workgroup'],
+  },
+  {
+    term: 'Bitonic Sort',
+    category: 'gpu-compute',
+    definition: 'A parallel sorting algorithm that runs efficiently on GPUs. Used for depth-sorting particles for correct alpha blending. Processes elements in pairs across multiple passes.',
+    platforms: ['web'],
+    relatedTerms: ['ParticleSystem', 'Compute Shader'],
+  },
+  {
+    term: 'Soft Particles',
+    category: 'gpu-compute',
+    definition: 'Rendering technique that fades particles where they intersect scene geometry, avoiding hard clipping edges. Compares particle depth against the depth buffer to compute a smooth fade factor.',
+    platforms: ['web'],
+    relatedTerms: ['ParticleSystem', 'Instanced Rendering'],
+  },
+
+  // ── GPU Audio (Phase 9) ────────────────────────────────────────────────────
+
+  {
+    term: 'GPU FFT',
+    category: 'gpu-compute',
+    definition: 'Fast Fourier Transform on the GPU via compute shaders, converting time-domain audio to a frequency spectrum. Uses radix-2 Cooley-Tukey algorithm with Hanning window, bit-reverse permutation, and butterfly passes.',
+    example: `GPUFFT fft;
+fft.create(*backend(), 1024);
+fft.compute(audioRingBuffer);
+// fft.magnitudeBuffer() → frequency magnitudes`,
+    platforms: ['web'],
+    relatedTerms: ['Spectral Analysis', 'Hanning Window', 'AudioVisualBridge'],
+  },
+  {
+    term: 'Granular Synthesis',
+    category: 'gpu-compute',
+    definition: 'Audio technique composing sound from thousands of tiny overlapping "grains" (10-100ms). Each grain reads a snippet of source audio with its own position, rate, and envelope. GPU compute enables 10,000+ simultaneous grains.',
+    example: `GranularSynth gs;
+gs.create(*backend(), 10000, 2048);
+gs.setSourceAudio(samples, count);
+gs.update(dt, 200);  // emit 200 grains
+gs.fillAudioBuffer(outL, outR, frames);`,
+    platforms: ['web'],
+    relatedTerms: ['Grain', 'Audio Ring Buffer'],
+  },
+  {
+    term: 'Audio Ring Buffer',
+    category: 'gpu-compute',
+    definition: 'Circular CPU buffer accumulating audio samples from onSound() for periodic GPU upload. Wraps around when full, always providing the most recent window of samples. Computes RMS energy and peak amplitude during accumulation.',
+    syntax: 'AudioRingBuffer ring; ring.create(*backend(), 2048, 44100);',
+    platforms: ['web'],
+    relatedTerms: ['GPU FFT', 'AudioVisualBridge'],
+  },
+  {
+    term: 'Spectral Analysis',
+    category: 'gpu-compute',
+    definition: 'Extracting frequency content from FFT output: bass energy (20-250 Hz), mid energy (250-4000 Hz), treble energy (4000-20000 Hz), spectral centroid (brightness), and spectral flux (change between frames).',
+    platforms: ['web'],
+    relatedTerms: ['GPU FFT', 'Beat Detection', 'AudioVisualBridge'],
+  },
+  {
+    term: 'Beat Detection',
+    category: 'gpu-compute',
+    definition: 'Identifying rhythmic beats by tracking energy spikes above an adaptive threshold. Maintains a rolling history of energy values; a beat fires when current energy exceeds average × sensitivity multiplier.',
+    platforms: ['web'],
+    relatedTerms: ['Spectral Analysis', 'AudioVisualBridge'],
+  },
+  {
+    term: 'Grain',
+    category: 'gpu-compute',
+    definition: 'A short audio snippet (10-100ms) with a Hanning amplitude envelope, the building block of granular synthesis. Each grain has source position, playback rate, duration, amplitude, and stereo pan.',
+    platforms: ['web'],
+    relatedTerms: ['Granular Synthesis'],
+  },
+  {
+    term: 'Hanning Window',
+    category: 'gpu-compute',
+    definition: 'Smooth tapering function w(n) = 0.5*(1 - cos(2πn/(N-1))) applied before FFT to reduce spectral leakage. Also used as the amplitude envelope for granular synthesis grains.',
+    platforms: ['web'],
+    relatedTerms: ['GPU FFT', 'Grain'],
   },
 ]
 

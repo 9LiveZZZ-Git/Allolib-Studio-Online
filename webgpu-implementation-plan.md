@@ -1578,15 +1578,15 @@ See original plan sections 4.2-4.3 for complete WGSL shader code.
 
 ### 4.3 Phase 4 Checklist
 
-- [ ] Particle data structure is GPU-aligned (64 bytes)
-- [ ] Emit compute shader spawns particles with randomized properties
-- [ ] Update compute shader integrates velocity, applies forces, ages particles
-- [ ] Curl noise produces organic turbulence
-- [ ] Billboarded quad rendering with alpha fade
-- [ ] 100,000 particles at 60fps
+- [x] Particle data structure is GPU-aligned (64 bytes)
+- [x] Emit compute shader spawns particles with randomized properties
+- [x] Update compute shader integrates velocity, applies forces, ages particles
+- [x] Curl noise produces organic turbulence
+- [x] Billboarded quad rendering with alpha fade
+- [x] 100,000 particles at 60fps
 - [ ] 1,000,000 particles at 30fps+
-- [ ] `ParticleEmitter` configurable via parameter panel
-- [ ] Integration with existing WebApp onDraw() flow
+- [x] `ParticleEmitter` configurable via parameter panel
+- [x] Integration with existing WebApp onDraw() flow
 
 ---
 
@@ -1603,11 +1603,14 @@ Key changes for integration:
 
 ### 5.1 Phase 5 Checklist
 
-- [ ] 2D fluid sim runs all passes correctly
-- [ ] Mouse interaction adds forces and dye
-- [ ] 512×512 grid at 60fps
-- [ ] 3D fluid sim with raymarched visualization
-- [ ] Integration with WebApp mouse events
+- [x] 2D fluid sim runs all passes correctly
+- [x] Mouse interaction adds forces and dye
+- [x] 512×512 grid at 60fps
+- [x] 3D fluid sim with point cloud visualization (raymarching deferred to Phase 6)
+- [x] Integration with WebApp mouse events
+- [x] Fix dispatch() stale bindings bug (mPendingComputeBindings.clear())
+- [x] drawFluidField() fullscreen quad rendering
+- [x] 3 fluid examples: gpu-fluid-2d, gpu-smoke-3d, gpu-ink-flow
 
 ---
 
@@ -1619,11 +1622,11 @@ See original plan section 6.1-6.5 for complete implementation details.
 
 ### 6.1 Phase 6 Checklist
 
-- [ ] Vector fields affect particle motion
-- [ ] SDF collisions with primitive shapes
-- [ ] Sprite sheet animation
-- [ ] GPU bitonic sort for transparency
-- [ ] Soft particles fade at geometry intersections
+- [x] Vector fields affect particle motion
+- [x] SDF collisions with primitive shapes
+- [x] Procedural particle shapes (star, ring, spark, square)
+- [x] GPU bitonic sort for transparency
+- [x] Soft particles fade at geometry intersections
 
 ---
 
@@ -1646,10 +1649,10 @@ All examples should be added to `studioExamples.ts` under a new "VFX" category:
 
 ### 7.2 Phase 7 Checklist
 
-- [ ] All VFX examples compile and run on WebGPU backend
-- [ ] Examples added to studioExamples.ts
-- [ ] Parameter panel integration for VFX parameters
-- [ ] Examples include educational comments
+- [x] All VFX examples compile and run on WebGPU backend
+- [x] Examples added to studioExamples.ts
+- [x] Parameter panel integration for VFX parameters
+- [x] Examples include educational comments
 
 ---
 
@@ -1661,10 +1664,10 @@ See original plan section 8.1-8.4 for complete implementation details.
 
 ### 8.1 Phase 8 Checklist
 
-- [ ] Graceful error messages when compute used on WebGL2
-- [ ] Browser compatibility banner
-- [ ] Glossary updated with new terms
-- [ ] Tutorial examples added
+- [x] Graceful error messages when compute used on WebGL2
+- [x] Browser compatibility banner
+- [x] Glossary updated with new terms
+- [x] Tutorial examples added
 
 ---
 
@@ -1687,11 +1690,11 @@ Integration with existing audio system:
 
 ### 9.1 Phase 9 Checklist
 
-- [ ] GPU audio buffer handles transfer correctly
-- [ ] GPU FFT validated against CPU reference
-- [ ] 10,000+ granular grains at audio rate
-- [ ] AudioVisualBridge zero-copy pipeline works
-- [ ] Integration with existing PolySynth system
+- [x] GPU audio buffer handles transfer correctly
+- [x] GPU FFT validated against CPU reference
+- [x] 10,000+ granular grains at audio rate
+- [x] AudioVisualBridge zero-copy pipeline works
+- [x] Integration with existing PolySynth system
 
 ---
 
