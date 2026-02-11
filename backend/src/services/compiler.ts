@@ -35,10 +35,24 @@ export interface CompilationJob {
 }
 
 const jobs = new Map<string, CompilationJob>()
+const MAX_JOBS = 100
+const JOB_TTL_MS = 30 * 60 * 1000  // 30 minutes
+const MAX_OUTPUT_BYTES = 512 * 1024  // 512KB cap for stdout/stderr
 const COMPILE_DIR = process.env.COMPILE_DIR || './compiled'
 const SOURCE_DIR = process.env.SOURCE_DIR || './source'
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
 const COMPILER_CONTAINER = process.env.COMPILER_CONTAINER || 'allolib-compiler'
+
+// Periodic cleanup of expired jobs
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, job] of jobs) {
+    if (job.completedAt && now - job.completedAt.getTime() > JOB_TTL_MS) {
+      jobs.delete(id)
+      logger.info(`[TTL] Cleaned up expired job ${id}`)
+    }
+  }
+}, 60 * 1000)  // check every minute
 
 export async function createCompilationJob(
   files: ProjectFile[],
@@ -54,6 +68,22 @@ export async function createCompilationJob(
     createdAt: new Date(),
   }
 
+  // Evict oldest completed job if at capacity
+  if (jobs.size >= MAX_JOBS) {
+    let oldestId: string | null = null
+    let oldestTime = Infinity
+    for (const [id, j] of jobs) {
+      if (j.completedAt && j.completedAt.getTime() < oldestTime) {
+        oldestTime = j.completedAt.getTime()
+        oldestId = id
+      }
+    }
+    if (oldestId) {
+      jobs.delete(oldestId)
+      logger.info(`[Evict] Removed oldest job ${oldestId} (map at capacity)`)
+    }
+  }
+
   jobs.set(job.id, job)
 
   // Start compilation asynchronously
@@ -64,6 +94,7 @@ export async function createCompilationJob(
       success: false,
       jobId: job.id,
       errors: [err.message],
+      backend: job.backend,
     }
   })
 
@@ -99,12 +130,10 @@ async function compileAsync(job: CompilationJob): Promise<void> {
       logger.info(`[${job.id}] Wrote file: ${file.name}`)
     }
 
-    const mainSourceFile = join(sourceJobDir, job.mainFile)
-
     if (USE_DOCKER) {
-      await compileWithDocker(job, mainSourceFile, outputDir)
+      await compileWithDocker(job)
     } else {
-      await compileLocal(job, mainSourceFile, outputDir)
+      await compileLocal(job, outputDir)
     }
 
     const duration = Date.now() - startTime
@@ -136,8 +165,6 @@ async function compileAsync(job: CompilationJob): Promise<void> {
 
 async function compileWithDocker(
   job: CompilationJob,
-  _sourceFile: string,
-  _outputDir: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     // Paths inside the compiler container (mounted volumes)
@@ -167,8 +194,9 @@ async function compileWithDocker(
 
     dockerProcess.stdout.on('data', (data) => {
       const text = data.toString()
-      stdout += text
-      // Broadcast each line to connected WebSocket clients
+      if (stdout.length < MAX_OUTPUT_BYTES) {
+        stdout += text.slice(0, MAX_OUTPUT_BYTES - stdout.length)
+      }
       for (const line of text.split('\n').filter((l: string) => l.trim())) {
         logger.info(`[${job.id}] ${line.trim()}`)
         broadcast('compile:output', { jobId: job.id, stream: 'stdout', line: line.trim() })
@@ -177,7 +205,9 @@ async function compileWithDocker(
 
     dockerProcess.stderr.on('data', (data) => {
       const text = data.toString()
-      stderr += text
+      if (stderr.length < MAX_OUTPUT_BYTES) {
+        stderr += text.slice(0, MAX_OUTPUT_BYTES - stderr.length)
+      }
       for (const line of text.split('\n').filter((l: string) => l.trim())) {
         logger.warn(`[${job.id}] ${line.trim()}`)
         broadcast('compile:output', { jobId: job.id, stream: 'stderr', line: line.trim() })
@@ -205,8 +235,7 @@ async function compileWithDocker(
 
 async function compileLocal(
   job: CompilationJob,
-  _sourceFile: string,
-  outputDir: string
+  outputDir: string,
 ): Promise<void> {
   // For local development without Docker, create mock output
   logger.info(`[${job.id}] Local compilation mode (mock) - ${job.files.length} file(s)`)

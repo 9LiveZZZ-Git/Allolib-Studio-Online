@@ -71,6 +71,9 @@ allolib_playground/
 tmp/
 temp/
 
+# DXC binaries (WebGPU shader compiler)
+bin/
+
 # Desktop app builds
 desktop/release/
 desktop/dist/

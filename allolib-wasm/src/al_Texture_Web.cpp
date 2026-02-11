@@ -274,9 +274,25 @@ void Texture::submit(const void *pixels, unsigned int format,
   unbind_temp();
 
 #ifdef __EMSCRIPTEN__
-  // Register texture for WebGPU backend (only 2D RGBA textures for now)
-  if (target() == GL_TEXTURE_2D && format == GL_RGBA && type == GL_UNSIGNED_BYTE) {
-    Graphics_registerTexture(id(), width(), height(), pixels);
+  // Register texture for WebGPU backend
+  if (format == GL_RGBA || format == GL_BGRA) {
+    if (target() == GL_TEXTURE_3D) {
+      // 3D texture
+      PixelFormat fmt = PixelFormat::RGBA8;
+      if (type == GL_FLOAT) fmt = PixelFormat::RGBA32F;
+      else if (type == GL_HALF_FLOAT) fmt = PixelFormat::RGBA16F;
+      Graphics_registerTexture3D(id(), width(), height(), depth(), fmt, pixels);
+    } else if (target() == GL_TEXTURE_2D) {
+      // 2D texture with format detection
+      if (type == GL_UNSIGNED_BYTE) {
+        Graphics_registerTexture(id(), width(), height(), pixels);
+      } else {
+        PixelFormat fmt = PixelFormat::RGBA8;
+        if (type == GL_FLOAT) fmt = PixelFormat::RGBA32F;
+        else if (type == GL_HALF_FLOAT) fmt = PixelFormat::RGBA16F;
+        Graphics_registerTextureWithFormat(id(), width(), height(), fmt, pixels);
+      }
+    }
   }
 #endif
 }

@@ -428,6 +428,7 @@ private:
     ShaderHandle mCurrentShader;
     ShaderHandle mDefaultShader;    // Default mesh shader for fallback
     ShaderHandle mTexturedShader;   // Textured mesh shader
+    ShaderHandle mTextured3DShader;  // 3D textured mesh shader
     ShaderHandle mScreenSpaceShader; // Screen-space textured shader (for post-processing)
     ShaderHandle mLitShader;        // Lighting shader (Phase 2)
 
@@ -481,6 +482,10 @@ private:
     WGPUBindGroupLayout mPBRBindGroupLayout = nullptr;
     WGPURenderPipeline mPBRPipeline = nullptr;
     WGPURenderPipeline mPBRFallbackPipeline = nullptr;
+    std::unordered_map<int, WGPURenderPipeline> mPBRFallbackPipelineCache; // keyed by WGPUPrimitiveTopology
+    WGPUPipelineLayout mPBRFallbackPipelineLayout = nullptr;
+    WGPUShaderModule mPBRVertModule = nullptr;
+    WGPUShaderModule mPBRFallbackFragModule = nullptr;
     bool mPBREnabled = false;
     bool mPBRBindingDirty = true;
 
@@ -573,7 +578,8 @@ private:
     TextureHandle mBoundTextures[8];  // Up to 8 texture units
     int mActiveTextureUnit = 0;
     bool mTextureBindingDirty = false;
-    WGPUBindGroup mTexturedBindGroup = nullptr;  // Bind group with texture
+    WGPUBindGroup mTexturedBindGroup = nullptr;    // Bind group with 2D texture
+    WGPUBindGroup mTextured3DBindGroup = nullptr;  // Bind group with 3D texture
 
     // Pending uniform data (accumulated before draw)
     std::vector<uint8_t> mUniformData;
@@ -614,12 +620,15 @@ private:
     void createDepthBuffer();
     void createDefaultShader();
     void createTexturedShader();
+    void createTextured3DShader();     // 3D textured shader
+    void updateTextured3DBindGroup();  // 3D textured bind group
     void createScreenSpaceShader();    // Screen-space shader for post-processing
     void createLightingShader();       // Phase 2: Lighting
     void createSkyboxShader();         // Phase 4: Skybox
     void createSkyboxMesh();           // Phase 4: Skybox
     void createPBRShader();            // Phase 5: PBR
     void createPBRFallbackShader();    // Phase 5: PBR fallback
+    WGPURenderPipeline getPBRFallbackPipelineForPrimitive(PrimitiveType primitive);
     void createEnvReflectShader();     // Phase 6: Environment reflections
     void updateTexturedBindGroup(ShaderHandle shaderToUse = {});
     void updateLightingBindGroup();    // Phase 2: Lighting

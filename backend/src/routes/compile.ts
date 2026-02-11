@@ -11,6 +11,13 @@ import {
 
 export const compileRouter = Router()
 
+// UUID v4 format validation
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function isValidJobId(id: string): boolean {
+  return UUID_REGEX.test(id)
+}
+
 // File schema for multi-file projects
 // Allows paths with folders like "src/synth.hpp"
 // Security: prevents path traversal by requiring paths start with word char, no ".."
@@ -27,7 +34,9 @@ const BackendSchema = z.enum(['webgl2', 'webgpu']).default('webgl2')
 // New multi-file request schema
 const MultiFileRequestSchema = z.object({
   files: z.array(FileSchema).min(1).max(20),
-  mainFile: z.string().default('main.cpp'),
+  mainFile: z.string()
+    .default('main.cpp')
+    .refine((val) => !val.includes('..') && /^[\w./-]+\.(cpp|hpp|h)$/.test(val), 'Invalid main file path'),
   backend: BackendSchema,
 })
 
@@ -92,6 +101,12 @@ compileRouter.post('/', async (req: Request, res: Response) => {
 // Get job status
 compileRouter.get('/status/:jobId', (req: Request, res: Response) => {
   const { jobId } = req.params
+
+  if (!isValidJobId(jobId)) {
+    res.status(400).json({ success: false, error: 'Invalid job ID format' })
+    return
+  }
+
   const job = getJob(jobId)
 
   if (!job) {
@@ -115,45 +130,65 @@ compileRouter.get('/status/:jobId', (req: Request, res: Response) => {
 
 // Get compiled output files
 compileRouter.get('/output/:jobId/:filename', async (req: Request, res: Response) => {
-  const { jobId, filename } = req.params
+  try {
+    const { jobId, filename } = req.params
 
-  // Validate filename to prevent path traversal
-  if (!/^[\w.-]+$/.test(filename)) {
-    res.status(400).json({
-      success: false,
-      error: 'Invalid filename',
-    })
-    return
+    if (!isValidJobId(jobId)) {
+      res.status(400).json({ success: false, error: 'Invalid job ID format' })
+      return
+    }
+
+    // Validate filename to prevent path traversal
+    if (!/^[\w.-]+$/.test(filename)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid filename',
+      })
+      return
+    }
+
+    const file = await getCompiledFile(jobId, filename)
+
+    if (!file) {
+      res.status(404).json({
+        success: false,
+        error: 'File not found',
+      })
+      return
+    }
+
+    // Set appropriate content type
+    if (filename.endsWith('.wasm')) {
+      res.setHeader('Content-Type', 'application/wasm')
+    } else if (filename.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript')
+    }
+
+    res.send(file)
+  } catch (error) {
+    logger.error('Error serving compiled output:', error)
+    res.status(500).json({ success: false, error: 'Internal server error' })
   }
-
-  const file = await getCompiledFile(jobId, filename)
-
-  if (!file) {
-    res.status(404).json({
-      success: false,
-      error: 'File not found',
-    })
-    return
-  }
-
-  // Set appropriate content type
-  if (filename.endsWith('.wasm')) {
-    res.setHeader('Content-Type', 'application/wasm')
-  } else if (filename.endsWith('.js')) {
-    res.setHeader('Content-Type', 'application/javascript')
-  }
-
-  res.send(file)
 })
 
 // Cleanup job
 compileRouter.delete('/:jobId', async (req: Request, res: Response) => {
-  const { jobId } = req.params
+  try {
+    const { jobId } = req.params
 
-  await cleanupJob(jobId)
+    if (!isValidJobId(jobId)) {
+      res.status(400).json({ success: false, error: 'Invalid job ID format' })
+      return
+    }
 
-  res.json({
-    success: true,
-    message: 'Job cleaned up',
-  })
+    await cleanupJob(jobId)
+
+    res.json({
+      success: true,
+      message: 'Job cleaned up',
+    })
+  } catch (error) {
+    logger.error('Error cleaning up job:', error)
+    res.status(500).json({ success: false, error: 'Internal server error' })
+  }
 })

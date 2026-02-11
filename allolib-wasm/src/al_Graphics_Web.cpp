@@ -38,6 +38,8 @@ struct TextureBridgeEntry {
     TextureHandle webgpuHandle;
     int width = 0;
     int height = 0;
+    int depth = 1;         // For 3D textures
+    PixelFormat format = PixelFormat::RGBA8;
     uint32_t version = 0;  // To detect if texture data changed
 };
 
@@ -64,7 +66,7 @@ void Graphics_registerTexture(GLuint glTextureId, int width, int height, const v
         // Create new WebGPU texture
         TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
         if (handle.valid()) {
-            sTextureBridge[glTextureId] = {handle, width, height, 1};
+            sTextureBridge[glTextureId] = {handle, width, height, 1, PixelFormat::RGBA8, 1};
             printf("[Graphics] Registered GL texture %u → WebGPU (size: %dx%d)\n",
                    glTextureId, width, height);
         }
@@ -74,13 +76,101 @@ void Graphics_registerTexture(GLuint glTextureId, int width, int height, const v
             // Size changed - recreate
             sGraphicsBackend->destroyTexture(it->second.webgpuHandle);
             TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
-            it->second = {handle, width, height, it->second.version + 1};
+            it->second = {handle, width, height, 1, PixelFormat::RGBA8, it->second.version + 1};
         } else {
             // Same size - just update data
             sGraphicsBackend->updateTexture(it->second.webgpuHandle, pixels);
             it->second.version++;
         }
     }
+}
+
+// Register a texture with specific format for WebGPU use (supports float textures)
+void Graphics_registerTextureWithFormat(GLuint glTextureId, int width, int height,
+                                         PixelFormat format, const void* pixels) {
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) return;
+
+    auto it = sTextureBridge.find(glTextureId);
+
+    TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = format;
+    desc.minFilter = FilterMode::Linear;
+    desc.magFilter = FilterMode::Linear;
+    desc.wrapS = WrapMode::Repeat;
+    desc.wrapT = WrapMode::Repeat;
+
+    if (it == sTextureBridge.end()) {
+        TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+        if (handle.valid()) {
+            sTextureBridge[glTextureId] = {handle, width, height, 1, format, 1};
+            printf("[Graphics] Registered GL texture %u → WebGPU (size: %dx%d, format: %d)\n",
+                   glTextureId, width, height, (int)format);
+        }
+    } else {
+        if (it->second.width != width || it->second.height != height || it->second.format != format) {
+            sGraphicsBackend->destroyTexture(it->second.webgpuHandle);
+            TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+            it->second = {handle, width, height, 1, format, it->second.version + 1};
+        } else {
+            sGraphicsBackend->updateTexture(it->second.webgpuHandle, pixels);
+            it->second.version++;
+        }
+    }
+}
+
+// Register a 3D texture for WebGPU use
+void Graphics_registerTexture3D(GLuint glTextureId, int width, int height, int depth,
+                                 PixelFormat format, const void* pixels) {
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) return;
+
+    auto it = sTextureBridge.find(glTextureId);
+
+    TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.depth = depth;
+    desc.format = format;
+    desc.minFilter = FilterMode::Linear;
+    desc.magFilter = FilterMode::Linear;
+    desc.wrapS = WrapMode::Repeat;
+    desc.wrapT = WrapMode::Repeat;
+    desc.wrapR = WrapMode::Repeat;
+
+    if (it == sTextureBridge.end()) {
+        TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+        if (handle.valid()) {
+            sTextureBridge[glTextureId] = {handle, width, height, depth, format, 1};
+            printf("[Graphics] Registered GL 3D texture %u → WebGPU (size: %dx%dx%d)\n",
+                   glTextureId, width, height, depth);
+        }
+    } else {
+        if (it->second.width != width || it->second.height != height ||
+            it->second.depth != depth || it->second.format != format) {
+            sGraphicsBackend->destroyTexture(it->second.webgpuHandle);
+            TextureHandle handle = sGraphicsBackend->createTexture(desc, pixels);
+            it->second = {handle, width, height, depth, format, it->second.version + 1};
+        } else {
+            sGraphicsBackend->updateTexture(it->second.webgpuHandle, pixels);
+            it->second.version++;
+        }
+    }
+}
+
+// Check if a texture in the bridge is 3D
+bool Graphics_isTexture3D(GLuint glTextureId) {
+    auto it = sTextureBridge.find(glTextureId);
+    if (it != sTextureBridge.end()) {
+        return it->second.depth > 1;
+    }
+    return false;
+}
+
+// Check if the currently bound texture is 3D
+bool Graphics_isBoundTexture3D() {
+    if (!sWebGPUMode || sLastBoundGLTexture == 0) return false;
+    return Graphics_isTexture3D(sLastBoundGLTexture);
 }
 
 // Register a texture as a render target (for FBO color/depth attachments)
@@ -120,7 +210,8 @@ void Graphics_registerRenderTargetTexture(GLuint glTextureId, int width, int hei
     // Create without initial data (it's a render target)
     TextureHandle handle = sGraphicsBackend->createTexture(desc, nullptr);
     if (handle.valid()) {
-        sTextureBridge[glTextureId] = {handle, width, height, 1};
+        PixelFormat fmt = isDepth ? PixelFormat::Depth24 : PixelFormat::RGBA8;
+        sTextureBridge[glTextureId] = {handle, width, height, 1, fmt, 1};
         printf("[Graphics] Registered GL texture %u as render target (size: %dx%d, depth: %s)\n",
                glTextureId, width, height, isDepth ? "yes" : "no");
     } else {
@@ -813,10 +904,7 @@ static void syncLightingToBackend(Graphics& g, const Mat4f& mv) {
     bool lightingOn = g.lightingEnabled();
     backend->setLightingEnabled(lightingOn);
 
-    if (!lightingOn) return;
-
-    // Compute normal matrix = transpose(inverse(upper-left 3x3 of modelView))
-    // Extract upper-left 3x3 from modelView (column-major)
+    // Always compute normal matrix - needed by both lighting and PBR shaders
     const float* mvElems = mv.elems();
     float mv3x3[9] = {
         mvElems[0], mvElems[1], mvElems[2],   // column 0
@@ -837,6 +925,8 @@ static void syncLightingToBackend(Graphics& g, const Mat4f& mv) {
         // Fallback: use upper-left 3x3 directly (works for rotation-only transforms)
         backend->setNormalMatrix(mv3x3);
     }
+
+    if (!lightingOn) return;
 
     // Sync global ambient
     Color globalAmb = Light::globalAmbient();

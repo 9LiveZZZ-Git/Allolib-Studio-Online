@@ -21,7 +21,11 @@ export function broadcast(type: string, payload: Record<string, unknown>) {
 
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(message)
+      try {
+        client.send(message)
+      } catch (err) {
+        logger.warn('Failed to send WebSocket message:', err)
+      }
     }
   })
 }

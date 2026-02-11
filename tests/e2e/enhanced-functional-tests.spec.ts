@@ -724,7 +724,7 @@ for (const backend of BACKENDS) {
         }
 
         backendResults.push(result)
-        expect(true).toBe(true)
+        expect(result.overallStatus, `${example.id} failed: ${result.errors.join('; ')}`).not.toBe('fail')
       })
     }
   })

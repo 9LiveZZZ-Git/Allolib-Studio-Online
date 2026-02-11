@@ -1466,10 +1466,9 @@ public:
      * Draw skybox
      */
     void drawSkybox(Graphics& g) {
-        // WebGPU path
+        // WebGPU path — skip GL-based create(), WebGPU backend has own shaders
         if (Graphics_isWebGPU()) {
 #ifdef ALLOLIB_WEBGPU
-            if (!mCreated) create(g);
             drawSkyboxWebGPU(g);
 #endif
             return;
@@ -1516,10 +1515,10 @@ public:
      * Begin PBR rendering
      */
     void begin(Graphics& g, const Vec3f& cameraPos) {
-        // WebGPU path
+        // WebGPU path — do NOT call create(g) here as it uses GL calls
+        // that corrupt WebGPU state. The WebGPU backend has its own PBR shaders.
         if (Graphics_isWebGPU()) {
 #ifdef ALLOLIB_WEBGPU
-            if (!mCreated) create(g);
             beginWebGPU(g, cameraPos);
 #endif
             return;

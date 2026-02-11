@@ -218,6 +218,45 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4f {
 }
 )";
 
+// ─── 3D Textured Shader ──────────────────────────────────────────────────────
+// For rendering with 3D (volume) textures - uses pointSize uniform as Z texcoord
+
+static const char* kTextured3DFragmentShader = R"(
+struct Uniforms {
+    modelViewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+    tint: vec4f,
+    pointSize: f32,
+    eyeSep: f32,
+    focLen: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var tex0: texture_3d<f32>;
+@group(0) @binding(2) var samp0: sampler;
+
+struct FragmentInput {
+    @location(0) color: vec4f,
+    @location(1) texcoord: vec2f,
+    @location(2) viewNormal: vec3f,
+}
+
+@fragment
+fn fs_main(in: FragmentInput) -> @location(0) vec4f {
+    // Use pointSize uniform as Z slice coordinate for 3D texture
+    let uvw = vec3f(in.texcoord, uniforms.pointSize);
+    let texColor = textureSample(tex0, samp0, uvw);
+
+    // Color mapping - blue to white based on luminance
+    let v = texColor.r;
+    let mapped = mix(vec3f(0.1, 0.2, 0.4), vec3f(1.0), v);
+
+    return vec4f(mapped * in.color.rgb * uniforms.tint.rgb,
+                 texColor.a * in.color.a * uniforms.tint.a);
+}
+)";
+
 // ─── Screen-space Textured Shader ────────────────────────────────────────────
 // For post-processing and full-screen quads - no transformation applied
 // Use this when rendering to a screen-filling quad with vertices in NDC
@@ -699,6 +738,7 @@ struct TransformUniforms {
 
 struct VertexInput {
     @location(0) position: vec3f,
+    @location(1) color: vec4f,
     @location(2) texcoord: vec2f,
     @location(3) normal: vec3f,
 }
@@ -1316,6 +1356,10 @@ bool WebGPUBackend::init(int width, int height) {
     printf("[WebGPUBackend] Creating textured shader...\n");
     createTexturedShader();
 
+    // Create 3D textured shader
+    printf("[WebGPUBackend] Creating 3D textured shader...\n");
+    createTextured3DShader();
+
     // Create screen-space shader (for post-processing)
     printf("[WebGPUBackend] Creating screen-space shader...\n");
     createScreenSpaceShader();
@@ -1357,10 +1401,14 @@ void WebGPUBackend::shutdown() {
 
     // Destroy all resources
 
-    // Release textured bind group first (before textures)
+    // Release textured bind groups first (before textures)
     if (mTexturedBindGroup) {
         wgpuBindGroupRelease(mTexturedBindGroup);
         mTexturedBindGroup = nullptr;
+    }
+    if (mTextured3DBindGroup) {
+        wgpuBindGroupRelease(mTextured3DBindGroup);
+        mTextured3DBindGroup = nullptr;
     }
 
     // Release lighting resources (Phase 2)
@@ -1407,9 +1455,22 @@ void WebGPUBackend::shutdown() {
         wgpuRenderPipelineRelease(mPBRPipeline);
         mPBRPipeline = nullptr;
     }
-    if (mPBRFallbackPipeline) {
-        wgpuRenderPipelineRelease(mPBRFallbackPipeline);
-        mPBRFallbackPipeline = nullptr;
+    for (auto& [key, pipeline] : mPBRFallbackPipelineCache) {
+        if (pipeline) wgpuRenderPipelineRelease(pipeline);
+    }
+    mPBRFallbackPipelineCache.clear();
+    mPBRFallbackPipeline = nullptr;
+    if (mPBRFallbackPipelineLayout) {
+        wgpuPipelineLayoutRelease(mPBRFallbackPipelineLayout);
+        mPBRFallbackPipelineLayout = nullptr;
+    }
+    if (mPBRVertModule) {
+        wgpuShaderModuleRelease(mPBRVertModule);
+        mPBRVertModule = nullptr;
+    }
+    if (mPBRFallbackFragModule) {
+        wgpuShaderModuleRelease(mPBRFallbackFragModule);
+        mPBRFallbackFragModule = nullptr;
     }
     if (mPBRBindGroupLayout) {
         wgpuBindGroupLayoutRelease(mPBRBindGroupLayout);
@@ -1845,9 +1906,10 @@ TextureHandle WebGPUBackend::createTexture(
         dataLayout.bytesPerRow = desc.width * bytesPerPixel;
         dataLayout.rowsPerImage = desc.height;
 
-        WGPUExtent3D extent = {(uint32_t)desc.width, (uint32_t)desc.height, 1};
+        uint32_t depthLayers = desc.depth > 1 ? (uint32_t)desc.depth : 1;
+        WGPUExtent3D extent = {(uint32_t)desc.width, (uint32_t)desc.height, depthLayers};
         wgpuQueueWriteTexture(mQueue, &destTex, data,
-                               dataLayout.bytesPerRow * desc.height,
+                               dataLayout.bytesPerRow * desc.height * depthLayers,
                                &dataLayout, &extent);
     }
 
@@ -1877,15 +1939,27 @@ void WebGPUBackend::updateTexture(
     destTex.origin = {(uint32_t)x, (uint32_t)y, 0};
     destTex.aspect = WGPUTextureAspect_All;
 
-    int bytesPerPixel = 4;
+    // Calculate bytes per pixel based on format
+    int bytesPerPixel = 4; // Default RGBA8
+    switch (desc.format) {
+        case PixelFormat::R8: bytesPerPixel = 1; break;
+        case PixelFormat::RG8: bytesPerPixel = 2; break;
+        case PixelFormat::RGB8: bytesPerPixel = 3; break;
+        case PixelFormat::RGBA8: bytesPerPixel = 4; break;
+        case PixelFormat::RGBA16F: bytesPerPixel = 8; break;
+        case PixelFormat::RGBA32F: bytesPerPixel = 16; break;
+        default: break;
+    }
+
     WGPUTextureDataLayout dataLayout = {};
     dataLayout.offset = 0;
     dataLayout.bytesPerRow = width * bytesPerPixel;
     dataLayout.rowsPerImage = height;
 
-    WGPUExtent3D extent = {(uint32_t)width, (uint32_t)height, 1};
+    uint32_t depthLayers = desc.depth > 1 ? (uint32_t)desc.depth : 1;
+    WGPUExtent3D extent = {(uint32_t)width, (uint32_t)height, depthLayers};
     wgpuQueueWriteTexture(mQueue, &destTex, data,
-                           dataLayout.bytesPerRow * height,
+                           dataLayout.bytesPerRow * height * depthLayers,
                            &dataLayout, &extent);
 }
 
@@ -2500,6 +2574,15 @@ void WebGPUBackend::draw(
         return;
     }
 
+    // PBR mode: redirect to drawPBR() with current transforms
+    if (mPBREnabled && (mPBRFallbackPipeline || mPBRPipeline) && mCurrentVertexBuffer.valid()) {
+        const float* modelView = reinterpret_cast<const float*>(mUniformData.data());
+        const float* projection = reinterpret_cast<const float*>(mUniformData.data() + 64);
+        drawPBR(modelView, projection, mNormalMatrix,
+                mCurrentVertexBuffer, vertexCount, primitive);
+        return;
+    }
+
     // Ensure render pass is active
     beginRenderPass();
     if (!mRenderPassEncoder) return;
@@ -2510,14 +2593,27 @@ void WebGPUBackend::draw(
     // Check rendering modes
     bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
-    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > textured > default
+    // Check if bound texture is 3D
+    bool is3DTexture = false;
+    if (hasTexture) {
+        auto texIt = mTextures.find(mBoundTextures[0].id);
+        if (texIt != mTextures.end()) {
+            is3DTexture = texIt->second.desc.depth > 1;
+        }
+    }
+
+    bool useTextured3D = is3DTexture && !useLighting && mTextured3DShader.valid();
+    bool useTextured = hasTexture && !is3DTexture && !useLighting && mTexturedShader.valid();
+
+    // Shader selection priority: custom > lighting > textured3D > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
+    } else if (useTextured3D) {
+        shaderToUse = mTextured3DShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2547,6 +2643,14 @@ void WebGPUBackend::draw(
         }
         if (mLitBindGroup) {
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else if (useTextured3D && !mCurrentShader.valid()) {
+        if (mTextureBindingDirty || !mTextured3DBindGroup) {
+            updateTextured3DBindGroup();
+        }
+        if (mTextured3DBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTextured3DBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
     } else if (useTextured && !mCurrentShader.valid()) {
@@ -2640,14 +2744,26 @@ void WebGPUBackend::drawTriangleFanEmulated(int vertexCount, int firstVertex) {
     // Check rendering modes (same as draw())
     bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
-    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > textured > default
+    bool is3DTexture = false;
+    if (hasTexture) {
+        auto texIt = mTextures.find(mBoundTextures[0].id);
+        if (texIt != mTextures.end()) {
+            is3DTexture = texIt->second.desc.depth > 1;
+        }
+    }
+
+    bool useTextured3D = is3DTexture && !useLighting && mTextured3DShader.valid();
+    bool useTextured = hasTexture && !is3DTexture && !useLighting && mTexturedShader.valid();
+
+    // Shader selection priority: custom > lighting > textured3D > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
+    } else if (useTextured3D) {
+        shaderToUse = mTextured3DShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2670,6 +2786,14 @@ void WebGPUBackend::drawTriangleFanEmulated(int vertexCount, int firstVertex) {
         }
         if (mLitBindGroup) {
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
+    } else if (useTextured3D && !mCurrentShader.valid()) {
+        if (mTextureBindingDirty || !mTextured3DBindGroup) {
+            updateTextured3DBindGroup();
+        }
+        if (mTextured3DBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTextured3DBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
     } else if (useTextured && !mCurrentShader.valid()) {
@@ -2707,6 +2831,15 @@ void WebGPUBackend::drawIndexed(
     int firstIndex,
     int baseVertex
 ) {
+    // PBR mode: redirect to drawPBRIndexed() with current transforms
+    if (mPBREnabled && (mPBRFallbackPipeline || mPBRPipeline) && mCurrentVertexBuffer.valid() && mCurrentIndexBuffer.valid()) {
+        const float* modelView = reinterpret_cast<const float*>(mUniformData.data());
+        const float* projection = reinterpret_cast<const float*>(mUniformData.data() + 64);
+        drawPBRIndexed(modelView, projection, mNormalMatrix,
+                mCurrentVertexBuffer, mCurrentIndexBuffer, indexCount, mIndexBuffer32Bit, primitive);
+        return;
+    }
+
     beginRenderPass();
     if (!mRenderPassEncoder) return;
 
@@ -2715,16 +2848,26 @@ void WebGPUBackend::drawIndexed(
     // Check rendering modes
     bool hasTexture = mBoundTextures[0].valid();
     bool useLighting = mLightingEnabled && mLitShader.valid();
-    // Use textured shader for textured rendering (applies modelView/projection transforms)
-    // Screen-space shader is for post-processing only (no transforms) - not used by default
-    bool useTextured = hasTexture && !useLighting && mTexturedShader.valid();
 
-    // Shader selection priority: custom > lighting > textured > default
+    bool is3DTexture = false;
+    if (hasTexture) {
+        auto texIt = mTextures.find(mBoundTextures[0].id);
+        if (texIt != mTextures.end()) {
+            is3DTexture = texIt->second.desc.depth > 1;
+        }
+    }
+
+    bool useTextured3D = is3DTexture && !useLighting && mTextured3DShader.valid();
+    bool useTextured = hasTexture && !is3DTexture && !useLighting && mTexturedShader.valid();
+
+    // Shader selection priority: custom > lighting > textured3D > textured > default
     ShaderHandle shaderToUse;
     if (mCurrentShader.valid()) {
         shaderToUse = mCurrentShader;
     } else if (useLighting) {
         shaderToUse = mLitShader;
+    } else if (useTextured3D) {
+        shaderToUse = mTextured3DShader;
     } else if (useTextured) {
         shaderToUse = mTexturedShader;
     } else {
@@ -2756,8 +2899,15 @@ void WebGPUBackend::drawIndexed(
             wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mLitBindGroup,
                                                1, &mCurrentDynamicOffset);
         }
+    } else if (useTextured3D && !mCurrentShader.valid()) {
+        if (mTextureBindingDirty || !mTextured3DBindGroup) {
+            updateTextured3DBindGroup();
+        }
+        if (mTextured3DBindGroup) {
+            wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, mTextured3DBindGroup,
+                                               1, &mCurrentDynamicOffset);
+        }
     } else if (useTextured && !mCurrentShader.valid()) {
-        // Use textured shader's layout for bind group
         if (mTextureBindingDirty || !mTexturedBindGroup) {
             updateTexturedBindGroup(mTexturedShader);
         }
@@ -3597,6 +3747,210 @@ void WebGPUBackend::updateTexturedBindGroup(ShaderHandle shaderToUse) {
     bindGroupDesc.entries = entries;
 
     mTexturedBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
+    mTextureBindingDirty = false;
+}
+
+void WebGPUBackend::createTextured3DShader() {
+    // 3D textured shader - same vertex shader, different fragment (texture_3d)
+    ShaderResource resource;
+    resource.name = "textured_3d_mesh";
+
+    // Create vertex shader module (reuse same vertex shader as 2D textured)
+    WGPUShaderModuleWGSLDescriptor wgslDescVert = {};
+    wgslDescVert.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescVert.code = kTexturedVertexShader;
+
+    WGPUShaderModuleDescriptor moduleDescVert = {};
+    moduleDescVert.nextInChain = &wgslDescVert.chain;
+    moduleDescVert.label = "textured3d_vert";
+    resource.vertModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescVert);
+
+    // Create 3D fragment shader module
+    WGPUShaderModuleWGSLDescriptor wgslDescFrag = {};
+    wgslDescFrag.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    wgslDescFrag.code = kTextured3DFragmentShader;
+
+    WGPUShaderModuleDescriptor moduleDescFrag = {};
+    moduleDescFrag.nextInChain = &wgslDescFrag.chain;
+    moduleDescFrag.label = "textured3d_frag";
+    resource.fragModule = wgpuDeviceCreateShaderModule(mDevice, &moduleDescFrag);
+
+    if (!resource.vertModule || !resource.fragModule) {
+        printf("[WebGPUBackend] ERROR: Failed to create 3D textured shader modules!\n");
+        return;
+    }
+
+    // Create bind group layout with uniform buffer + 3D texture + sampler
+    WGPUBindGroupLayoutEntry layoutEntries[3] = {};
+
+    // Binding 0: Uniform buffer
+    layoutEntries[0].binding = 0;
+    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
+    layoutEntries[0].buffer.minBindingSize = 160;
+    layoutEntries[0].buffer.hasDynamicOffset = true;
+
+    // Binding 1: 3D Texture (key difference from 2D shader)
+    layoutEntries[1].binding = 1;
+    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[1].texture.sampleType = WGPUTextureSampleType_Float;
+    layoutEntries[1].texture.viewDimension = WGPUTextureViewDimension_3D;
+    layoutEntries[1].texture.multisampled = false;
+
+    // Binding 2: Sampler
+    layoutEntries[2].binding = 2;
+    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
+    layoutEntries[2].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = 3;
+    layoutDesc.entries = layoutEntries;
+    resource.bindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
+
+    // Create pipeline layout
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &resource.bindGroupLayout;
+    resource.pipelineLayout = wgpuDeviceCreatePipelineLayout(mDevice, &pipelineLayoutDesc);
+
+    resource.uniformBuffer = nullptr;
+    resource.bindGroup = nullptr;
+
+    // Create default render pipeline (TriangleList)
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = resource.pipelineLayout;
+
+    // Vertex state - must match InterleavedVertex layout
+    WGPUVertexAttribute vertexAttrs[4] = {};
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    WGPUVertexState vertexState = {};
+    vertexState.module = resource.vertModule;
+    vertexState.entryPoint = "vs_main";
+    vertexState.bufferCount = 1;
+    vertexState.buffers = &vertexBufferLayout;
+    pipelineDesc.vertex = vertexState;
+
+    // Primitive state
+    WGPUPrimitiveState primitiveState = {};
+    primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
+    primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
+    primitiveState.frontFace = WGPUFrontFace_CCW;
+    primitiveState.cullMode = WGPUCullMode_None;
+    pipelineDesc.primitive = primitiveState;
+
+    // Fragment state
+    WGPUBlendState blendState = {};
+    blendState.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blendState.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.color.operation = WGPUBlendOperation_Add;
+    blendState.alpha.srcFactor = WGPUBlendFactor_One;
+    blendState.alpha.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    blendState.alpha.operation = WGPUBlendOperation_Add;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = resource.fragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    // Depth state
+    WGPUDepthStencilState depthState = {};
+    depthState.format = WGPUTextureFormat_Depth32Float;
+    depthState.depthWriteEnabled = true;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    pipelineDesc.depthStencil = &depthState;
+
+    // Multisample
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    resource.defaultPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (!resource.defaultPipeline) {
+        printf("[WebGPUBackend] ERROR: Failed to create 3D textured shader pipeline!\n");
+        wgpuPipelineLayoutRelease(resource.pipelineLayout);
+        wgpuBindGroupLayoutRelease(resource.bindGroupLayout);
+        wgpuShaderModuleRelease(resource.fragModule);
+        wgpuShaderModuleRelease(resource.vertModule);
+        return;
+    }
+
+    resource.pipelines[static_cast<int>(PrimitiveType::Triangles)] = resource.defaultPipeline;
+
+    uint64_t id = generateHandleId();
+    mShaders[id] = std::move(resource);
+    mTextured3DShader = ShaderHandle{id};
+
+    printf("[WebGPUBackend] 3D textured shader created successfully\n");
+}
+
+void WebGPUBackend::updateTextured3DBindGroup() {
+    if (!mTextured3DShader.valid() || !mBoundTextures[0].valid()) {
+        return;
+    }
+
+    auto shaderIt = mShaders.find(mTextured3DShader.id);
+    if (shaderIt == mShaders.end()) {
+        return;
+    }
+
+    auto texIt = mTextures.find(mBoundTextures[0].id);
+    if (texIt == mTextures.end()) {
+        return;
+    }
+
+    // Release old bind group
+    if (mTextured3DBindGroup) {
+        wgpuBindGroupRelease(mTextured3DBindGroup);
+        mTextured3DBindGroup = nullptr;
+    }
+
+    // Create bind group entries
+    WGPUBindGroupEntry entries[3] = {};
+
+    // Binding 0: Uniform buffer (using ring buffer)
+    entries[0].binding = 0;
+    entries[0].buffer = mUniformRingBuffer;
+    entries[0].offset = 0;
+    entries[0].size = 256;
+
+    // Binding 1: 3D Texture view
+    entries[1].binding = 1;
+    entries[1].textureView = texIt->second.view;
+
+    // Binding 2: Sampler
+    entries[2].binding = 2;
+    entries[2].sampler = texIt->second.sampler;
+
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.layout = shaderIt->second.bindGroupLayout;
+    bindGroupDesc.entryCount = 3;
+    bindGroupDesc.entries = entries;
+
+    mTextured3DBindGroup = wgpuDeviceCreateBindGroup(mDevice, &bindGroupDesc);
     mTextureBindingDirty = false;
 }
 
@@ -4662,7 +5016,7 @@ void WebGPUBackend::createEnvReflectShader() {
     pipelineDesc.fragment = &fragmentState;
     pipelineDesc.depthStencil = &depthStencilState;
     pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-    pipelineDesc.primitive.cullMode = WGPUCullMode_Back;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;  // Match other pipelines (winding varies)
     pipelineDesc.multisample.count = 1;
     pipelineDesc.multisample.mask = 0xFFFFFFFF;
 
@@ -5010,9 +5364,12 @@ void WebGPUBackend::createPBRShader() {
     layoutDesc.entries = layoutEntries;
     mPBRBindGroupLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
 
-    // Create PBR uniform buffer (aligned to 256 bytes for all uniform data)
+    // Create PBR uniform buffer (each binding at 256-byte aligned offset)
+    // Binding 0: offset=0   (192 bytes, transforms)
+    // Binding 1: offset=256 (48 bytes, material)
+    // Binding 2: offset=512 (80 bytes, params)
     WGPUBufferDescriptor uniformBufDesc = {};
-    uniformBufDesc.size = 512;  // Enough for transform(192) + material(48) + params(80) aligned
+    uniformBufDesc.size = 768;  // 512 + 80 = 592, rounded up
     uniformBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     uniformBufDesc.mappedAtCreation = false;
     mPBRUniformBuffer = wgpuDeviceCreateBuffer(mDevice, &uniformBufDesc);
@@ -5027,22 +5384,26 @@ void WebGPUBackend::createPBRShader() {
     WGPURenderPipelineDescriptor pipelineDesc = {};
     pipelineDesc.layout = pipelineLayout;
 
-    // Vertex state - position, texcoord, normal
-    WGPUVertexAttribute vertexAttrs[3] = {};
+    // Vertex state - must match standard InterleavedVertex layout (48 bytes)
+    // position(3f) + color(4f) + texcoord(2f) + normal(3f)
+    WGPUVertexAttribute vertexAttrs[4] = {};
     vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position (location 0)
     vertexAttrs[0].offset = 0;
     vertexAttrs[0].shaderLocation = 0;
-    vertexAttrs[1].format = WGPUVertexFormat_Float32x2;  // texcoord (location 2)
-    vertexAttrs[1].offset = 12;  // After position
-    vertexAttrs[1].shaderLocation = 2;
-    vertexAttrs[2].format = WGPUVertexFormat_Float32x3;  // normal (location 3)
-    vertexAttrs[2].offset = 20;  // After texcoord
-    vertexAttrs[2].shaderLocation = 3;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color (location 1) - unused by PBR shader
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord (location 2)
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal (location 3)
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
 
     WGPUVertexBufferLayout vertexBufferLayout = {};
-    vertexBufferLayout.arrayStride = 32;  // 3+2+3 floats = 32 bytes
+    vertexBufferLayout.arrayStride = 48;  // sizeof(InterleavedVertex)
     vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
-    vertexBufferLayout.attributeCount = 3;
+    vertexBufferLayout.attributeCount = 4;
     vertexBufferLayout.attributes = vertexAttrs;
 
     WGPUVertexState vertexState = {};
@@ -5057,7 +5418,7 @@ void WebGPUBackend::createPBRShader() {
     primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
     primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
     primitiveState.frontFace = WGPUFrontFace_CCW;
-    primitiveState.cullMode = WGPUCullMode_Back;
+    primitiveState.cullMode = WGPUCullMode_None;  // Match other pipelines (winding varies)
     pipelineDesc.primitive = primitiveState;
 
     // Fragment state
@@ -5164,22 +5525,26 @@ void WebGPUBackend::createPBRFallbackShader() {
     WGPURenderPipelineDescriptor pipelineDesc = {};
     pipelineDesc.layout = pipelineLayout;
 
-    // Vertex state - position, texcoord, normal
-    WGPUVertexAttribute vertexAttrs[3] = {};
+    // Vertex state - must match standard InterleavedVertex layout (48 bytes)
+    // position(3f) + color(4f) + texcoord(2f) + normal(3f)
+    WGPUVertexAttribute vertexAttrs[4] = {};
     vertexAttrs[0].format = WGPUVertexFormat_Float32x3;  // position
     vertexAttrs[0].offset = 0;
     vertexAttrs[0].shaderLocation = 0;
-    vertexAttrs[1].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;  // color - unused by PBR shader
     vertexAttrs[1].offset = 12;
-    vertexAttrs[1].shaderLocation = 2;
-    vertexAttrs[2].format = WGPUVertexFormat_Float32x3;  // normal
-    vertexAttrs[2].offset = 20;
-    vertexAttrs[2].shaderLocation = 3;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;  // texcoord
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;  // normal
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
 
     WGPUVertexBufferLayout vertexBufferLayout = {};
-    vertexBufferLayout.arrayStride = 32;
+    vertexBufferLayout.arrayStride = 48;  // sizeof(InterleavedVertex)
     vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
-    vertexBufferLayout.attributeCount = 3;
+    vertexBufferLayout.attributeCount = 4;
     vertexBufferLayout.attributes = vertexAttrs;
 
     WGPUVertexState vertexState = {};
@@ -5194,7 +5559,7 @@ void WebGPUBackend::createPBRFallbackShader() {
     primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
     primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
     primitiveState.frontFace = WGPUFrontFace_CCW;
-    primitiveState.cullMode = WGPUCullMode_Back;
+    primitiveState.cullMode = WGPUCullMode_None;  // Match other pipelines (winding varies)
     pipelineDesc.primitive = primitiveState;
 
     // Fragment state
@@ -5221,19 +5586,106 @@ void WebGPUBackend::createPBRFallbackShader() {
     pipelineDesc.multisample.mask = 0xFFFFFFFF;
 
     mPBRFallbackPipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    printf("[WebGPUBackend] PBR Fallback pipeline created: %p (device=%p)\n", (void*)mPBRFallbackPipeline, (void*)mDevice);
 
-    // Release intermediate objects
-    wgpuPipelineLayoutRelease(pipelineLayout);
+    // Save modules and layout for creating variant pipelines (different topologies)
+    mPBRFallbackPipelineLayout = pipelineLayout;
+    mPBRVertModule = vertModule;
+    mPBRFallbackFragModule = fragModule;
     wgpuBindGroupLayoutRelease(fallbackBindGroupLayout);
-    wgpuShaderModuleRelease(vertModule);
-    wgpuShaderModuleRelease(fragModule);
+    // Don't release pipelineLayout, vertModule, fragModule — needed for variant pipelines
 
     if (!mPBRFallbackPipeline) {
         printf("[WebGPUBackend] ERROR: Failed to create PBR fallback pipeline!\n");
         return;
     }
 
+    // Cache the TriangleList pipeline
+    mPBRFallbackPipelineCache[WGPUPrimitiveTopology_TriangleList] = mPBRFallbackPipeline;
+
     printf("[WebGPUBackend] PBR fallback shader created successfully\n");
+}
+
+WGPURenderPipeline WebGPUBackend::getPBRFallbackPipelineForPrimitive(PrimitiveType primitive) {
+    WGPUPrimitiveTopology topology = toWGPUPrimitive(primitive);
+    auto it = mPBRFallbackPipelineCache.find(topology);
+    if (it != mPBRFallbackPipelineCache.end()) {
+        return it->second;
+    }
+
+    // Create a new pipeline for this topology
+    if (!mPBRFallbackPipelineLayout || !mPBRVertModule || !mPBRFallbackFragModule) {
+        printf("[WebGPUBackend] WARNING: Cannot create PBR fallback pipeline variant - missing resources\n");
+        return mPBRFallbackPipeline; // Fall back to default
+    }
+
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.layout = mPBRFallbackPipelineLayout;
+
+    // Vertex state - same 48-byte layout
+    WGPUVertexAttribute vertexAttrs[4] = {};
+    vertexAttrs[0].format = WGPUVertexFormat_Float32x3;
+    vertexAttrs[0].offset = 0;
+    vertexAttrs[0].shaderLocation = 0;
+    vertexAttrs[1].format = WGPUVertexFormat_Float32x4;
+    vertexAttrs[1].offset = 12;
+    vertexAttrs[1].shaderLocation = 1;
+    vertexAttrs[2].format = WGPUVertexFormat_Float32x2;
+    vertexAttrs[2].offset = 28;
+    vertexAttrs[2].shaderLocation = 2;
+    vertexAttrs[3].format = WGPUVertexFormat_Float32x3;
+    vertexAttrs[3].offset = 36;
+    vertexAttrs[3].shaderLocation = 3;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {};
+    vertexBufferLayout.arrayStride = 48;
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 4;
+    vertexBufferLayout.attributes = vertexAttrs;
+
+    pipelineDesc.vertex.module = mPBRVertModule;
+    pipelineDesc.vertex.entryPoint = "vs_main";
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexBufferLayout;
+
+    WGPUPrimitiveState primitiveState = {};
+    primitiveState.topology = topology;
+    primitiveState.stripIndexFormat = (topology == WGPUPrimitiveTopology_TriangleStrip ||
+                                       topology == WGPUPrimitiveTopology_LineStrip)
+                                     ? WGPUIndexFormat_Uint32 : WGPUIndexFormat_Undefined;
+    primitiveState.frontFace = WGPUFrontFace_CCW;
+    primitiveState.cullMode = WGPUCullMode_None;  // Match other pipelines (winding varies)
+    pipelineDesc.primitive = primitiveState;
+
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = mSwapChainFormat;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = mPBRFallbackFragModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    pipelineDesc.fragment = &fragmentState;
+
+    WGPUDepthStencilState depthState = {};
+    depthState.format = WGPUTextureFormat_Depth32Float;
+    depthState.depthWriteEnabled = true;
+    depthState.depthCompare = WGPUCompareFunction_Less;
+    pipelineDesc.depthStencil = &depthState;
+
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+
+    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(mDevice, &pipelineDesc);
+    if (pipeline) {
+        mPBRFallbackPipelineCache[topology] = pipeline;
+        printf("[WebGPUBackend] Created PBR fallback pipeline for topology %d\n", topology);
+    } else {
+        printf("[WebGPUBackend] ERROR: Failed to create PBR fallback pipeline for topology %d\n", topology);
+        return mPBRFallbackPipeline;
+    }
+    return pipeline;
 }
 
 void WebGPUBackend::updatePBRBindGroup() {
@@ -5275,16 +5727,16 @@ void WebGPUBackend::updatePBRBindGroup() {
     entries[0].offset = 0;
     entries[0].size = 192;
 
-    // Binding 1: Material uniforms
+    // Binding 1: Material uniforms (256-byte aligned)
     entries[1].binding = 1;
     entries[1].buffer = mPBRUniformBuffer;
-    entries[1].offset = 192;
+    entries[1].offset = 256;
     entries[1].size = 48;
 
-    // Binding 2: Params uniforms
+    // Binding 2: Params uniforms (256-byte aligned)
     entries[2].binding = 2;
     entries[2].buffer = mPBRUniformBuffer;
-    entries[2].offset = 256;  // Aligned
+    entries[2].offset = 512;
     entries[2].size = 80;
 
     // Binding 3: Environment texture
@@ -5400,7 +5852,6 @@ void WebGPUBackend::drawPBR(
     PrimitiveType primitive
 ) {
     if (!mPBRFallbackPipeline && !mPBRPipeline) {
-        printf("[WebGPUBackend::drawPBR] WARNING: No PBR pipeline available!\n");
         return;
     }
 
@@ -5422,44 +5873,24 @@ void WebGPUBackend::drawPBR(
 
     wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 0, &transform, sizeof(transform));
 
-    // Upload material uniforms at offset 192
-    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 192, &mPBRMaterial, sizeof(mPBRMaterial));
+    // Upload material uniforms at offset 256 (256-byte aligned)
+    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 256, &mPBRMaterial, sizeof(mPBRMaterial));
 
-    // Upload params uniforms at offset 256 (aligned)
-    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 256, &mPBRParams, sizeof(mPBRParams));
+    // Upload params uniforms at offset 512 (256-byte aligned)
+    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 512, &mPBRParams, sizeof(mPBRParams));
 
-    // Use appropriate pipeline
-    WGPURenderPipeline pipeline = hasIBL ? mPBRPipeline : mPBRFallbackPipeline;
+    // Use appropriate pipeline (topology-aware for fallback)
+    WGPURenderPipeline pipeline = hasIBL ? mPBRPipeline : getPBRFallbackPipelineForPrimitive(primitive);
+    if (!pipeline) {
+        printf("[WebGPUBackend::drawPBR] WARNING: No PBR pipeline for primitive %d!\n", static_cast<int>(primitive));
+        return;
+    }
     wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
 
-    // Create and bind bind group for this draw
-    // For fallback (no IBL), we need a bind group with just uniforms
-    WGPUBindGroupLayoutEntry layoutEntries[3] = {};
+    // Get bind group layout from the pipeline itself (guarantees compatibility)
+    WGPUBindGroupLayout bgLayout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
 
-    layoutEntries[0].binding = 0;
-    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[0].buffer.minBindingSize = 192;
-    layoutEntries[0].buffer.hasDynamicOffset = false;
-
-    layoutEntries[1].binding = 1;
-    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
-    layoutEntries[1].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[1].buffer.minBindingSize = 48;
-    layoutEntries[1].buffer.hasDynamicOffset = false;
-
-    layoutEntries[2].binding = 2;
-    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
-    layoutEntries[2].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[2].buffer.minBindingSize = 80;
-    layoutEntries[2].buffer.hasDynamicOffset = false;
-
-    WGPUBindGroupLayoutDescriptor layoutDesc = {};
-    layoutDesc.entryCount = 3;
-    layoutDesc.entries = layoutEntries;
-    WGPUBindGroupLayout fallbackLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
-
-    // Create bind group entries
+    // Create bind group entries (offsets must be 256-byte aligned per WebGPU spec)
     WGPUBindGroupEntry entries[3] = {};
 
     entries[0].binding = 0;
@@ -5469,16 +5900,16 @@ void WebGPUBackend::drawPBR(
 
     entries[1].binding = 1;
     entries[1].buffer = mPBRUniformBuffer;
-    entries[1].offset = 192;
+    entries[1].offset = 256;
     entries[1].size = 48;
 
     entries[2].binding = 2;
     entries[2].buffer = mPBRUniformBuffer;
-    entries[2].offset = 256;
+    entries[2].offset = 512;
     entries[2].size = 80;
 
     WGPUBindGroupDescriptor bindGroupDesc = {};
-    bindGroupDesc.layout = fallbackLayout;
+    bindGroupDesc.layout = bgLayout;
     bindGroupDesc.entryCount = 3;
     bindGroupDesc.entries = entries;
 
@@ -5491,7 +5922,7 @@ void WebGPUBackend::drawPBR(
     if (vbIt == mBuffers.end() || !vbIt->second.buffer) {
         printf("[WebGPUBackend::drawPBR] WARNING: Invalid vertex buffer!\n");
         wgpuBindGroupRelease(bindGroup);
-        wgpuBindGroupLayoutRelease(fallbackLayout);
+        wgpuBindGroupLayoutRelease(bgLayout);
         return;
     }
 
@@ -5502,7 +5933,7 @@ void WebGPUBackend::drawPBR(
 
     // Cleanup (WebGPU keeps references so this is safe)
     wgpuBindGroupRelease(bindGroup);
-    wgpuBindGroupLayoutRelease(fallbackLayout);
+    wgpuBindGroupLayoutRelease(bgLayout);
 }
 
 void WebGPUBackend::drawPBRIndexed(
@@ -5516,7 +5947,6 @@ void WebGPUBackend::drawPBRIndexed(
     PrimitiveType primitive
 ) {
     if (!mPBRFallbackPipeline && !mPBRPipeline) {
-        printf("[WebGPUBackend::drawPBRIndexed] WARNING: No PBR pipeline available!\n");
         return;
     }
 
@@ -5538,40 +5968,26 @@ void WebGPUBackend::drawPBRIndexed(
 
     wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 0, &transform, sizeof(transform));
 
-    // Upload material and params
-    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 192, &mPBRMaterial, sizeof(mPBRMaterial));
-    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 256, &mPBRParams, sizeof(mPBRParams));
+    // Upload material uniforms at offset 256 (256-byte aligned)
+    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 256, &mPBRMaterial, sizeof(mPBRMaterial));
 
-    // Use appropriate pipeline
-    WGPURenderPipeline pipeline = hasIBL ? mPBRPipeline : mPBRFallbackPipeline;
+    // Upload params uniforms at offset 512 (256-byte aligned)
+    wgpuQueueWriteBuffer(mQueue, mPBRUniformBuffer, 512, &mPBRParams, sizeof(mPBRParams));
+
+    // Use appropriate pipeline (topology-aware for fallback)
+    WGPURenderPipeline pipeline = hasIBL ? mPBRPipeline : getPBRFallbackPipelineForPrimitive(primitive);
+    if (!pipeline) {
+        printf("[WebGPUBackend::drawPBRIndexed] WARNING: No PBR pipeline for primitive %d!\n", static_cast<int>(primitive));
+        return;
+    }
     wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
 
-    // Create bind group (same as drawPBR)
-    WGPUBindGroupLayoutEntry layoutEntries[3] = {};
-    layoutEntries[0].binding = 0;
-    layoutEntries[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-    layoutEntries[0].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[0].buffer.minBindingSize = 192;
-    layoutEntries[0].buffer.hasDynamicOffset = false;
+    // Get bind group layout from the pipeline itself (guarantees compatibility)
+    WGPUBindGroupLayout bgLayout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
 
-    layoutEntries[1].binding = 1;
-    layoutEntries[1].visibility = WGPUShaderStage_Fragment;
-    layoutEntries[1].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[1].buffer.minBindingSize = 48;
-    layoutEntries[1].buffer.hasDynamicOffset = false;
-
-    layoutEntries[2].binding = 2;
-    layoutEntries[2].visibility = WGPUShaderStage_Fragment;
-    layoutEntries[2].buffer.type = WGPUBufferBindingType_Uniform;
-    layoutEntries[2].buffer.minBindingSize = 80;
-    layoutEntries[2].buffer.hasDynamicOffset = false;
-
-    WGPUBindGroupLayoutDescriptor layoutDesc = {};
-    layoutDesc.entryCount = 3;
-    layoutDesc.entries = layoutEntries;
-    WGPUBindGroupLayout fallbackLayout = wgpuDeviceCreateBindGroupLayout(mDevice, &layoutDesc);
-
+    // Create bind group entries (offsets must be 256-byte aligned per WebGPU spec)
     WGPUBindGroupEntry entries[3] = {};
+
     entries[0].binding = 0;
     entries[0].buffer = mPBRUniformBuffer;
     entries[0].offset = 0;
@@ -5579,16 +5995,16 @@ void WebGPUBackend::drawPBRIndexed(
 
     entries[1].binding = 1;
     entries[1].buffer = mPBRUniformBuffer;
-    entries[1].offset = 192;
+    entries[1].offset = 256;
     entries[1].size = 48;
 
     entries[2].binding = 2;
     entries[2].buffer = mPBRUniformBuffer;
-    entries[2].offset = 256;
+    entries[2].offset = 512;
     entries[2].size = 80;
 
     WGPUBindGroupDescriptor bindGroupDesc = {};
-    bindGroupDesc.layout = fallbackLayout;
+    bindGroupDesc.layout = bgLayout;
     bindGroupDesc.entryCount = 3;
     bindGroupDesc.entries = entries;
 
@@ -5599,8 +6015,9 @@ void WebGPUBackend::drawPBRIndexed(
     // Bind vertex buffer
     auto vbIt = mBuffers.find(vertexBuffer.id);
     if (vbIt == mBuffers.end() || !vbIt->second.buffer) {
+        printf("[WebGPUBackend::drawPBRIndexed] WARNING: Invalid vertex buffer!\n");
         wgpuBindGroupRelease(bindGroup);
-        wgpuBindGroupLayoutRelease(fallbackLayout);
+        wgpuBindGroupLayoutRelease(bgLayout);
         return;
     }
     wgpuRenderPassEncoderSetVertexBuffer(mRenderPassEncoder, 0, vbIt->second.buffer, 0, vbIt->second.size);
@@ -5608,8 +6025,9 @@ void WebGPUBackend::drawPBRIndexed(
     // Bind index buffer
     auto ibIt = mBuffers.find(indexBuffer.id);
     if (ibIt == mBuffers.end() || !ibIt->second.buffer) {
+        printf("[WebGPUBackend::drawPBRIndexed] WARNING: Invalid index buffer!\n");
         wgpuBindGroupRelease(bindGroup);
-        wgpuBindGroupLayoutRelease(fallbackLayout);
+        wgpuBindGroupLayoutRelease(bgLayout);
         return;
     }
 
@@ -5619,9 +6037,9 @@ void WebGPUBackend::drawPBRIndexed(
     // Draw indexed
     wgpuRenderPassEncoderDrawIndexed(mRenderPassEncoder, indexCount, 1, 0, 0, 0);
 
-    // Cleanup
+    // Cleanup (WebGPU keeps references so this is safe)
     wgpuBindGroupRelease(bindGroup);
-    wgpuBindGroupLayoutRelease(fallbackLayout);
+    wgpuBindGroupLayoutRelease(bgLayout);
 }
 
 // ─── GPU Particle Rendering (Phase 4) ──────────────────────────────────────

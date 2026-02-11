@@ -78,8 +78,6 @@ function handleFileAction(action: string) {
 }
 
 // Project import/export handlers
-const projectFileInput = ref<HTMLInputElement | null>(null)
-
 function handleProjectExport() {
   closeFileMenu()
   downloadProject()
@@ -215,12 +213,6 @@ function handleBackendChange() {
     // Show a notification that reload is required
     console.log('[Settings] Backend change will take effect on next compile/run')
   }
-}
-
-// Reset backendChanged flag when app is re-run
-function resetBackendChanged() {
-  initialBackendType.value = settings.graphics.backendType
-  backendChanged.value = false
 }
 
 const statusColors: Record<AppStatus, string> = {
