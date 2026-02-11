@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import { WebSocketServer } from 'ws'
 import { createServer } from 'http'
 import { compileRouter } from './routes/compile.js'
@@ -9,12 +10,21 @@ import { logger } from './services/logger.js'
 import { initWsManager } from './services/ws-manager.js'
 
 const app = express()
-const PORT = process.env.PORT || 4000
+const PORT = parseInt(process.env.PORT || '4000', 10)
 
 // Middleware
 app.use(helmet())
 app.use(cors())
 app.use(express.json({ limit: '1mb' }))
+
+// Rate limiting on compilation endpoint (POST only - not status/output polling)
+const compileLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 30,               // 30 compilations per minute
+  message: { success: false, error: 'Too many compilation requests, please try again later' },
+  skip: (req) => req.method !== 'POST',  // Only limit POST (new compilations), not GET (status/output)
+})
+app.use('/api/compile', compileLimiter)
 
 // Health check
 app.get('/health', (_req, res) => {

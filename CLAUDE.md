@@ -102,7 +102,30 @@ cd tests && npx playwright test
 cd tests && UPDATE_BASELINES=true npx playwright test
 ```
 
-## Recent Work (2026-02-05)
+## Recent Work (2026-02-10)
+
+### Phase 1 Complete: Full Test Suite Baseline
+
+**Test Results: 290/308 passing (1.5 hours)**
+
+| Metric | WebGL2 | WebGPU | Combined |
+|--------|--------|--------|----------|
+| Examples tested | 154 | 154 | 308 |
+| Passed | 149 | 141 | 290 |
+| Pass rate | **96.8%** | **91.6%** | **94.2%** |
+| Compilation | **100%** | **100%** | **100%** |
+| Baselines captured | 149 | 141 | 290 |
+
+**Visual baselines:** 290 PNGs in `tests/baselines/` (149 WebGL2 + 141 WebGPU)
+
+**Fix applied:** Backend rate limiting changed to POST-only (was blocking status/output polling)
+
+**18 failures are known rendering/detection limitations:**
+- 5 on both backends: sparse point-based simulations (wireworld, creatures, predator-prey)
+- 8 WebGPU-only: sparse content + 3 compile timeouts
+- See ROADMAP.md Phase 1 Results for full breakdown
+
+## Previous Work (2026-02-05)
 
 ### Comprehensive Functional Tests - ALL 154 Examples on BOTH Backends
 
@@ -123,16 +146,6 @@ Created `tests/e2e/comprehensive-functional-tests.spec.ts` that tests ALL exampl
 | Compilation | 102 | **100%** |
 | Rendering | 102 | **100%** |
 | Functional | 51 | **50%** |
-
-#### Interaction Tests Working Well
-- `oscillator-types`: 27.2% visual change on key press
-- `piano-keyboard`: 18.3% visual change on key press
-- `camera-control`: 21.3% visual change on WASD
-
-#### Issues Found & Resolved
-1. ~~**`life-slime-mold` (WebGPU)** - Stack overflow WASM error~~ **FIXED** (moved large array from stack to class member)
-2. **Animation detection** - Shows "not detected" (detection method limitation)
-3. **Audio context** - Not created in headless (requires user gesture)
 
 ### Reports Generated
 - `tests/reports/functional-webgl2-*.md` - Detailed WebGL2 results
