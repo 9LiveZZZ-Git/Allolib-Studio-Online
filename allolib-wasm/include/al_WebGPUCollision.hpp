@@ -31,6 +31,7 @@
 #include "al/math/al_Vec.hpp"
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 
 namespace al {
 
@@ -102,7 +103,10 @@ fn sdfSphere(p: vec3f, center: vec3f, radius: f32) -> f32 {
 }
 
 fn sdfSphereNormal(p: vec3f, center: vec3f) -> vec3f {
-    return normalize(p - center);
+    let d = p - center;
+    let len = length(d);
+    if (len < 0.0001) { return vec3f(0.0, 1.0, 0.0); }
+    return d / len;
 }
 
 // SDF: Box (axis-aligned)
@@ -129,7 +133,8 @@ fn sdfPlane(p: vec3f, point: vec3f, normal: vec3f) -> f32 {
 fn sdfCapsule(p: vec3f, a: vec3f, b: vec3f, radius: f32) -> f32 {
     let ab = b - a;
     let ap = p - a;
-    let t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+    let abLenSq = max(dot(ab, ab), 0.0001);
+    let t = clamp(dot(ap, ab) / abLenSq, 0.0, 1.0);
     let closest = a + ab * t;
     return length(p - closest) - radius;
 }
@@ -137,9 +142,13 @@ fn sdfCapsule(p: vec3f, a: vec3f, b: vec3f, radius: f32) -> f32 {
 fn sdfCapsuleNormal(p: vec3f, a: vec3f, b: vec3f) -> vec3f {
     let ab = b - a;
     let ap = p - a;
-    let t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+    let abLenSq = max(dot(ab, ab), 0.0001);
+    let t = clamp(dot(ap, ab) / abLenSq, 0.0, 1.0);
     let closest = a + ab * t;
-    return normalize(p - closest);
+    let d = p - closest;
+    let len = length(d);
+    if (len < 0.0001) { return vec3f(0.0, 1.0, 0.0); }
+    return d / len;
 }
 
 @compute @workgroup_size(256)
@@ -169,7 +178,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
                 normal = sdfBoxNormal(p.position, colPos, halfExtents);
             }
             case 2u: { // Plane
-                let planeNormal = normalize(colDir);
+                let dirLen = length(colDir);
+                let planeNormal = select(vec3f(0.0, 1.0, 0.0), colDir / dirLen, dirLen > 0.0001);
                 dist = sdfPlane(p.position, colPos, planeNormal);
                 normal = planeNormal;
             }
@@ -241,7 +251,7 @@ public:
         c.posX = center.x; c.posY = center.y; c.posZ = center.z;
         c.type = 0;
         c.paramA = radius; c.paramB = 0; c.paramC = 0;
-        c.restitution = restitution;
+        c.restitution = std::clamp(restitution, 0.0f, 1.0f);
         c.friction = 0.1f;
         c.dirX = 0; c.dirY = 0; c.dirZ = 0;
         mParams.colliderCount++;
@@ -256,7 +266,7 @@ public:
         c.posX = center.x; c.posY = center.y; c.posZ = center.z;
         c.type = 1;
         c.paramA = halfExtents.x; c.paramB = halfExtents.y; c.paramC = halfExtents.z;
-        c.restitution = restitution;
+        c.restitution = std::clamp(restitution, 0.0f, 1.0f);
         c.friction = 0.1f;
         c.dirX = 0; c.dirY = 0; c.dirZ = 0;
         mParams.colliderCount++;
@@ -271,7 +281,7 @@ public:
         c.posX = point.x; c.posY = point.y; c.posZ = point.z;
         c.type = 2;
         c.paramA = 0; c.paramB = 0; c.paramC = 0;
-        c.restitution = restitution;
+        c.restitution = std::clamp(restitution, 0.0f, 1.0f);
         c.friction = 0.1f;
         c.dirX = normal.x; c.dirY = normal.y; c.dirZ = normal.z;
         mParams.colliderCount++;
@@ -286,7 +296,7 @@ public:
         c.posX = a.x; c.posY = a.y; c.posZ = a.z;
         c.type = 3;
         c.paramA = radius; c.paramB = 0; c.paramC = 0;
-        c.restitution = restitution;
+        c.restitution = std::clamp(restitution, 0.0f, 1.0f);
         c.friction = 0.1f;
         c.dirX = b.x; c.dirY = b.y; c.dirZ = b.z;
         mParams.colliderCount++;
@@ -321,13 +331,13 @@ public:
     /// Set friction for a collider
     void setFriction(int index, float f) {
         if (index < 0 || index >= (int)mParams.colliderCount) return;
-        mParams.colliders[index].friction = f;
+        mParams.colliders[index].friction = std::clamp(f, 0.0f, 1.0f);
     }
 
     /// Set restitution for a collider
     void setRestitution(int index, float r) {
         if (index < 0 || index >= (int)mParams.colliderCount) return;
-        mParams.colliders[index].restitution = r;
+        mParams.colliders[index].restitution = std::clamp(r, 0.0f, 1.0f);
     }
 
     /// Apply collisions to the particle system

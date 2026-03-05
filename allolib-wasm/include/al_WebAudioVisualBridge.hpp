@@ -60,7 +60,7 @@ static_assert(sizeof(AudioFeatures) == 48, "AudioFeatures must be 48 bytes");
 // ── Feature Extraction WGSL ─────────────────────────────────────────────────
 
 // Single workgroup of 256 threads, parallel reduction over FFT bins
-static const char* kFeatureExtractionWGSL = R"(
+static const char* const kFeatureExtractionWGSL = R"(
 struct Features {
     rmsEnergy: f32,
     peakAmplitude: f32,

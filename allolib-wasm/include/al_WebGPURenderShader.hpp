@@ -301,9 +301,11 @@ public:
 private:
 #ifdef ALLOLIB_WEBGPU
     void createInternal(GraphicsBackend& backend, const char* wgslSource, int uniformSize, bool withVertexLayout) {
-        if (mCreated) {
-            destroy();
-        }
+        destroy();
+        mBindGroupDirty = true;
+        std::memset(mTextureViews, 0, sizeof(mTextureViews));
+        std::memset(mSamplers, 0, sizeof(mSamplers));
+
         mBackend = dynamic_cast<WebGPUBackend*>(&backend);
         if (!mBackend) {
             printf("[FullscreenShader] ERROR: Backend is not WebGPU\n");
@@ -324,6 +326,7 @@ private:
 
         if (!mShaderModule) {
             printf("[FullscreenShader] ERROR: Failed to create shader module\n");
+            destroy();
             return;
         }
 
@@ -426,6 +429,7 @@ private:
 
         if (!mPipeline) {
             printf("[FullscreenShader] ERROR: Failed to create render pipeline\n");
+            destroy();
             return;
         }
 
@@ -433,6 +437,12 @@ private:
         mBindGroupLayout = wgpuRenderPipelineGetBindGroupLayout(mPipeline, 0);
 
         rebuildBindGroup();
+
+        if (!mBindGroup) {
+            printf("[FullscreenShader] ERROR: Bind group creation failed\n");
+            destroy();
+            return;
+        }
 
         printf("[FullscreenShader] %s pipeline created successfully\n",
                withVertexLayout ? "Mesh" : "Fullscreen");

@@ -166,7 +166,7 @@ const nativeToWebPatterns: Array<{
     description: 'One-liner main: MyApp().start();'
   },
   {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+app\s*;\s*app\.start\s*\(\s*\)\s*;\s*\}/g,
+    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;\s*\}/g,
     replacement: 'ALLOLIB_WEB_MAIN($1)',
     description: 'Simple main without return 0'
   },
@@ -420,16 +420,11 @@ const webToNativePatterns: Array<{
 
   // Normalize main() variants to ALLOLIB_WEB_MAIN, then expand below to canonical main()
   // This ensures a consistent main() body regardless of the original format
+  // Only matches when the declared variable and .start() variable are the same
   {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;\s*\w+\.start\s*\(\s*\)\s*;\s*(?:return\s+0\s*;\s*)?\}/g,
+    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;\s*(?:return\s+0\s*;\s*)?\}/g,
     replacement: 'ALLOLIB_WEB_MAIN($1)',
     description: 'Convert simple main() to ALLOLIB_WEB_MAIN'
-  },
-  // Also handle main with configureAudio before start
-  {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;[^}]*\w+\.start\s*\(\s*\)\s*;\s*(?:return\s+0\s*;\s*)?\}/g,
-    replacement: 'ALLOLIB_WEB_MAIN($1)',
-    description: 'Convert main() with configureAudio to ALLOLIB_WEB_MAIN'
   },
 
   // Main macro to function (for native export)
@@ -591,8 +586,7 @@ function findAppClasses(code: string): Set<string> {
 
 /**
  * Robust main() → ALLOLIB_WEB_MAIN converter using brace-counting.
- * Handles all variations: argc/argv, setup calls (dimensions, configureAudio, etc.),
- * with or without return 0, multiline formatting, pre-start helper calls, etc.
+ * Matches two strict patterns: `Type().start()` and `Type var; var.start()`.
  * Only converts when the class used in main() is verified to extend App.
  * Returns the converted code, or null if no App .start() pattern was found.
  */
@@ -689,6 +683,8 @@ export function transpileToWeb(code: string): TranspileResult {
     const converted = convertMainToWebMacro(result)
     if (converted) {
       result = converted
+    } else {
+      console.warn('[transpiler] main() found but convertMainToWebMacro could not inject ALLOLIB_WEB_MAIN')
     }
   }
 
