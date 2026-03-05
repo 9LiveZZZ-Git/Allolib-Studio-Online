@@ -301,6 +301,9 @@ public:
 private:
 #ifdef ALLOLIB_WEBGPU
     void createInternal(GraphicsBackend& backend, const char* wgslSource, int uniformSize, bool withVertexLayout) {
+        if (mCreated) {
+            destroy();
+        }
         mBackend = dynamic_cast<WebGPUBackend*>(&backend);
         if (!mBackend) {
             printf("[FullscreenShader] ERROR: Backend is not WebGPU\n");
@@ -458,14 +461,16 @@ private:
         }
 
         // Additional bindings: textures and samplers
+        // Each binding index must be unique — texture and sampler at same slot
+        // cannot share a binding number. Texture takes priority if both exist.
         for (int i = 0; i < 7; i++) {
+            int bindingIdx = i + 1;
             if (mTextureViews[i]) {
-                entries[entryCount].binding = i + 1;
+                entries[entryCount].binding = bindingIdx;
                 entries[entryCount].textureView = mTextureViews[i];
                 entryCount++;
-            }
-            if (mSamplers[i]) {
-                entries[entryCount].binding = i + 1;
+            } else if (mSamplers[i]) {
+                entries[entryCount].binding = bindingIdx;
                 entries[entryCount].sampler = mSamplers[i];
                 entryCount++;
             }
@@ -478,11 +483,12 @@ private:
         bgDesc.entries = entries;
 
         mBindGroup = wgpuDeviceCreateBindGroup(device, &bgDesc);
-        mBindGroupDirty = false;
-
         if (!mBindGroup) {
             printf("[FullscreenShader] WARNING: Failed to create bind group\n");
+            mBindGroupDirty = true;
+            return;
         }
+        mBindGroupDirty = false;
     }
 
     WebGPUBackend* mBackend = nullptr;

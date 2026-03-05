@@ -192,10 +192,10 @@ class AudioVisualBridge {
     int mSampleRate = 0;
 
     // Beat detection state (CPU-side)
-    float mBeatHistory[64];
+    float mBeatHistory[64] = {};
     int mBeatHistoryIdx = 0;
     float mBeatSensitivity = 1.5f;
-    AudioFeatures mCurrent;
+    AudioFeatures mCurrent{};
     bool mCreated = false;
 
     // Readback buffer for magnitudes
@@ -205,6 +205,13 @@ public:
     AudioVisualBridge() = default;
 
     void create(GraphicsBackend& backend, int fftSize = 1024, int sampleRate = 44100) {
+        if (mCreated) {
+            destroy();
+        }
+        if (fftSize <= 0 || sampleRate <= 0) {
+            printf("[AudioVisualBridge] Invalid params: fftSize=%d, sampleRate=%d\n", fftSize, sampleRate);
+            return;
+        }
         mBackend = &backend;
         mFFTSize = fftSize;
         mSampleRate = sampleRate;
@@ -239,6 +246,7 @@ public:
 
     /// Push audio samples (call from onSound)
     void pushAudio(const float* samples, int count) {
+        if (!mCreated || !samples || count <= 0) return;
         mRing.pushSamples(samples, count);
     }
 
@@ -284,7 +292,7 @@ public:
         mFeaturesBuffer.upload(&mCurrent, 1);
 
         // 7. Copy current magnitudes → prev for next frame's flux
-        // Readback magnitudes and re-upload to prev buffer
+        // TODO: Replace with GPU-side buffer copy when backend supports copyBufferToBuffer()
         mFFT.readbackMagnitudes(mMagReadback);
         mPrevMagnitudes.upload(mMagReadback);
     }

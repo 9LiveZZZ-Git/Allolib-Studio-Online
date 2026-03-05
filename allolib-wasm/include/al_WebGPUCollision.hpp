@@ -332,7 +332,7 @@ public:
 
     /// Apply collisions to the particle system
     void apply(ParticleSystem& ps, float dt) {
-        if (!mCreated || mParams.colliderCount == 0) return;
+        if (!mCreated || !mBackend || mParams.colliderCount == 0) return;
 
         mParams.particleCount = (uint32_t)ps.maxParticles();
         mParams.deltaTime = dt;

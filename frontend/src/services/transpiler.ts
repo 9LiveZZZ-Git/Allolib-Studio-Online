@@ -418,8 +418,8 @@ const webToNativePatterns: Array<{
     description: 'Base class WebApp'
   },
 
-  // Convert simple main() to ALLOLIB_WEB_MAIN for WebApp classes
-  // This is crucial for WASM exports to work correctly
+  // Normalize main() variants to ALLOLIB_WEB_MAIN, then expand below to canonical main()
+  // This ensures a consistent main() body regardless of the original format
   {
     pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;\s*\w+\.start\s*\(\s*\)\s*;\s*(?:return\s+0\s*;\s*)?\}/g,
     replacement: 'ALLOLIB_WEB_MAIN($1)',
