@@ -81,7 +81,7 @@ public:
      */
     WGPUBuffer uploadMesh(const void* interleavedData, size_t dataSize) {
 #ifdef ALLOLIB_WEBGPU
-        if (!mBackend) return nullptr;
+        if (!mBackend || (!interleavedData && dataSize > 0)) return nullptr;
         WGPUBufferDescriptor desc = {};
         desc.label = "custom_vertex_buffer";
         desc.size = (dataSize + 3) & ~3;
@@ -102,7 +102,7 @@ public:
      */
     WGPUBuffer uploadIndices(const uint32_t* indices, size_t count) {
 #ifdef ALLOLIB_WEBGPU
-        if (!mBackend) return nullptr;
+        if (!mBackend || (!indices && count > 0)) return nullptr;
         size_t dataSize = count * sizeof(uint32_t);
         WGPUBufferDescriptor desc = {};
         desc.label = "custom_index_buffer";
@@ -127,12 +127,13 @@ public:
 #ifdef ALLOLIB_WEBGPU
         if (!mUniformBuffer || !mBackend) return;
         const size_t bytes = sizeof(T);
+        const size_t alignedBytes = (bytes + 3) & ~3;  // WebGPU requires 4-byte alignment
         const size_t allocatedSize = ((size_t)mUniformSize + 15) & ~15;
-        if (mUniformSize <= 0 || bytes > allocatedSize) {
+        if (mUniformSize <= 0 || alignedBytes > allocatedSize) {
             printf("[FullscreenShader] ERROR: uniform upload too large (%zu > %d)\n", bytes, mUniformSize);
             return;
         }
-        wgpuQueueWriteBuffer(mBackend->getQueue(), mUniformBuffer, 0, &data, bytes);
+        wgpuQueueWriteBuffer(mBackend->getQueue(), mUniformBuffer, 0, &data, alignedBytes);
 #else
         (void)data;
 #endif
@@ -191,7 +192,7 @@ public:
     }
 
     /**
-     * Draw a fullscreen triangle (3 vertices, no vertex buffer needed).
+     * Draw a fullscreen quad (6 vertices, no vertex buffer needed).
      */
     void drawFullscreen() {
 #ifdef ALLOLIB_WEBGPU
@@ -305,6 +306,11 @@ private:
         mBindGroupDirty = true;
         std::memset(mTextureViews, 0, sizeof(mTextureViews));
         std::memset(mSamplers, 0, sizeof(mSamplers));
+
+        if (!wgslSource) {
+            printf("[FullscreenShader] ERROR: wgslSource is null\n");
+            return;
+        }
 
         mBackend = dynamic_cast<WebGPUBackend*>(&backend);
         if (!mBackend) {
@@ -476,6 +482,9 @@ private:
         for (int i = 0; i < 7; i++) {
             int bindingIdx = i + 1;
             if (mTextureViews[i]) {
+                if (mSamplers[i]) {
+                    printf("[FullscreenShader] WARNING: binding %d has both texture and sampler, sampler ignored\n", bindingIdx);
+                }
                 entries[entryCount].binding = bindingIdx;
                 entries[entryCount].textureView = mTextureViews[i];
                 entryCount++;

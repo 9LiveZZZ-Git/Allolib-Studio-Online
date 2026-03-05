@@ -116,12 +116,16 @@ fn sdfBox(p: vec3f, center: vec3f, halfExtents: vec3f) -> f32 {
 }
 
 fn sdfBoxNormal(p: vec3f, center: vec3f, halfExtents: vec3f) -> vec3f {
-    let d = abs(p - center) - halfExtents;
-    let s = sign(p - center);
+    let delta = p - center;
+    let d = abs(delta) - halfExtents;
+    // Use select to ensure non-zero sign (sign(0)=0 would give zero normal)
+    let sx = select(-1.0, 1.0, delta.x >= 0.0);
+    let sy = select(-1.0, 1.0, delta.y >= 0.0);
+    let sz = select(-1.0, 1.0, delta.z >= 0.0);
     // Find the closest face
-    if (d.x > d.y && d.x > d.z) { return vec3f(s.x, 0.0, 0.0); }
-    if (d.y > d.z) { return vec3f(0.0, s.y, 0.0); }
-    return vec3f(0.0, 0.0, s.z);
+    if (d.x > d.y && d.x > d.z) { return vec3f(sx, 0.0, 0.0); }
+    if (d.y > d.z) { return vec3f(0.0, sy, 0.0); }
+    return vec3f(0.0, 0.0, sz);
 }
 
 // SDF: Plane
@@ -227,6 +231,9 @@ public:
     SDFCollisionSystem() = default;
 
     void create(GraphicsBackend& backend) {
+        if (mCreated) {
+            destroy();
+        }
         mBackend = &backend;
         mShader.create(backend, kSDFCollisionWGSL);
         mParamsBuffer.create(backend);

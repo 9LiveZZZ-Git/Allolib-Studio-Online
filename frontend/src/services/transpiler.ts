@@ -159,17 +159,8 @@ const nativeToWebPatterns: Array<{
     replacement: 'ALLOLIB_WEB_MAIN($1)',
     description: 'Main function with argc/argv'
   },
-  // Main function transformations (without return 0) - common in many AlloLib examples
-  {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\(\s*\)\.start\s*\(\s*\)\s*;\s*\}/g,
-    replacement: 'ALLOLIB_WEB_MAIN($1)',
-    description: 'One-liner main: MyApp().start();'
-  },
-  {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;\s*\}/g,
-    replacement: 'ALLOLIB_WEB_MAIN($1)',
-    description: 'Simple main without return 0'
-  },
+  // Non-return-0 main() forms are handled by convertMainToWebMacro(),
+  // which verifies App inheritance via findAppClasses().
 
   // Audio configuration
   {
@@ -648,9 +639,9 @@ export function transpileToWeb(code: string): TranspileResult {
   // Check if already web code
   const codeType = detectCodeType(code)
 
-  // Always ensure main() is converted to ALLOLIB_WEB_MAIN for WebApp classes
-  // This is required for WASM exports to work correctly
-  // Uses robust brace-counting converter that handles all main() variations
+  // Try to convert main() to ALLOLIB_WEB_MAIN using brace-counting converter.
+  // Only handles two strict patterns: Type().start() and Type var; var.start()
+  // convertMainToWebMacro() verifies the class extends App before converting.
   const mainConverted = !result.includes('ALLOLIB_WEB_MAIN') && /int\s+main\s*\(/.test(result)
     ? convertMainToWebMacro(result) : null
   if (mainConverted) {
@@ -684,6 +675,7 @@ export function transpileToWeb(code: string): TranspileResult {
     if (converted) {
       result = converted
     } else {
+      warnings.push('Could not convert int main() to ALLOLIB_WEB_MAIN. Please rewrite main() as ALLOLIB_WEB_MAIN(AppClass) for web export.')
       console.warn('[transpiler] main() found but convertMainToWebMacro could not inject ALLOLIB_WEB_MAIN')
     }
   }

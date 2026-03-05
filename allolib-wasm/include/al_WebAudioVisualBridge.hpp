@@ -208,8 +208,8 @@ public:
         if (mCreated) {
             destroy();
         }
-        if (fftSize <= 0 || sampleRate <= 0) {
-            printf("[AudioVisualBridge] Invalid params: fftSize=%d, sampleRate=%d\n", fftSize, sampleRate);
+        if (fftSize < 2 || sampleRate <= 0 || (fftSize & (fftSize - 1)) != 0) {
+            printf("[AudioVisualBridge] Invalid params: fftSize=%d (must be power-of-2 >= 2), sampleRate=%d\n", fftSize, sampleRate);
             return;
         }
         mBackend = &backend;
@@ -239,6 +239,11 @@ public:
         memset(&mCurrent, 0, sizeof(mCurrent));
 
         mMagReadback.resize(numBins, 0.0f);
+
+        if (!mFeatureShader.valid()) {
+            printf("[AudioVisualBridge] ERROR: Feature extraction shader creation failed\n");
+            return;
+        }
 
         mCreated = true;
         printf("[AudioVisualBridge] Created: %d-point FFT, %d Hz sample rate\n", fftSize, sampleRate);
