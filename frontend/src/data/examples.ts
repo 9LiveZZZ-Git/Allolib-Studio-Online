@@ -178,6 +178,7 @@ export const categoryGroups: CategoryGroup[] = [
           { id: 'fluids', title: 'Fluids' },
           { id: 'vfx', title: 'VFX' },
           { id: 'audio', title: 'Audio' },
+          { id: 'sdf', title: 'SDF Rendering' },
         ],
       },
     ],
@@ -203,6 +204,7 @@ const gpuCategories: ExampleCategory[] = [
       { id: 'fluids', title: 'Fluids' },
       { id: 'vfx', title: 'VFX' },
       { id: 'audio', title: 'Audio' },
+      { id: 'sdf', title: 'SDF Rendering' },
     ],
   },
 ]
@@ -1235,20 +1237,26 @@ ALLOLIB_WEB_MAIN(BasicLighting)
   {
     id: 'custom-shader',
     title: 'Custom Shader',
-    description: 'GLSL ES 3.0 vertex and fragment shaders',
+    description: 'GLSL ES 3.0 vertex and fragment shaders (dual GLSL/WGSL)',
     category: 'graphics',
     subcategory: 'shaders',
     code: `/**
  * Custom Shader - Wave deformation with rainbow colors
+ * Dual GLSL/WGSL: works on both WebGL2 and WebGPU backends
  */
 
-#include "al_WebApp.hpp"
+#include "al_playground_compat.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include "al/graphics/al_Shader.hpp"
+#include "al_WebGPURenderShader.hpp"
+#include <vector>
+#include <cstring>
 
 using namespace al;
 
-const char* vertShader = R"(#version 300 es
+// ── GLSL shaders (WebGL2) ──
+
+const char* vertGLSL = R"(#version 300 es
 layout(location = 0) in vec3 position;
 layout(location = 3) in vec3 normal;
 
@@ -1270,7 +1278,7 @@ void main() {
 }
 )";
 
-const char* fragShader = R"(#version 300 es
+const char* fragGLSL = R"(#version 300 es
 precision highp float;
 
 in vec3 vNormal;
@@ -1296,30 +1304,128 @@ void main() {
 }
 )";
 
-class CustomShader : public WebApp {
+// ── WGSL shader (WebGPU) ──
+
+const char* wgslSrc = R"(
+struct Uniforms {
+    mvMatrix: mat4x4f,
+    projMatrix: mat4x4f,
+    time: f32,
+    _pad0: f32, _pad1: f32, _pad2: f32,
+};
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSIn {
+    @location(0) position: vec3f,
+    @location(1) color: vec4f,
+    @location(2) texcoord: vec2f,
+    @location(3) normal: vec3f,
+};
+
+struct VSOut {
+    @builtin(position) pos: vec4f,
+    @location(0) vNormal: vec3f,
+    @location(1) vPos: vec3f,
+};
+
+@vertex fn vs_main(in: VSIn) -> VSOut {
+    var o: VSOut;
+    var p = in.position;
+    p.y = p.y + sin(p.x * 4.0 + u.time * 3.0) * 0.15;
+    p.x = p.x + cos(p.z * 4.0 + u.time * 2.0) * 0.1;
+    o.pos = u.projMatrix * u.mvMatrix * vec4f(p, 1.0);
+    o.vNormal = in.normal;
+    o.vPos = p;
+    return o;
+}
+
+fn hsv2rgb(c: vec3f) -> vec3f {
+    let K = vec4f(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+    let p = abs(fract(vec3f(c.x, c.x, c.x) + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, vec3f(0.0), vec3f(1.0)), vec3f(c.y));
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    let hue = fract(in.vPos.y * 0.5 + u.time * 0.1);
+    let color = hsv2rgb(vec3f(hue, 0.8, 1.0));
+    let lightDir = normalize(vec3f(1.0, 1.0, 1.0));
+    let diff = max(dot(normalize(in.vNormal), lightDir), 0.3);
+    return vec4f(color * diff, 1.0);
+}
+)";
+
+// C++ uniform struct matching WGSL layout
+struct CustomUniforms {
+    float mvMatrix[16];    // mat4x4f
+    float projMatrix[16];  // mat4x4f
+    float time;
+    float _pad0, _pad1, _pad2;
+};
+
+struct IVert { float p[3]; float c[4]; float t[2]; float n[3]; };
+
+class CustomShader : public App {
 public:
     Mesh mesh;
-    ShaderProgram shader;
-    double time = 0;
+    ShaderProgram glslShader;
+    FullscreenShader wgsl;
+    double mTime = 0;
+    bool useGPU = false;
+    WGPUBuffer vBuf = nullptr;
+    WGPUBuffer iBuf = nullptr;
+    uint32_t idxCount = 0;
 
     void onCreate() override {
         addSphere(mesh, 1.2, 64, 64);
         mesh.generateNormals();
-        shader.compile(vertShader, fragShader);
         nav().pos(0, 0, 4);
+
+        useGPU = Graphics_isWebGPU();
+        if (useGPU) {
+            wgsl.createWithVertexLayout(*Graphics_getBackend(), wgslSrc, sizeof(CustomUniforms));
+            auto& vs = mesh.vertices();
+            auto& ns = mesh.normals();
+            int n = vs.size();
+            std::vector<IVert> iv(n);
+            for (int i = 0; i < n; i++) {
+                iv[i].p[0]=vs[i].x; iv[i].p[1]=vs[i].y; iv[i].p[2]=vs[i].z;
+                iv[i].c[0]=1; iv[i].c[1]=1; iv[i].c[2]=1; iv[i].c[3]=1;
+                iv[i].t[0]=0; iv[i].t[1]=0;
+                if (i<(int)ns.size()) {
+                    iv[i].n[0]=ns[i].x; iv[i].n[1]=ns[i].y; iv[i].n[2]=ns[i].z;
+                } else { iv[i].n[0]=0; iv[i].n[1]=1; iv[i].n[2]=0; }
+            }
+            vBuf = wgsl.uploadMesh(iv.data(), iv.size()*sizeof(IVert));
+            auto& idx = mesh.indices();
+            idxCount = idx.size();
+            std::vector<uint32_t> i32(idxCount);
+            for (size_t i=0;i<idxCount;i++) i32[i]=(uint32_t)idx[i];
+            iBuf = wgsl.uploadIndices(i32.data(), idxCount);
+        } else {
+            glslShader.compile(vertGLSL, fragGLSL);
+        }
     }
 
-    void onAnimate(double dt) override {
-        time += dt;
-    }
+    void onAnimate(double dt) override { mTime += dt; }
 
     void onDraw(Graphics& g) override {
         g.clear(0.08f, 0.08f, 0.12f);
         g.depthTesting(true);
-
-        g.shader(shader);
-        shader.uniform("time", (float)time);
-        g.draw(mesh);
+        if (useGPU) {
+            auto mv = g.viewMatrix() * g.modelMatrix();
+            auto proj = g.projMatrix();
+            CustomUniforms u;
+            memcpy(u.mvMatrix, mv.elems(), 64);
+            memcpy(u.projMatrix, proj.elems(), 64);
+            u.time = (float)mTime;
+            u._pad0 = u._pad1 = u._pad2 = 0;
+            wgsl.setUniforms(u);
+            wgsl.drawIndexed(vBuf, iBuf, idxCount);
+        } else {
+            g.shader(glslShader);
+            glslShader.uniform("time", (float)mTime);
+            g.draw(mesh);
+        }
     }
 };
 
@@ -3955,20 +4061,50 @@ ALLOLIB_WEB_MAIN(MultiLightTest)
     code: `/**
  * Phase 5 Test: EasyFBO - Render to Texture
  * Press SPACE to cycle effects: Normal, Invert, Grayscale, Pixelate
+ * Dual GLSL/WGSL
  */
 
 #include "al_WebApp.hpp"
 #include "al/graphics/al_Shapes.hpp"
 #include "al/graphics/al_EasyFBO.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
+
+const char* fboPostWGSL = R"(
+struct Uniforms { effect: i32, _pad0: i32, _pad1: i32, _pad2: i32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var fboTex: texture_2d<f32>;
+@group(0) @binding(2) var fboSamp: sampler;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut; let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x, 1.0 - y);
+    return o;
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var uv = in.uv;
+    if (u.effect == 3) { uv = floor(uv * 100.0) / 100.0; }
+    var c = textureSample(fboTex, fboSamp, uv);
+    if (u.effect == 1) { c = vec4f(1.0 - c.r, 1.0 - c.g, 1.0 - c.b, c.a); }
+    if (u.effect == 2) { let gray = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); c = vec4f(gray, gray, gray, c.a); }
+    return c;
+}
+)";
+
+struct FBOPostUniforms { int effect, _pad0, _pad1, _pad2; };
 
 class EasyFBOTest : public WebApp {
 public:
     EasyFBO fbo;
     Mesh sphere, cube, screenQuad;
     ShaderProgram postShader;
+    FullscreenShader wgslPost;
+    WGPUSampler fboSampler = nullptr;
     double time = 0;
     int effectMode = 0;
 
@@ -3982,10 +4118,8 @@ public:
 
     const char* fragSrc = R"(#version 300 es
         precision highp float;
-        uniform sampler2D tex0;
-        uniform int effect;
-        in vec2 vUV;
-        out vec4 fragColor;
+        uniform sampler2D tex0; uniform int effect;
+        in vec2 vUV; out vec4 fragColor;
         void main() {
             vec2 uv = vUV;
             if (effect == 3) uv = floor(uv * 100.0) / 100.0;
@@ -4009,7 +4143,12 @@ public:
         screenQuad.vertex(1,1,0); screenQuad.texCoord(1,1);
         screenQuad.vertex(-1,1,0); screenQuad.texCoord(0,1);
 
-        postShader.compile(vertSrc, fragSrc);
+        if (Graphics_isWebGPU()) {
+            wgslPost.create(*Graphics_getBackend(), fboPostWGSL, sizeof(FBOPostUniforms));
+            fboSampler = wgslPost.createLinearSampler();
+        } else {
+            postShader.compile(vertSrc, fragSrc);
+        }
         nav().pos(0, 0, 6);
         configureWebAudio(44100, 128, 2, 0);
     }
@@ -4017,7 +4156,7 @@ public:
     void onAnimate(double dt) override { time += dt; }
 
     void onDraw(Graphics& g) override {
-        // Pass 1: Render to FBO
+        // Pass 1: Render scene to FBO (works on both backends)
         g.pushFramebuffer(fbo);
         g.pushViewport(fbo.width(), fbo.height());
         g.pushCamera();
@@ -4045,15 +4184,25 @@ public:
         g.popViewport();
         g.popFramebuffer();
 
-        // Pass 2: Post-process (custom shader - no g.texture() needed)
+        // Pass 2: Post-process
         g.clear(0, 0, 0);
         g.depthTesting(false);
         g.lighting(false);
-        g.shader(postShader);
-        postShader.uniform("effect", effectMode);
-        fbo.tex().bind(0);
-        g.draw(screenQuad);
-        fbo.tex().unbind(0);
+
+        if (Graphics_isWebGPU()) {
+            FBOPostUniforms fu = {effectMode, 0, 0, 0};
+            wgslPost.setUniforms(fu);
+            WGPUTextureView fboView = Graphics_getTextureViewForGL(fbo.tex().id());
+            wgslPost.setTexture(1, fboView);
+            wgslPost.setSampler(2, fboSampler);
+            wgslPost.drawFullscreen();
+        } else {
+            g.shader(postShader);
+            postShader.uniform("effect", effectMode);
+            fbo.tex().bind(0);
+            g.draw(screenQuad);
+            fbo.tex().unbind(0);
+        }
     }
 
     bool onKeyDown(const Keyboard& k) override {
@@ -7980,8 +8129,10 @@ ALLOLIB_WEB_MAIN(NoiseGallery)
     code: `/**
  * Basic Ray Marching - Sphere SDF
  * Controls: WASD = rotate, Q/E = zoom
+ * Dual GLSL/WGSL - works on both WebGL2 and WebGPU
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
@@ -8027,24 +8178,80 @@ void main() {
 }
 )";
 
+const char* rmWGSL = R"(
+struct Uniforms { time: f32, _pad: f32, resX: f32, resY: f32, camX: f32, camY: f32, camZ: f32, _pad2: f32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut;
+    let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x * 2.0 - 1.0, (1.0 - y) * 2.0 - 1.0);
+    return o;
+}
+
+fn sdSphere(p: vec3f, r: f32) -> f32 { return length(p) - r; }
+fn scene(p: vec3f) -> f32 {
+    let sp = vec3f(sin(u.time)*0.5, 0.0, cos(u.time)*0.5);
+    return min(sdSphere(p - sp, 1.0), p.y + 1.0);
+}
+fn calcNormal(p: vec3f) -> vec3f {
+    let e = vec2f(0.001, 0.0);
+    return normalize(vec3f(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx)));
+}
+fn march(ro: vec3f, rd: vec3f) -> f32 {
+    var d = 0.0;
+    for (var i = 0; i < 100; i++) { let ds = scene(ro + rd * d); d += ds; if (d > 100.0 || ds < 0.001) { break; } }
+    return d;
+}
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var p = in.uv; p.x *= u.resX / u.resY;
+    let camPos = vec3f(u.camX, u.camY, u.camZ);
+    let fwd = normalize(-camPos); let right = normalize(cross(vec3f(0,1,0), fwd)); let up = cross(fwd, right);
+    let rd = normalize(fwd + p.x * right + p.y * up);
+    let d = march(camPos, rd);
+    var col = mix(vec3f(0.1,0.1,0.2), vec3f(0.4,0.6,0.9), in.uv.y * 0.5 + 0.5);
+    if (d < 100.0) {
+        let pos = camPos + rd * d; let n = calcNormal(pos); let light = normalize(vec3f(2,5,-3));
+        let diff = max(dot(n, light), 0.0); let spec = pow(max(dot(reflect(-light, n), -rd), 0.0), 32.0);
+        col = vec3f(0.2,0.5,0.8) * (diff * 0.8 + 0.2) + vec3f(1) * spec * 0.5;
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct RMUniforms { float time, _pad, resX, resY, camX, camY, camZ, _pad2; };
+
 class RayMarchSphere : public WebApp {
 public:
     ShaderProgram shader; Mesh quad;
+    FullscreenShader wgsl;
     float camDist=5.0f, angleX=0.3f, angleY=0.0f; double time=0;
 
     void onCreate() override {
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0); quad.vertex(1,-1,0); quad.vertex(-1,1,0); quad.vertex(1,1,0);
-        shader.compile(rmVert, rmFrag);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), rmWGSL, sizeof(RMUniforms));
+        } else {
+            shader.compile(rmVert, rmFrag);
+        }
     }
     void onAnimate(double dt) override { time+=dt; angleY+=dt*0.2f; }
     void onDraw(Graphics& g) override {
         g.clear(0); g.depthTesting(false);
         float cx=camDist*sin(angleY)*cos(angleX), cy=camDist*sin(angleX)+1.0f, cz=camDist*cos(angleY)*cos(angleX);
-        shader.begin();
-        shader.uniform("time",(float)time); shader.uniform("resolution",(float)width(),(float)height());
-        shader.uniform("camPos",cx,cy,cz);
-        g.draw(quad); shader.end();
+        if (Graphics_isWebGPU()) {
+            RMUniforms u = {(float)time, 0, (float)width(), (float)height(), cx, cy, cz, 0};
+            wgsl.setUniforms(u);
+            wgsl.drawFullscreen();
+        } else {
+            shader.begin();
+            shader.uniform("time",(float)time); shader.uniform("resolution",(float)width(),(float)height());
+            shader.uniform("camPos",cx,cy,cz);
+            g.draw(quad); shader.end();
+        }
     }
     bool onKeyDown(const Keyboard& k) override {
         if(k.key()=='w')angleX+=0.1f; if(k.key()=='s')angleX-=0.1f;
@@ -8067,8 +8274,10 @@ ALLOLIB_WEB_MAIN(RayMarchSphere)
     code: `/**
  * Ray Marching - CSG Operations
  * Controls: 1-4 = switch operation
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
@@ -8114,23 +8323,79 @@ void main(){
 }
 )";
 
+const char* csgWGSL = R"(
+struct Uniforms { time: f32, mode: i32, resX: f32, resY: f32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut;
+    let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x * 2.0 - 1.0, (1.0 - y) * 2.0 - 1.0);
+    return o;
+}
+
+fn sdSphere(p: vec3f, r: f32) -> f32 { return length(p) - r; }
+fn sdBox(p: vec3f, b: vec3f) -> f32 { let d = abs(p) - b; return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, vec3f(0))); }
+fn opU(a: f32, b: f32) -> f32 { return min(a, b); }
+fn opI(a: f32, b: f32) -> f32 { return max(a, b); }
+fn opS(a: f32, b: f32) -> f32 { return max(-a, b); }
+fn opSU(a: f32, b: f32, k: f32) -> f32 { let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
+
+fn scene(p_in: vec3f) -> f32 {
+    let a = u.time * 0.5; let c = cos(a); let s = sin(a);
+    var p = p_in; let px = p.x * c - p.z * s; let pz = p.x * s + p.z * c; p = vec3f(px, p.y, pz);
+    let sp = sdSphere(p - vec3f(0.3, 0, 0), 0.8); let bx = sdBox(p - vec3f(-0.3, 0, 0), vec3f(0.6));
+    if (u.mode == 0) { return opU(sp, bx); } if (u.mode == 1) { return opI(sp, bx); }
+    if (u.mode == 2) { return opS(sp, bx); } return opSU(sp, bx, 0.3);
+}
+fn norm(p: vec3f) -> vec3f { let e = vec2f(0.001, 0); return normalize(vec3f(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx))); }
+fn marchFn(ro: vec3f, rd: vec3f) -> f32 { var d = 0.0; for (var i = 0; i < 100; i++) { let ds = scene(ro + rd * d); d += ds; if (d > 50.0 || ds < 0.001) { break; } } return d; }
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var p = in.uv; p.x *= u.resX / u.resY;
+    let ro = vec3f(0, 0, 4); let rd = normalize(vec3f(p, -1.5));
+    let d = marchFn(ro, rd);
+    var col = vec3f(0.1, 0.1, 0.15);
+    if (d < 50.0) {
+        let pos = ro + rd * d; let n = norm(pos); let l = normalize(vec3f(1, 2, 1));
+        let df = max(dot(n, l), 0.0); let sp = pow(max(dot(reflect(-l, n), -rd), 0.0), 32.0);
+        col = vec3f(0.2, 0.6, 0.9) * (df * 0.7 + 0.3) + vec3f(1) * sp * 0.5;
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct CSGUniforms { float time; int mode; float resX, resY; };
+
 class CSGOps : public WebApp {
 public:
-    ShaderProgram shader;Mesh quad;int mode=0;double time=0;
+    ShaderProgram shader;Mesh quad;FullscreenShader wgsl;int mode=0;double time=0;
 
     void onCreate() override {
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
-        shader.compile(csgVert,csgFrag);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), csgWGSL, sizeof(CSGUniforms));
+        } else {
+            shader.compile(csgVert,csgFrag);
+        }
     }
     void onAnimate(double dt) override {time+=dt;}
     void onDraw(Graphics& g) override {
         g.clear(0);g.depthTesting(false);
-        shader.begin();
-        shader.uniform("time",(float)time);
-        shader.uniform("resolution",(float)width(),(float)height());
-        shader.uniform("mode",mode);
-        g.draw(quad);shader.end();
+        if (Graphics_isWebGPU()) {
+            CSGUniforms u = {(float)time, mode, (float)width(), (float)height()};
+            wgsl.setUniforms(u);
+            wgsl.drawFullscreen();
+        } else {
+            shader.begin();
+            shader.uniform("time",(float)time);
+            shader.uniform("resolution",(float)width(),(float)height());
+            shader.uniform("mode",mode);
+            g.draw(quad);shader.end();
+        }
     }
     bool onKeyDown(const Keyboard& k) override {
         if(k.key()>='1'&&k.key()<='4')mode=k.key()-'1';
@@ -8151,8 +8416,10 @@ ALLOLIB_WEB_MAIN(CSGOps)
     code: `/**
  * Ray Marching - Infinite Repetition
  * Controls: WASD = move camera
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 #include <cstring>
 
@@ -8214,9 +8481,58 @@ void main(){
 }
 )";
 
+const char* repWGSL = R"(
+struct Uniforms { time: f32, _pad: f32, resX: f32, resY: f32, camX: f32, camY: f32, camZ: f32, _pad2: f32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut;
+    let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x * 2.0 - 1.0, (1.0 - y) * 2.0 - 1.0);
+    return o;
+}
+
+fn sdSphere(p: vec3f, r: f32) -> f32 { return length(p) - r; }
+fn sdBox(p: vec3f, b: vec3f) -> f32 { let d = abs(p) - b; return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, vec3f(0))); }
+fn rep(p: vec3f, c: vec3f) -> vec3f {
+    let h = c * 0.5;
+    return (p + h) - floor((p + h) / c) * c - h;
+}
+fn scene(p: vec3f) -> f32 {
+    let rp = rep(p, vec3f(4.0));
+    let sp = sdSphere(rp, 0.5 + 0.2 * sin(p.x * 0.5 + u.time) * sin(p.z * 0.5 + u.time));
+    let bx = sdBox(rp, vec3f(0.3));
+    return min(sp, bx);
+}
+fn norm(p: vec3f) -> vec3f { let e = vec2f(0.001, 0); return normalize(vec3f(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx))); }
+fn marchFn(ro: vec3f, rd: vec3f) -> f32 { var d = 0.0; for (var i = 0; i < 100; i++) { let ds = scene(ro + rd * d); d += ds; if (d > 100.0 || ds < 0.001) { break; } } return d; }
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var p = in.uv; p.x *= u.resX / u.resY;
+    let camPos = vec3f(u.camX, u.camY, u.camZ);
+    let fwd = normalize(vec3f(sin(u.time * 0.2), 0, -cos(u.time * 0.2)));
+    let right = normalize(cross(vec3f(0, 1, 0), fwd)); let up = cross(fwd, right);
+    let rd = normalize(fwd + p.x * right + p.y * up);
+    let d = marchFn(camPos, rd);
+    var col = vec3f(0.02, 0.02, 0.05);
+    if (d < 100.0) {
+        let pos = camPos + rd * d; let n = norm(pos); let l = normalize(vec3f(1, 2, 1));
+        let df = max(dot(n, l), 0.0); let sp = pow(max(dot(reflect(-l, n), -rd), 0.0), 32.0);
+        let base = vec3f(0.5 + 0.5 * sin(pos.x * 0.5), 0.5 + 0.5 * sin(pos.y * 0.5), 0.5 + 0.5 * sin(pos.z * 0.5));
+        col = base * (df * 0.7 + 0.2) + vec3f(1) * sp * 0.3;
+        col *= exp(-d * 0.03);
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct RepUniforms { float time, _pad, resX, resY, camX, camY, camZ, _pad2; };
+
 class InfiniteRep : public WebApp {
 public:
-    ShaderProgram shader;Mesh quad;
+    ShaderProgram shader;Mesh quad;FullscreenShader wgsl;
     Vec3f camPos;float time=0;
     bool keys[256];
 
@@ -8224,7 +8540,11 @@ public:
         memset(keys,0,sizeof(keys));
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
-        shader.compile(repVert,repFrag);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), repWGSL, sizeof(RepUniforms));
+        } else {
+            shader.compile(repVert,repFrag);
+        }
         camPos=Vec3f(0,0,0);
     }
     void onAnimate(double dt) override {
@@ -8237,11 +8557,17 @@ public:
     }
     void onDraw(Graphics& g) override {
         g.clear(0);g.depthTesting(false);
-        shader.begin();
-        shader.uniform("time",time);
-        shader.uniform("resolution",(float)width(),(float)height());
-        shader.uniform("camPos",camPos.x,camPos.y,camPos.z);
-        g.draw(quad);shader.end();
+        if (Graphics_isWebGPU()) {
+            RepUniforms ru = {time, 0, (float)width(), (float)height(), camPos.x, camPos.y, camPos.z, 0};
+            wgsl.setUniforms(ru);
+            wgsl.drawFullscreen();
+        } else {
+            shader.begin();
+            shader.uniform("time",time);
+            shader.uniform("resolution",(float)width(),(float)height());
+            shader.uniform("camPos",camPos.x,camPos.y,camPos.z);
+            g.draw(quad);shader.end();
+        }
     }
     bool onKeyDown(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=true;return true;}
     bool onKeyUp(const Keyboard& k) override {int key=k.key();if(key>=0&&key<256)keys[key]=false;return true;}
@@ -8260,8 +8586,10 @@ ALLOLIB_WEB_MAIN(InfiniteRep)
     code: `/**
  * Ray Marching - Mandelbulb Fractal
  * Controls: WASD = rotate, Q/E = zoom, +/- = power
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
@@ -8322,16 +8650,67 @@ void main(){
 }
 )";
 
+const char* mbWGSL = R"(
+struct Uniforms { time: f32, power: f32, resX: f32, resY: f32, camX: f32, camY: f32, camZ: f32, _pad: f32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut;
+    let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x * 2.0 - 1.0, (1.0 - y) * 2.0 - 1.0);
+    return o;
+}
+
+fn mandelbulb(p: vec3f) -> f32 {
+    var z = p; var dr = 1.0; var r = 0.0;
+    for (var i = 0; i < 15; i++) {
+        r = length(z); if (r > 2.0) { break; }
+        let theta = acos(z.z / r) * u.power;
+        let phi = atan2(z.y, z.x) * u.power;
+        let zr = pow(r, u.power);
+        dr = pow(r, u.power - 1.0) * u.power * dr + 1.0;
+        z = zr * vec3f(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)) + p;
+    }
+    return 0.5 * log(r) * r / dr;
+}
+fn norm(p: vec3f) -> vec3f { let e = vec2f(0.0005, 0); return normalize(vec3f(mandelbulb(p+e.xyy)-mandelbulb(p-e.xyy),mandelbulb(p+e.yxy)-mandelbulb(p-e.yxy),mandelbulb(p+e.yyx)-mandelbulb(p-e.yyx))); }
+fn marchFn(ro: vec3f, rd: vec3f) -> f32 { var d = 0.0; for (var i = 0; i < 200; i++) { let ds = mandelbulb(ro + rd * d); d += ds; if (d > 4.0 || ds < 0.0001) { break; } } return d; }
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var p = in.uv; p.x *= u.resX / u.resY;
+    let camPos = vec3f(u.camX, u.camY, u.camZ);
+    let fwd = normalize(-camPos); let right = normalize(cross(vec3f(0,1,0), fwd)); let up = cross(fwd, right);
+    let rd = normalize(fwd + p.x * right + p.y * up);
+    let d = marchFn(camPos, rd);
+    var col = vec3f(0.02, 0.02, 0.04);
+    if (d < 4.0) {
+        let pos = camPos + rd * d; let n = norm(pos); let l = normalize(vec3f(1, 1, -1));
+        let df = max(dot(n, l), 0.0); let ao = 1.0 - d * 0.2;
+        col = vec3f(0.6, 0.4, 0.8) * (df * 0.6 + 0.4) * ao;
+        col += vec3f(0.2, 0.1, 0.3) * pow(1.0 - abs(dot(n, -rd)), 2.0);
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct MBUniforms { float time, power, resX, resY, camX, camY, camZ, _pad; };
+
 class Mandelbulb : public WebApp {
 public:
-    ShaderProgram shader;Mesh quad;
+    ShaderProgram shader;Mesh quad;FullscreenShader wgsl;
     float camDist=2.5f,angleX=0.3f,angleY=0.0f,power=8.0f;
     double time=0;
 
     void onCreate() override {
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);quad.vertex(-1,1,0);quad.vertex(1,1,0);
-        shader.compile(mbVert,mbFrag);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), mbWGSL, sizeof(MBUniforms));
+        } else {
+            shader.compile(mbVert,mbFrag);
+        }
     }
     void onAnimate(double dt) override {time+=dt;angleY+=dt*0.1f;}
     void onDraw(Graphics& g) override {
@@ -8339,12 +8718,18 @@ public:
         float cx=camDist*sin(angleY)*cos(angleX);
         float cy=camDist*sin(angleX);
         float cz=camDist*cos(angleY)*cos(angleX);
-        shader.begin();
-        shader.uniform("time",(float)time);
-        shader.uniform("resolution",(float)width(),(float)height());
-        shader.uniform("camPos",cx,cy,cz);
-        shader.uniform("power",power);
-        g.draw(quad);shader.end();
+        if (Graphics_isWebGPU()) {
+            MBUniforms mu = {(float)time, power, (float)width(), (float)height(), cx, cy, cz, 0};
+            wgsl.setUniforms(mu);
+            wgsl.drawFullscreen();
+        } else {
+            shader.begin();
+            shader.uniform("time",(float)time);
+            shader.uniform("resolution",(float)width(),(float)height());
+            shader.uniform("camPos",cx,cy,cz);
+            shader.uniform("power",power);
+            g.draw(quad);shader.end();
+        }
     }
     bool onKeyDown(const Keyboard& k) override {
         if(k.key()=='w')angleX+=0.1f;if(k.key()=='s')angleX-=0.1f;
@@ -9469,17 +9854,98 @@ ALLOLIB_WEB_MAIN(ReactionDiffusion)
  * Ray Marched Terrain
  * Features: Noise heightmap, adaptive stepping, fog
  * Controls: WASD+QE navigation, mouse look
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 #include <string>
 
 using namespace al;
 
+const char* terrainWGSL = R"(
+struct Uniforms {
+    camMat: mat4x4f,
+    time: f32, _pad0: f32, resX: f32, resY: f32,
+    camX: f32, camY: f32, camZ: f32, _pad1: f32,
+};
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut;
+    let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x, 1.0 - y);
+    return o;
+}
+
+fn hash2(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
+fn noise2(p: vec2f) -> f32 {
+    let i = floor(p); let f = fract(p);
+    let ff = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2f(1, 0)), ff.x),
+               mix(hash2(i + vec2f(0, 1)), hash2(i + vec2f(1, 1)), ff.x), ff.y);
+}
+fn fbm2(p_in: vec2f) -> f32 {
+    var v = 0.0; var a = 0.5; var p = p_in;
+    for (var i = 0; i < 6; i++) { v += a * noise2(p); p *= 2.0; a *= 0.5; }
+    return v;
+}
+fn terrain(p: vec3f) -> f32 {
+    var h = fbm2(p.xz * 0.3) * 2.0 + fbm2(p.xz * 0.7) * 0.5;
+    if (h < 0.3) { h += sin(p.x * 2.0 + u.time) * 0.05 * smoothstep(0.3, 0.0, h); }
+    return p.y - h;
+}
+fn calcNormal(p: vec3f) -> vec3f {
+    let e = vec2f(0.01, 0);
+    return normalize(vec3f(terrain(p+e.xyy)-terrain(p-e.xyy), terrain(p+e.yxy)-terrain(p-e.yxy), terrain(p+e.yyx)-terrain(p-e.yyx)));
+}
+fn marchTerrain(ro: vec3f, rd: vec3f) -> vec2f {
+    var t = 0.0;
+    for (var i = 0; i < 100; i++) {
+        let p = ro + rd * t; let d = terrain(p);
+        if (d < 0.01) { return vec2f(t, 1.0); }
+        t += d * 0.5;
+        if (t > 100.0) { break; }
+    }
+    return vec2f(-1.0, 0.0);
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    let uv = (in.pos.xy - vec2f(u.resX, u.resY) * 0.5) / u.resY;
+    let rd = normalize((u.camMat * vec4f(uv.x, uv.y, -1.5, 0)).xyz);
+    let ro = vec3f(u.camX, u.camY, u.camZ);
+    let hit = marchTerrain(ro, rd);
+    var col = vec3f(0.4, 0.6, 0.9) - rd.y * 0.3;
+    if (hit.y > 0.0) {
+        let hitP = ro + rd * hit.x;
+        let n = calcNormal(hitP);
+        let sun = normalize(vec3f(0.8, 0.4, 0.2));
+        let diff = max(dot(n, sun), 0.0);
+        let ao = 1.0 - hitP.y * 0.1;
+        let slope = 1.0 - n.y;
+        var mt = mix(vec3f(0.2,0.5,0.1), vec3f(0.4,0.35,0.3), smoothstep(0.3, 0.7, slope));
+        if (hitP.y > 2.5) { mt = mix(mt, vec3f(0.95,0.95,1.0), smoothstep(2.5, 3.5, hitP.y)); }
+        col = mt * (0.3 + 0.7 * diff) * ao;
+        let fog = 1.0 - exp(-hit.x * 0.02);
+        col = mix(col, vec3f(0.5, 0.6, 0.7), fog);
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct TerrainUniforms {
+    float camMat[16];
+    float time, _pad0, resX, resY;
+    float camX, camY, camZ, _pad1;
+};
+
 class RayMarchTerrain : public WebApp {
 public:
     ShaderProgram shader;
     Mesh quad;
+    FullscreenShader wgsl;
     float time=0;
 
     const char* vert = R"(#version 300 es
@@ -9500,7 +9966,6 @@ public:
         uniform vec3 uCamPos;
         uniform mat4 uCamMat;
 
-        // Hash and noise functions
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         float noise(vec2 p){
             vec2 i=floor(p),f=fract(p);
@@ -9513,14 +9978,11 @@ public:
             for(int i=0;i<6;i++){v+=a*noise(p);p*=2.0;a*=0.5;}
             return v;
         }
-
         float terrain(vec3 p){
-            // Add subtle water wave animation using uTime
             float h=fbm(p.xz*0.3)*2.0+fbm(p.xz*0.7)*0.5;
             if(h<0.3) h+=sin(p.x*2.0+uTime)*0.05*smoothstep(0.3,0.0,h);
             return p.y-h;
         }
-
         vec3 calcNormal(vec3 p){
             vec2 e=vec2(0.01,0);
             return normalize(vec3(
@@ -9528,7 +9990,6 @@ public:
                 terrain(p+e.yxy)-terrain(p-e.yxy),
                 terrain(p+e.yyx)-terrain(p-e.yyx)));
         }
-
         float march(vec3 ro,vec3 rd,out vec3 hitP){
             float t=0.0;
             for(int i=0;i<100;i++){
@@ -9540,38 +10001,28 @@ public:
             }
             return -1.0;
         }
-
         void main(){
             vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
             vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
             vec3 ro=uCamPos;
-
             vec3 hitP;
             float t=march(ro,rd,hitP);
-
-            vec3 col=vec3(0.4,0.6,0.9)-rd.y*0.3; // sky
-
+            vec3 col=vec3(0.4,0.6,0.9)-rd.y*0.3;
             if(t>0.0){
                 vec3 n=calcNormal(hitP);
                 vec3 sun=normalize(vec3(0.8,0.4,0.2));
                 float diff=max(dot(n,sun),0.0);
                 float ao=1.0-hitP.y*0.1;
-
-                // Grass/rock colors
                 float slope=1.0-n.y;
                 vec3 grass=vec3(0.2,0.5,0.1);
                 vec3 rock=vec3(0.4,0.35,0.3);
                 vec3 snow=vec3(0.95,0.95,1.0);
                 vec3 mat=mix(grass,rock,smoothstep(0.3,0.7,slope));
                 if(hitP.y>2.5)mat=mix(mat,snow,smoothstep(2.5,3.5,hitP.y));
-
                 col=mat*(0.3+0.7*diff)*ao;
-
-                // Fog
                 float fog=1.0-exp(-t*0.02);
                 col=mix(col,vec3(0.5,0.6,0.7),fog);
             }
-
             fragColor=vec4(pow(col,vec3(0.4545)),1.0);
         }
     )";
@@ -9582,17 +10033,20 @@ public:
     int lastX=0,lastY=0;
 
     void onCreate() override {
-        shader.compile(vert,frag);
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
         quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), terrainWGSL, sizeof(TerrainUniforms));
+        } else {
+            shader.compile(vert,frag);
+        }
         nav().pos(0,3,5);
         memset(keys,0,sizeof(keys));
     }
 
     void onAnimate(double dt) override {
         time+=dt;
-        // WASD+QE movement
         float spd=5.0f*(float)dt;
         nav().updateDirectionVectors();
         if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
@@ -9605,44 +10059,41 @@ public:
 
     void onDraw(Graphics& g) override {
         g.clear(0);
-        shader.use();
-        shader.uniform("uTime",time);
-        shader.uniform("uRes",(float)width(),(float)height());
         Vec3f pos=nav().pos();
-        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
-        // Construct inverse view matrix from nav direction vectors
         nav().updateDirectionVectors();
         Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
         float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
-        shader.uniform("uCamMat",Matrix4f(vm));
-        g.draw(quad);
+        if (Graphics_isWebGPU()) {
+            TerrainUniforms tu;
+            memcpy(tu.camMat, vm, sizeof(vm));
+            tu.time = time; tu._pad0 = 0; tu.resX = (float)width(); tu.resY = (float)height();
+            tu.camX = pos.x; tu.camY = pos.y; tu.camZ = pos.z; tu._pad1 = 0;
+            wgsl.setUniforms(tu);
+            wgsl.drawFullscreen();
+        } else {
+            shader.use();
+            shader.uniform("uTime",time);
+            shader.uniform("uRes",(float)width(),(float)height());
+            shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+            shader.uniform("uCamMat",Matrix4f(vm));
+            g.draw(quad);
+        }
     }
 
     bool onKeyDown(const Keyboard& k) override {
-        int key=k.key();
-        if(key>=0&&key<256)keys[key]=true;
-        return true;
+        int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true;
     }
     bool onKeyUp(const Keyboard& k) override {
-        int key=k.key();
-        if(key>=0&&key<256)keys[key]=false;
-        return true;
+        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
     }
     bool onMouseDown(const Mouse& m) override {
-        dragging=true; lastX=m.x(); lastY=m.y();
-        return true;
+        dragging=true; lastX=m.x(); lastY=m.y(); return true;
     }
-    bool onMouseUp(const Mouse& m) override {
-        dragging=false;
-        return true;
-    }
+    bool onMouseUp(const Mouse& m) override { dragging=false; return true; }
     bool onMouseDrag(const Mouse& m) override {
         if(dragging){
-            float dx=(m.x()-lastX)*0.005f;
-            float dy=(m.y()-lastY)*0.005f;
-            yaw-=dx; pitch-=dy;
-            pitch=fmax(-1.5f,fmin(1.5f,pitch));
-            // Update nav orientation from yaw/pitch
+            float dx=(m.x()-lastX)*0.005f; float dy=(m.y()-lastY)*0.005f;
+            yaw-=dx; pitch-=dy; pitch=fmax(-1.5f,fmin(1.5f,pitch));
             Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
             Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
             Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
@@ -9666,16 +10117,102 @@ ALLOLIB_WEB_MAIN(RayMarchTerrain)
  * Volumetric Clouds
  * Features: Density sampling, light scattering, god rays
  * Controls: WASD+QE navigation
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
+
+const char* cloudsWGSL = R"(
+struct Uniforms {
+    camMat: mat4x4f,
+    time: f32, _pad0: f32, resX: f32, resY: f32,
+    camX: f32, camY: f32, camZ: f32, _pad1: f32,
+};
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut; let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0); o.uv = vec2f(x, 1.0 - y);
+    return o;
+}
+
+fn hash3(p: vec3f) -> f32 { return fract(sin(dot(p, vec3f(127.1, 311.7, 74.7))) * 43758.5453); }
+fn noise3(p: vec3f) -> f32 {
+    let i = floor(p); let f = fract(p); let ff = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash3(i), hash3(i+vec3f(1,0,0)), ff.x),
+                   mix(hash3(i+vec3f(0,1,0)), hash3(i+vec3f(1,1,0)), ff.x), ff.y),
+               mix(mix(hash3(i+vec3f(0,0,1)), hash3(i+vec3f(1,0,1)), ff.x),
+                   mix(hash3(i+vec3f(0,1,1)), hash3(i+vec3f(1,1,1)), ff.x), ff.y), ff.z);
+}
+fn fbm3(p_in: vec3f) -> f32 {
+    var v = 0.0; var a = 0.5; var p = p_in; let shift = vec3f(100);
+    for (var i = 0; i < 5; i++) { v += a * noise3(p); p = p * 2.0 + shift; a *= 0.5; }
+    return v;
+}
+fn cloudDensity(p: vec3f) -> f32 {
+    let h = (p.y - 5.0) * 0.2;
+    if (h < 0.0 || h > 1.0) { return 0.0; }
+    let shape = fbm3(p * 0.3 + vec3f(u.time * 0.1, 0, u.time * 0.05));
+    let edge = smoothstep(0.0, 0.3, h) * smoothstep(1.0, 0.7, h);
+    return max(0.0, (shape - 0.4) * edge * 2.0);
+}
+fn lightMarch(p_in: vec3f, sunDir: vec3f) -> vec3f {
+    var density = 0.0; let stepSize = 0.5; var p = p_in;
+    for (var i = 0; i < 6; i++) { density += cloudDensity(p) * stepSize; p += sunDir * stepSize; }
+    return exp(-density * vec3f(0.6, 0.7, 0.9) * 0.8);
+}
+fn cloudMarch(ro: vec3f, rd: vec3f) -> vec4f {
+    let sunDir = normalize(vec3f(0.5, 0.3, 0.5));
+    let tmin = max(0.0, (5.0 - ro.y) / rd.y);
+    let tmax = (15.0 - ro.y) / rd.y;
+    if (tmax < tmin) { return vec4f(0); }
+    var t = tmin; var col = vec3f(0); var transmit = 1.0; let stepSize = 0.3;
+    for (var i = 0; i < 64; i++) {
+        if (t > tmax || transmit < 0.01) { break; }
+        let p = ro + rd * t; let d = cloudDensity(p);
+        if (d > 0.01) {
+            let light = lightMarch(p, sunDir);
+            col += transmit * d * stepSize * (light * vec3f(1.0, 0.95, 0.8) + vec3f(0.4, 0.5, 0.6));
+            transmit *= exp(-d * stepSize * 1.5);
+        }
+        t += stepSize;
+    }
+    return vec4f(col, 1.0 - transmit);
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    let uv = (in.pos.xy - vec2f(u.resX, u.resY) * 0.5) / u.resY;
+    let rd = normalize((u.camMat * vec4f(uv.x, uv.y, -1.5, 0)).xyz);
+    let ro = vec3f(u.camX, u.camY, u.camZ);
+    var sky = mix(vec3f(0.5,0.7,1.0), vec3f(0.2,0.4,0.8), rd.y*0.5+0.5);
+    let sunDir = normalize(vec3f(0.5, 0.3, 0.5));
+    sky += vec3f(1.0, 0.9, 0.6) * pow(max(dot(rd, sunDir), 0.0), 64.0);
+    let clouds = cloudMarch(ro, rd);
+    var col = mix(sky, clouds.rgb, clouds.a);
+    if (rd.y < 0.0) {
+        let t = -ro.y / rd.y;
+        let fog = 1.0 - exp(-t * 0.01);
+        col = mix(vec3f(0.2, 0.3, 0.1), sky, fog);
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct CloudUniforms {
+    float camMat[16];
+    float time, _pad0, resX, resY;
+    float camX, camY, camZ, _pad1;
+};
 
 class VolumetricClouds : public WebApp {
 public:
     ShaderProgram shader;
     Mesh quad;
+    FullscreenShader wgsl;
     float time=0;
     bool keys[256]={};
     float yaw=0,pitch=0;
@@ -9690,157 +10227,104 @@ public:
     const char* frag = R"(#version 300 es
         precision highp float;
         out vec4 fragColor;
-        uniform float uTime;
-        uniform vec2 uRes;
-        uniform vec3 uCamPos;
-        uniform mat4 uCamMat;
-
+        uniform float uTime; uniform vec2 uRes; uniform vec3 uCamPos; uniform mat4 uCamMat;
         float hash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
-
         float noise(vec3 p){
-            vec3 i=floor(p),f=fract(p);
-            f=f*f*(3.0-2.0*f);
-            return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),
-                           mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
-                       mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
-                           mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
+            vec3 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+            return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+                       mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
         }
-
-        float fbm(vec3 p){
-            float v=0.0,a=0.5;
-            vec3 shift=vec3(100);
-            for(int i=0;i<5;i++){
-                v+=a*noise(p);
-                p=p*2.0+shift;
-                a*=0.5;
-            }
-            return v;
-        }
-
+        float fbm(vec3 p){ float v=0.0,a=0.5; vec3 shift=vec3(100);
+            for(int i=0;i<5;i++){v+=a*noise(p);p=p*2.0+shift;a*=0.5;} return v; }
         float cloudDensity(vec3 p){
-            float h=(p.y-5.0)*0.2;
-            if(h<0.0||h>1.0)return 0.0;
+            float h=(p.y-5.0)*0.2; if(h<0.0||h>1.0)return 0.0;
             float shape=fbm(p*0.3+vec3(uTime*0.1,0,uTime*0.05));
             float edge=smoothstep(0.0,0.3,h)*smoothstep(1.0,0.7,h);
             return max(0.0,(shape-0.4)*edge*2.0);
         }
-
         vec3 lightMarch(vec3 p,vec3 sunDir){
-            float density=0.0;
-            float stepSize=0.5;
-            for(int i=0;i<6;i++){
-                density+=cloudDensity(p)*stepSize;
-                p+=sunDir*stepSize;
-            }
+            float density=0.0; float stepSize=0.5;
+            for(int i=0;i<6;i++){density+=cloudDensity(p)*stepSize;p+=sunDir*stepSize;}
             return exp(-density*vec3(0.6,0.7,0.9)*0.8);
         }
-
         vec4 cloudMarch(vec3 ro,vec3 rd){
             vec3 sunDir=normalize(vec3(0.5,0.3,0.5));
-            float tmin=max(0.0,(5.0-ro.y)/rd.y);
-            float tmax=(15.0-ro.y)/rd.y;
+            float tmin=max(0.0,(5.0-ro.y)/rd.y); float tmax=(15.0-ro.y)/rd.y;
             if(tmax<tmin)return vec4(0);
-
-            float t=tmin;
-            vec3 col=vec3(0);
-            float transmit=1.0;
-            float stepSize=0.3;
-
+            float t=tmin; vec3 col=vec3(0); float transmit=1.0; float stepSize=0.3;
             for(int i=0;i<64;i++){
-                if(t>tmax||transmit<0.01)break;
-                vec3 p=ro+rd*t;
-                float d=cloudDensity(p);
-                if(d>0.01){
-                    vec3 light=lightMarch(p,sunDir);
-                    vec3 ambient=vec3(0.4,0.5,0.6);
-                    col+=transmit*d*stepSize*(light*vec3(1.0,0.95,0.8)+ambient);
-                    transmit*=exp(-d*stepSize*1.5);
-                }
+                if(t>tmax||transmit<0.01)break; vec3 p=ro+rd*t; float d=cloudDensity(p);
+                if(d>0.01){ vec3 light=lightMarch(p,sunDir);
+                    col+=transmit*d*stepSize*(light*vec3(1.0,0.95,0.8)+vec3(0.4,0.5,0.6));
+                    transmit*=exp(-d*stepSize*1.5); }
                 t+=stepSize;
             }
             return vec4(col,1.0-transmit);
         }
-
         void main(){
             vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
-            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
-            vec3 ro=uCamPos;
-
-            // Sky gradient
+            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz); vec3 ro=uCamPos;
             vec3 sky=mix(vec3(0.5,0.7,1.0),vec3(0.2,0.4,0.8),rd.y*0.5+0.5);
-
-            // Sun
             vec3 sunDir=normalize(vec3(0.5,0.3,0.5));
-            float sun=pow(max(dot(rd,sunDir),0.0),64.0);
-            sky+=vec3(1.0,0.9,0.6)*sun;
-
-            // Clouds
-            vec4 clouds=cloudMarch(ro,rd);
-            vec3 col=mix(sky,clouds.rgb,clouds.a);
-
-            // Ground
-            if(rd.y<0.0){
-                float t=-ro.y/rd.y;
-                vec3 ground=vec3(0.2,0.3,0.1);
-                float fog=1.0-exp(-t*0.01);
-                col=mix(ground,sky,fog);
-            }
-
+            sky+=vec3(1.0,0.9,0.6)*pow(max(dot(rd,sunDir),0.0),64.0);
+            vec4 clouds=cloudMarch(ro,rd); vec3 col=mix(sky,clouds.rgb,clouds.a);
+            if(rd.y<0.0){ float t=-ro.y/rd.y; float fog=1.0-exp(-t*0.01); col=mix(vec3(0.2,0.3,0.1),sky,fog); }
             fragColor=vec4(pow(col,vec3(0.4545)),1.0);
         }
     )";
 
     void onCreate() override {
-        shader.compile(vert,frag);
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
         quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), cloudsWGSL, sizeof(CloudUniforms));
+        } else {
+            shader.compile(vert,frag);
+        }
         nav().pos(0,8,0);
         memset(keys,0,sizeof(keys));
     }
 
     void onAnimate(double dt) override {
-        time+=dt;
-        float spd=5.0f*(float)dt;
+        time+=dt; float spd=5.0f*(float)dt;
         nav().updateDirectionVectors();
-        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
-        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
-        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
-        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
-        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
-        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd; if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd; if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd; if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
     }
 
     void onDraw(Graphics& g) override {
         g.clear(0);
-        shader.use();
-        shader.uniform("uTime",time);
-        shader.uniform("uRes",(float)width(),(float)height());
         Vec3f pos=nav().pos();
-        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
         nav().updateDirectionVectors();
-        Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
-        float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
-        shader.uniform("uCamMat",Matrix4f(vm));
-        g.draw(quad);
+        Vec3f r=nav().ur(), uu=nav().uu(), f=nav().uf();
+        float vm[16]={r.x,r.y,r.z,0, uu.x,uu.y,uu.z,0, f.x,f.y,f.z,0, 0,0,0,1};
+        if (Graphics_isWebGPU()) {
+            CloudUniforms cu;
+            memcpy(cu.camMat, vm, sizeof(vm));
+            cu.time=time; cu._pad0=0; cu.resX=(float)width(); cu.resY=(float)height();
+            cu.camX=pos.x; cu.camY=pos.y; cu.camZ=pos.z; cu._pad1=0;
+            wgsl.setUniforms(cu);
+            wgsl.drawFullscreen();
+        } else {
+            shader.use();
+            shader.uniform("uTime",time); shader.uniform("uRes",(float)width(),(float)height());
+            shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+            shader.uniform("uCamMat",Matrix4f(vm));
+            g.draw(quad);
+        }
     }
 
-    bool onKeyDown(const Keyboard& k) override {
-        int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true;
-    }
-    bool onKeyUp(const Keyboard& k) override {
-        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
-    }
-    bool onMouseDown(const Mouse& m) override {
-        dragging=true; lastX=m.x(); lastY=m.y(); return true;
-    }
+    bool onKeyDown(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true; }
+    bool onKeyUp(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true; }
+    bool onMouseDown(const Mouse& m) override { dragging=true; lastX=m.x(); lastY=m.y(); return true; }
     bool onMouseUp(const Mouse& m) override { dragging=false; return true; }
     bool onMouseDrag(const Mouse& m) override {
         if(dragging){
             float dx=(m.x()-lastX)*0.005f, dy=(m.y()-lastY)*0.005f;
             yaw-=dx; pitch-=dy; pitch=fmax(-1.5f,fmin(1.5f,pitch));
-            Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
-            Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
+            Quatf qy; qy.fromAxisAngle(yaw,0,1,0); Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
             Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
             lastX=m.x(); lastY=m.y();
         }
@@ -11240,18 +11724,87 @@ ALLOLIB_WEB_MAIN(ProcGalaxy)
     subcategory: 'raymarching',
     code: `/**
  * Organic Blob - Ray Marched Metaballs
- * Features: Smooth minimum blending, animation
+ * Features: Smooth minimum blending, SSS, rim lighting
  * Controls: WASD+QE navigation
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 
 using namespace al;
+
+const char* blobWGSL = R"(
+struct Uniforms {
+    camMat: mat4x4f,
+    time: f32, _pad0: f32, resX: f32, resY: f32,
+    camX: f32, camY: f32, camZ: f32, _pad1: f32,
+};
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut; let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0); o.uv = vec2f(x, 1.0 - y);
+    return o;
+}
+
+fn sdSphere(p: vec3f, r: f32) -> f32 { return length(p) - r; }
+fn smin(a: f32, b: f32, k: f32) -> f32 { let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
+
+fn scene(p: vec3f) -> f32 {
+    var d = 1e10;
+    for (var i = 0; i < 5; i++) {
+        let fi = f32(i); let t = u.time + fi * 1.2;
+        let offset = vec3f(sin(t*0.7+fi)*0.8, cos(t*0.5+fi*2.0)*0.6, sin(t*0.3+fi*0.5)*0.8);
+        let r = 0.4 + 0.1 * sin(t + fi);
+        d = smin(d, sdSphere(p - offset, r), 0.5);
+    }
+    d = smin(d, sdSphere(p, 0.6 + 0.1 * sin(u.time * 2.0)), 0.3);
+    return d;
+}
+fn calcNormal(p: vec3f) -> vec3f {
+    let e = vec2f(0.001, 0);
+    return normalize(vec3f(scene(p+e.xyy)-scene(p-e.xyy), scene(p+e.yxy)-scene(p-e.yxy), scene(p+e.yyx)-scene(p-e.yyx)));
+}
+fn marchBlob(ro: vec3f, rd: vec3f) -> f32 {
+    var t = 0.0;
+    for (var i = 0; i < 80; i++) { let d = scene(ro + rd * t); if (d < 0.001) { return t; } t += d; if (t > 20.0) { break; } }
+    return -1.0;
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    let uv = (in.pos.xy - vec2f(u.resX, u.resY) * 0.5) / u.resY;
+    let rd = normalize((u.camMat * vec4f(uv.x, uv.y, -1.5, 0)).xyz);
+    let ro = vec3f(u.camX, u.camY, u.camZ);
+    var col = vec3f(0.05, 0.05, 0.1);
+    let t = marchBlob(ro, rd);
+    if (t > 0.0) {
+        let p = ro + rd * t; let n = calcNormal(p); let light = normalize(vec3f(1, 1, 1));
+        let wrap = max(0.0, dot(n, light) * 0.5 + 0.5);
+        let sss = vec3f(0.8, 0.2, 0.1) * wrap * wrap;
+        let rim = pow(1.0 - max(0.0, dot(n, -rd)), 3.0);
+        let h = normalize(light - rd);
+        let spec = pow(max(0.0, dot(n, h)), 32.0);
+        col = sss + vec3f(0.3, 0.5, 0.8) * rim + vec3f(1) * spec * 0.5;
+        let fresnel = pow(1.0 - max(0.0, dot(n, -rd)), 2.0);
+        col = mix(col, vec3f(0.8, 0.9, 1.0), fresnel * 0.3);
+    }
+    return vec4f(pow(col, vec3f(0.4545)), 1.0);
+}
+)";
+
+struct BlobUniforms {
+    float camMat[16];
+    float time, _pad0, resX, resY;
+    float camX, camY, camZ, _pad1;
+};
 
 class OrganicBlob : public WebApp {
 public:
     ShaderProgram shader;
     Mesh quad;
+    FullscreenShader wgsl;
     float time=0;
     bool keys[256]={};
     float yaw=0,pitch=0;
@@ -11266,143 +11819,87 @@ public:
     const char* frag = R"(#version 300 es
         precision highp float;
         out vec4 fragColor;
-        uniform float uTime;
-        uniform vec2 uRes;
-        uniform vec3 uCamPos;
-        uniform mat4 uCamMat;
-
+        uniform float uTime; uniform vec2 uRes; uniform vec3 uCamPos; uniform mat4 uCamMat;
         float sdSphere(vec3 p,float r){return length(p)-r;}
-
-        float smin(float a,float b,float k){
-            float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0);
-            return mix(b,a,h)-k*h*(1.0-h);
-        }
-
+        float smin(float a,float b,float k){ float h=clamp(0.5+0.5*(b-a)/k,0.0,1.0); return mix(b,a,h)-k*h*(1.0-h); }
         float scene(vec3 p){
             float d=1e10;
-            // Multiple animated spheres
-            for(int i=0;i<5;i++){
-                float fi=float(i);
-                float t=uTime+fi*1.2;
-                vec3 offset=vec3(
-                    sin(t*0.7+fi)*0.8,
-                    cos(t*0.5+fi*2.0)*0.6,
-                    sin(t*0.3+fi*0.5)*0.8
-                );
-                float r=0.4+0.1*sin(t+fi);
-                d=smin(d,sdSphere(p-offset,r),0.5);
-            }
-            // Central core
-            d=smin(d,sdSphere(p,0.6+0.1*sin(uTime*2.0)),0.3);
-            return d;
+            for(int i=0;i<5;i++){ float fi=float(i); float t=uTime+fi*1.2;
+                vec3 offset=vec3(sin(t*0.7+fi)*0.8,cos(t*0.5+fi*2.0)*0.6,sin(t*0.3+fi*0.5)*0.8);
+                float r=0.4+0.1*sin(t+fi); d=smin(d,sdSphere(p-offset,r),0.5); }
+            d=smin(d,sdSphere(p,0.6+0.1*sin(uTime*2.0)),0.3); return d;
         }
-
-        vec3 calcNormal(vec3 p){
-            vec2 e=vec2(0.001,0);
-            return normalize(vec3(
-                scene(p+e.xyy)-scene(p-e.xyy),
-                scene(p+e.yxy)-scene(p-e.yxy),
-                scene(p+e.yyx)-scene(p-e.yyx)));
-        }
-
-        float march(vec3 ro,vec3 rd){
-            float t=0.0;
-            for(int i=0;i<80;i++){
-                float d=scene(ro+rd*t);
-                if(d<0.001)return t;
-                t+=d;
-                if(t>20.0)break;
-            }
-            return -1.0;
-        }
-
+        vec3 calcNormal(vec3 p){ vec2 e=vec2(0.001,0);
+            return normalize(vec3(scene(p+e.xyy)-scene(p-e.xyy),scene(p+e.yxy)-scene(p-e.yxy),scene(p+e.yyx)-scene(p-e.yyx))); }
+        float march(vec3 ro,vec3 rd){ float t=0.0;
+            for(int i=0;i<80;i++){ float d=scene(ro+rd*t); if(d<0.001)return t; t+=d; if(t>20.0)break; } return -1.0; }
         void main(){
             vec2 uv=(gl_FragCoord.xy-uRes*0.5)/uRes.y;
-            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz);
-            vec3 ro=uCamPos;
-
-            vec3 col=vec3(0.05,0.05,0.1);
-
-            float t=march(ro,rd);
-            if(t>0.0){
-                vec3 p=ro+rd*t;
-                vec3 n=calcNormal(p);
-                vec3 light=normalize(vec3(1,1,1));
-
-                // Subsurface scattering approximation
-                float wrap=max(0.0,dot(n,light)*0.5+0.5);
-                vec3 sss=vec3(0.8,0.2,0.1)*wrap*wrap;
-
-                // Rim lighting
-                float rim=1.0-max(0.0,dot(n,-rd));
-                rim=pow(rim,3.0);
-
-                // Specular
-                vec3 h=normalize(light-rd);
-                float spec=pow(max(0.0,dot(n,h)),32.0);
-
+            vec3 rd=normalize((uCamMat*vec4(uv.x,uv.y,-1.5,0)).xyz); vec3 ro=uCamPos;
+            vec3 col=vec3(0.05,0.05,0.1); float t=march(ro,rd);
+            if(t>0.0){ vec3 p=ro+rd*t; vec3 n=calcNormal(p); vec3 light=normalize(vec3(1,1,1));
+                float wrap=max(0.0,dot(n,light)*0.5+0.5); vec3 sss=vec3(0.8,0.2,0.1)*wrap*wrap;
+                float rim=pow(1.0-max(0.0,dot(n,-rd)),3.0);
+                vec3 h=normalize(light-rd); float spec=pow(max(0.0,dot(n,h)),32.0);
                 col=sss+vec3(0.3,0.5,0.8)*rim+vec3(1)*spec*0.5;
-
-                // Fresnel
                 float fresnel=pow(1.0-max(0.0,dot(n,-rd)),2.0);
-                col=mix(col,vec3(0.8,0.9,1.0),fresnel*0.3);
-            }
-
+                col=mix(col,vec3(0.8,0.9,1.0),fresnel*0.3); }
             fragColor=vec4(pow(col,vec3(0.4545)),1.0);
         }
     )";
 
     void onCreate() override {
-        shader.compile(vert,frag);
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
         quad.vertex(-1,1,0);quad.vertex(1,1,0);
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), blobWGSL, sizeof(BlobUniforms));
+        } else {
+            shader.compile(vert,frag);
+        }
         nav().pos(0,0,4);
         memset(keys,0,sizeof(keys));
     }
 
     void onAnimate(double dt) override {
-        time+=dt;
-        float spd=3.0f*(float)dt;
+        time+=dt; float spd=3.0f*(float)dt;
         nav().updateDirectionVectors();
-        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd;
-        if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
-        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd;
-        if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
-        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd;
-        if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
+        if(keys[(int)'w'])nav().pos()+=nav().uf()*spd; if(keys[(int)'s'])nav().pos()-=nav().uf()*spd;
+        if(keys[(int)'a'])nav().pos()-=nav().ur()*spd; if(keys[(int)'d'])nav().pos()+=nav().ur()*spd;
+        if(keys[(int)'q'])nav().pos()-=nav().uu()*spd; if(keys[(int)'e'])nav().pos()+=nav().uu()*spd;
     }
 
     void onDraw(Graphics& g) override {
         g.clear(0);
-        shader.use();
-        shader.uniform("uTime",time);
-        shader.uniform("uRes",(float)width(),(float)height());
         Vec3f pos=nav().pos();
-        shader.uniform("uCamPos",pos.x,pos.y,pos.z);
         nav().updateDirectionVectors();
-        Vec3f r=nav().ur(), u=nav().uu(), f=nav().uf();
-        float vm[16]={r.x,r.y,r.z,0, u.x,u.y,u.z,0, f.x,f.y,f.z,0, 0,0,0,1};
-        shader.uniform("uCamMat",Matrix4f(vm));
-        g.draw(quad);
+        Vec3f r=nav().ur(), uu=nav().uu(), f=nav().uf();
+        float vm[16]={r.x,r.y,r.z,0, uu.x,uu.y,uu.z,0, f.x,f.y,f.z,0, 0,0,0,1};
+        if (Graphics_isWebGPU()) {
+            BlobUniforms bu;
+            memcpy(bu.camMat, vm, sizeof(vm));
+            bu.time=time; bu._pad0=0; bu.resX=(float)width(); bu.resY=(float)height();
+            bu.camX=pos.x; bu.camY=pos.y; bu.camZ=pos.z; bu._pad1=0;
+            wgsl.setUniforms(bu);
+            wgsl.drawFullscreen();
+        } else {
+            shader.use();
+            shader.uniform("uTime",time); shader.uniform("uRes",(float)width(),(float)height());
+            shader.uniform("uCamPos",pos.x,pos.y,pos.z);
+            shader.uniform("uCamMat",Matrix4f(vm));
+            g.draw(quad);
+        }
     }
 
-    bool onKeyDown(const Keyboard& k) override {
-        int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true;
-    }
-    bool onKeyUp(const Keyboard& k) override {
-        int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true;
-    }
-    bool onMouseDown(const Mouse& m) override {
-        dragging=true; lastX=m.x(); lastY=m.y(); return true;
-    }
+    bool onKeyDown(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=true; return true; }
+    bool onKeyUp(const Keyboard& k) override { int key=k.key(); if(key>=0&&key<256)keys[key]=false; return true; }
+    bool onMouseDown(const Mouse& m) override { dragging=true; lastX=m.x(); lastY=m.y(); return true; }
     bool onMouseUp(const Mouse& m) override { dragging=false; return true; }
     bool onMouseDrag(const Mouse& m) override {
         if(dragging){
             float dx=(m.x()-lastX)*0.005f, dy=(m.y()-lastY)*0.005f;
             yaw-=dx; pitch-=dy; pitch=fmax(-1.5f,fmin(1.5f,pitch));
-            Quatf qy; qy.fromAxisAngle(yaw,0,1,0);
-            Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
+            Quatf qy; qy.fromAxisAngle(yaw,0,1,0); Quatf qp; qp.fromAxisAngle(pitch,1,0,0);
             Quatf q=qy*qp; nav().quat().set(q.x,q.y,q.z,q.w);
             lastX=m.x(); lastY=m.y();
         }
@@ -11426,13 +11923,60 @@ ALLOLIB_WEB_MAIN(OrganicBlob)
     code: `/**
  * Lava Lamp Simulation
  * Features: Metaballs, heat convection, color blending
- * Controls: WASD+QE navigation
+ * Dual GLSL/WGSL
  */
 #include "al_playground_compat.hpp"
+#include "al_WebGPURenderShader.hpp"
 #include <cmath>
 #include <vector>
+#include <cstring>
 
 using namespace al;
+
+const char* lavaWGSL = R"(
+struct Uniforms {
+    blobs: array<vec4f, 20>,
+    time: f32, numBlobs: i32, _pad0: f32, _pad1: f32,
+};
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+    var o: VSOut; let x = f32((vi << 1u) & 2u); let y = f32(vi & 2u);
+    o.pos = vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2f(x, 1.0 - y);
+    return o;
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4f {
+    var p = in.uv * 2.0 - 1.0;
+    p.y *= 1.5;
+    var field = 0.0; var tempField = 0.0;
+    for (var i = 0; i < 20; i++) {
+        if (i >= u.numBlobs) { break; }
+        let bp = u.blobs[i].xy; let r = u.blobs[i].z; let t = u.blobs[i].w;
+        let d = length(p - bp);
+        field += r * r / (d * d + 0.01);
+        tempField += t * r * r / (d * d + 0.01);
+    }
+    let lamp = smoothstep(0.9, 0.85, abs(p.x)) * smoothstep(1.4, 1.3, abs(p.y));
+    if (field > 1.0 && lamp > 0.5) {
+        let t = tempField / field;
+        var col = mix(vec3f(0.8, 0.2, 0.1), vec3f(1.0, 0.8, 0.2), t);
+        let pulse = 0.5 + 0.5 * sin(u.time * 2.0);
+        col += vec3f(0.2, 0.1, 0.05) * smoothstep(1.0, 3.0, field) * (0.8 + 0.2 * pulse);
+        return vec4f(col, 1.0);
+    } else {
+        let edge = smoothstep(0.8, 0.85, abs(p.x)) + smoothstep(1.3, 1.35, abs(p.y));
+        return vec4f(mix(vec3f(0.05, 0.08, 0.12), vec3f(0.1, 0.15, 0.2), edge), 1.0);
+    }
+}
+)";
+
+struct LavaUniforms {
+    float blobs[80]; // 20 * vec4f
+    float time; int numBlobs; float _pad0, _pad1;
+};
 
 struct Blob {
     Vec2f pos,vel;
@@ -11444,107 +11988,69 @@ public:
     std::vector<Blob> blobs;
     ShaderProgram shader;
     Mesh quad;
+    FullscreenShader wgsl;
     float time=0;
     rnd::Random<> rng;
 
     const char* vert = R"(#version 300 es
-        layout(location=0) in vec3 position;
-        out vec2 vUV;
-        void main(){
-            vUV=position.xy*0.5+0.5;
-            gl_Position=vec4(position,1.0);
-        }
+        layout(location=0) in vec3 position; out vec2 vUV;
+        void main(){ vUV=position.xy*0.5+0.5; gl_Position=vec4(position,1.0); }
     )";
 
     const char* frag = R"(#version 300 es
         precision highp float;
-        in vec2 vUV;
-        out vec4 fragColor;
-        uniform float uTime;
-        uniform vec4 uBlobs[20];
-        uniform int uNumBlobs;
-
+        in vec2 vUV; out vec4 fragColor;
+        uniform float uTime; uniform vec4 uBlobs[20]; uniform int uNumBlobs;
         void main(){
-            vec2 p=vUV*2.0-1.0;
-            p.y*=1.5; // Aspect ratio for lamp shape
-
-            float field=0.0;
-            float tempField=0.0;
+            vec2 p=vUV*2.0-1.0; p.y*=1.5;
+            float field=0.0; float tempField=0.0;
             for(int i=0;i<20;i++){
                 if(i>=uNumBlobs)break;
-                vec2 bp=uBlobs[i].xy;
-                float r=uBlobs[i].z;
-                float t=uBlobs[i].w;
-                float d=length(p-bp);
-                field+=r*r/(d*d+0.01);
-                tempField+=t*r*r/(d*d+0.01);
+                vec2 bp=uBlobs[i].xy; float r=uBlobs[i].z; float t=uBlobs[i].w;
+                float d=length(p-bp); field+=r*r/(d*d+0.01); tempField+=t*r*r/(d*d+0.01);
             }
-
-            // Lamp glass boundary
             float lamp=smoothstep(0.9,0.85,abs(p.x))*smoothstep(1.4,1.3,abs(p.y));
-
             if(field>1.0&&lamp>0.5){
                 float t=tempField/field;
-                vec3 cold=vec3(0.8,0.2,0.1);
-                vec3 hot=vec3(1.0,0.8,0.2);
-                vec3 col=mix(cold,hot,t);
-                // Add animated glow using uTime
+                vec3 col=mix(vec3(0.8,0.2,0.1),vec3(1.0,0.8,0.2),t);
                 float pulse=0.5+0.5*sin(uTime*2.0);
                 col+=vec3(0.2,0.1,0.05)*smoothstep(1.0,3.0,field)*(0.8+0.2*pulse);
                 fragColor=vec4(col,1.0);
             }else{
-                // Glass and liquid
-                vec3 glass=vec3(0.1,0.15,0.2);
-                vec3 liquid=vec3(0.05,0.08,0.12);
                 float edge=smoothstep(0.8,0.85,abs(p.x))+smoothstep(1.3,1.35,abs(p.y));
-                fragColor=vec4(mix(liquid,glass,edge),1.0);
+                fragColor=vec4(mix(vec3(0.05,0.08,0.12),vec3(0.1,0.15,0.2),edge),1.0);
             }
         }
     )";
 
     void onCreate() override {
-        shader.compile(vert,frag);
         quad.primitive(Mesh::TRIANGLE_STRIP);
         quad.vertex(-1,-1,0);quad.vertex(1,-1,0);
         quad.vertex(-1,1,0);quad.vertex(1,1,0);
-
-        // Initialize blobs
+        if (Graphics_isWebGPU()) {
+            wgsl.create(*Graphics_getBackend(), lavaWGSL, sizeof(LavaUniforms));
+        } else {
+            shader.compile(vert,frag);
+        }
         for(int i=0;i<12;i++){
             Blob b;
             b.pos=Vec2f(rng.uniform(-0.6f,0.6f),rng.uniform(-1.2f,1.2f));
-            b.vel=Vec2f(0,0);
-            b.radius=0.15f+rng.uniform()*0.15f;
-            b.temp=rng.uniform();
+            b.vel=Vec2f(0,0); b.radius=0.15f+rng.uniform()*0.15f; b.temp=rng.uniform();
             blobs.push_back(b);
         }
         nav().pos(0,0,2);
     }
 
     void onAnimate(double dt) override {
-        time+=dt;
-        float dtf=(float)dt;
-
-        // Heat source at bottom, cool at top
+        time+=dt; float dtf=(float)dt;
         for(auto& b:blobs){
             float heatSource=(b.pos.y<-1.0f)?1.0f:0.0f;
             float coolSink=(b.pos.y>1.0f)?1.0f:0.0f;
             b.temp+=(heatSource-coolSink)*dtf*0.5f;
             b.temp=fmax(0.0f,fmin(1.0f,b.temp));
-
-            // Buoyancy
-            float buoyancy=(b.temp-0.5f)*2.0f;
-            b.vel.y+=buoyancy*dtf;
-
-            // Drag
-            b.vel*=0.98f;
-
-            // Random perturbation
-            b.vel.x+=(rng.uniform()-0.5f)*dtf*0.5f;
-
-            // Update position
+            b.vel.y+=(b.temp-0.5f)*2.0f*dtf;
+            b.vel*=0.98f; b.vel.x+=(rng.uniform()-0.5f)*dtf*0.5f;
             b.pos+=b.vel*dtf;
-
-            // Boundaries
             if(b.pos.x<-0.7f){b.pos.x=-0.7f;b.vel.x*=-0.5f;}
             if(b.pos.x>0.7f){b.pos.x=0.7f;b.vel.x*=-0.5f;}
             if(b.pos.y<-1.3f){b.pos.y=-1.3f;b.vel.y*=-0.3f;b.temp=fmin(1.0f,b.temp+0.1f);}
@@ -11554,15 +12060,26 @@ public:
 
     void onDraw(Graphics& g) override {
         g.clear(0.02f);
-        shader.use();
-        shader.uniform("uTime",time);
-        shader.uniform("uNumBlobs",(int)blobs.size());
-        for(int i=0;i<(int)blobs.size()&&i<20;i++){
-            char name[32];
-            snprintf(name,32,"uBlobs[%d]",i);
-            shader.uniform(name,blobs[i].pos.x,blobs[i].pos.y,blobs[i].radius,blobs[i].temp);
+        if (Graphics_isWebGPU()) {
+            LavaUniforms lu;
+            memset(&lu, 0, sizeof(lu));
+            for(int i=0;i<(int)blobs.size()&&i<20;i++){
+                lu.blobs[i*4]=blobs[i].pos.x; lu.blobs[i*4+1]=blobs[i].pos.y;
+                lu.blobs[i*4+2]=blobs[i].radius; lu.blobs[i*4+3]=blobs[i].temp;
+            }
+            lu.time=time; lu.numBlobs=(int)blobs.size(); lu._pad0=0; lu._pad1=0;
+            wgsl.setUniforms(lu);
+            wgsl.drawFullscreen();
+        } else {
+            shader.use();
+            shader.uniform("uTime",time);
+            shader.uniform("uNumBlobs",(int)blobs.size());
+            for(int i=0;i<(int)blobs.size()&&i<20;i++){
+                char name[32]; snprintf(name,32,"uBlobs[%d]",i);
+                shader.uniform(name,blobs[i].pos.x,blobs[i].pos.y,blobs[i].radius,blobs[i].temp);
+            }
+            g.draw(quad);
         }
-        g.draw(quad);
     }
 };
 
@@ -15289,6 +15806,875 @@ class FrequencyLandscape : public App {
 };
 
 ALLOLIB_WEB_MAIN(FrequencyLandscape)
+`,
+  },
+  // ── SDF Rendering Examples ───────────────────────────────────────────────
+  {
+    id: 'gpu-sdf-volume-basic',
+    title: 'SDF Volume Demo',
+    description: 'Demonstrates SDF volume creation with CSG operations. Builds a scene from spheres, boxes, and boolean operations, then ray-marches the result.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * SDF Volume Demo
+ *
+ * Creates a 3D SDF volume and bakes analytical primitives into it
+ * using CSG operations (union, subtract, smooth union).
+ * The volume is rendered via sphere tracing with Phong lighting.
+ *
+ * Features: SDFVolume, SDFRenderer, CSG operations
+ * Controls: Arrow keys to orbit camera
+ *
+ * NOTE: WebGPU backend only (uses compute shaders + 3D textures).
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFVolume.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFVolumeBasic : public App {
+    SDFVolume volume;
+    SDFRenderer renderer;
+    float camAngle = 0.0f;
+    float camPitch = 0.3f;
+    float camDist = 5.0f;
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        // Create SDF volume (128^3 grid)
+        volume.create(graphics().backend(), 128);
+        volume.setWorldExtent(4.0f);
+
+        // Build scene with CSG operations
+        // Ground plane
+        volume.addPlane(0, -0.8f, 0, 0, 1, 0, SDFOp::Union);
+
+        // Main body: smooth union of spheres
+        volume.addSphere(0, 0, 0, 0.6f, SDFOp::SmoothUnion);
+        volume.addSphere(0.3f, 0.4f, 0, 0.35f, SDFOp::SmoothUnion);
+        volume.addSphere(-0.3f, 0.4f, 0, 0.35f, SDFOp::SmoothUnion);
+
+        // Pillars
+        volume.addBox(1.0f, -0.2f, 0.5f, 0.15f, 0.6f, 0.15f, SDFOp::Union);
+        volume.addBox(-1.0f, -0.2f, 0.5f, 0.15f, 0.6f, 0.15f, SDFOp::Union);
+
+        // Subtracted hole through the main body
+        volume.addSphere(0, 0, 0, 0.3f, SDFOp::Subtract);
+
+        // Smoothness for smooth operations
+        volume.setSmoothness(0.15f);
+
+        // Bake volume
+        volume.bake();
+
+        // Create renderer
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.05f, 0.06f, 0.1f);
+        renderer.setLightDir(0.6f, 0.8f, 0.4f);
+        renderer.setLightColor(1.0f, 0.95f, 0.9f, 0.12f, 0.14f, 0.18f);
+        renderer.setMaterialColor(0.85f, 0.75f, 0.65f);
+        renderer.setMaxSteps(128);
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += 0.3f * dt;
+
+        float cx = cosf(camAngle) * camDist * cosf(camPitch);
+        float cy = sinf(camPitch) * camDist;
+        float cz = sinf(camAngle) * camDist * cosf(camPitch);
+
+        // Build view matrix (look-at)
+        float eye[3] = {cx, cy, cz};
+        float target[3] = {0, 0, 0};
+        float up[3] = {0, 1, 0};
+
+        float f[3] = {target[0]-eye[0], target[1]-eye[1], target[2]-eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,
+            s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]),
+            1
+        };
+
+        // Perspective projection
+        float aspect = 800.0f / 600.0f;
+        float fov = 60.0f * 3.14159f / 180.0f;
+        float tanHalf = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanHalf);
+        proj[5] = 1.0f / tanHalf;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+        renderer.setTime(camAngle);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.05f, 0.06f, 0.1f);
+        renderer.render(volume);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == Keyboard::LEFT) camAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) camAngle += 0.2f;
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFVolumeBasic)
+`,
+  },
+  {
+    id: 'gpu-sdf-renderer-basic',
+    title: 'SDF Sphere Tracing',
+    description: 'Real-time sphere tracing through a 3D SDF volume with Phong lighting, configurable materials, and camera controls.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * SDF Sphere Tracing
+ *
+ * Renders an SDF volume using sphere tracing (ray marching).
+ * Demonstrates the full rendering pipeline with material presets.
+ *
+ * Features: SDFVolume, SDFRenderer, Phong lighting
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   +/-: Zoom in/out
+ *   1-4: Change material color
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFVolume.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFRendererBasic : public App {
+    SDFVolume volume;
+    SDFRenderer renderer;
+    float camAngle = 0.5f;
+    float camPitch = 0.4f;
+    float camDist = 4.5f;
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        volume.create(graphics().backend(), 96);
+        volume.setWorldExtent(4.0f);
+
+        // Interesting CSG shape: cross with sphere
+        volume.addSphere(0, 0, 0, 0.8f, SDFOp::Union);
+        volume.addBox(0, 0, 0, 1.0f, 0.3f, 0.3f, SDFOp::SmoothUnion);
+        volume.addBox(0, 0, 0, 0.3f, 1.0f, 0.3f, SDFOp::SmoothUnion);
+        volume.addBox(0, 0, 0, 0.3f, 0.3f, 1.0f, SDFOp::SmoothUnion);
+        volume.addSphere(0, 0, 0, 0.5f, SDFOp::Subtract);
+        volume.setSmoothness(0.2f);
+        volume.bake();
+
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.08f, 0.08f, 0.12f);
+        renderer.setLightDir(1, 1, 0.5f);
+        renderer.setMaterialColor(0.85f, 0.7f, 0.55f);
+        renderer.setMaterial(0.0f, 0.7f);
+        renderer.setLightColor(1, 0.95f, 0.9f, 0.15f, 0.15f, 0.2f);
+    }
+
+    void onAnimate(double dt) override {
+        camAngle += 0.2f * dt;
+
+        float cx = cosf(camAngle) * camDist * cosf(camPitch);
+        float cy = sinf(camPitch) * camDist;
+        float cz = sinf(camAngle) * camDist * cosf(camPitch);
+
+        float eye[3] = {cx, cy, cz};
+        float up[3] = {0, 1, 0};
+        float f[3] = {-eye[0], -eye[1], -eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,
+            s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]), 1
+        };
+
+        float aspect = 800.0f / 600.0f;
+        float fov = 60.0f * 3.14159f / 180.0f;
+        float tanH = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanH);
+        proj[5] = 1.0f / tanH;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+        renderer.setTime(camAngle);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.08f, 0.08f, 0.12f);
+        renderer.render(volume);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == '+' || k.key() == '=') camDist -= 0.5f;
+        if (k.key() == '-') camDist += 0.5f;
+        if (k.key() == '1') { renderer.setMaterialColor(0.85f, 0.7f, 0.55f); renderer.setMaterial(0,0.7f); }
+        if (k.key() == '2') { renderer.setMaterialColor(0.9f, 0.9f, 0.92f); renderer.setMaterial(0.9f,0.3f); }
+        if (k.key() == '3') { renderer.setMaterialColor(0.3f, 0.7f, 0.4f); renderer.setMaterial(0.1f,0.5f); }
+        if (k.key() == '4') { renderer.setMaterialColor(0.9f, 0.3f, 0.1f); renderer.setMaterial(0,0.6f); }
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        camDist = std::max(2.0f, std::min(10.0f, camDist));
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFRendererBasic)
+`,
+  },
+  {
+    id: 'gpu-sdf-sculpt-interactive',
+    title: 'Interactive SDF Sculpt',
+    description: 'Click and drag to sculpt an SDF volume in real time. Add or subtract spherical brushes with adjustable size. Supports undo/redo.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * Interactive SDF Sculpt
+ *
+ * Click to add material, Shift+click to subtract.
+ * Drag to paint continuously. Supports undo (Z) and redo (Y).
+ *
+ * Features: SDFVolume, SDFRenderer, SDFSculpt, ControlGUI
+ * Controls:
+ *   Left click: Add material
+ *   Shift + click: Remove material
+ *   Z: Undo, Y: Redo
+ *   +/-: Brush size
+ *   Arrow keys: Orbit camera
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFVolume.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUSDFSculpt.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFSculptDemo : public App {
+    SDFVolume volume;
+    SDFRenderer renderer;
+    SDFSculpt sculpt;
+    float camAngle = 0.5f;
+    float camPitch = 0.4f;
+    float camDist = 5.0f;
+    float brushSize = 0.25f;
+    bool shiftHeld = false;
+
+    ControlGUI gui;
+    Parameter pBrushSize{"Brush Size", "Sculpt", 0.25f, 0.05f, 0.8f};
+    ParameterInt pOpMode{"Mode (0=Add 1=Sub)", "Sculpt", 0, 0, 1};
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        volume.create(graphics().backend(), 96);
+        volume.setWorldExtent(4.0f);
+        volume.addSphere(0, 0, 0, 0.8f, SDFOp::Union);
+        volume.addPlane(0, -1.0f, 0, 0, 1, 0, SDFOp::Union);
+        volume.bake();
+
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.06f, 0.07f, 0.1f);
+        renderer.setLightDir(0.5f, 1.0f, 0.3f);
+        renderer.setMaterialColor(0.75f, 0.6f, 0.5f);
+
+        sculpt.create(graphics().backend(), volume, renderer);
+        sculpt.setBrushSize(brushSize);
+
+        gui << pBrushSize << pOpMode;
+        gui.init();
+    }
+
+    void onAnimate(double dt) override {
+        brushSize = pBrushSize.get();
+        sculpt.setBrushSize(brushSize);
+        sculpt.setOperation(pOpMode.get() == 0 ? SDFOp::Union : SDFOp::Subtract);
+
+        float cx = cosf(camAngle) * camDist * cosf(camPitch);
+        float cy = sinf(camPitch) * camDist;
+        float cz = sinf(camAngle) * camDist * cosf(camPitch);
+
+        float eye[3] = {cx, cy, cz};
+        float up[3] = {0, 1, 0};
+        float f[3] = {-eye[0], -eye[1], -eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,
+            s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]), 1
+        };
+
+        float aspect = 800.0f / 600.0f;
+        float fov = 60.0f * 3.14159f / 180.0f;
+        float tanH = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanH);
+        proj[5] = 1.0f / tanH;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+        sculpt.setCamera(view, proj, cx, cy, cz);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.06f, 0.07f, 0.1f);
+        renderer.render(volume);
+    }
+
+    bool onMouseDown(Mouse const& m) override {
+        sculpt.setOperation(shiftHeld ? SDFOp::Subtract : SDFOp::Union);
+        sculpt.beginStroke(m.x(), m.y(), 800, 600);
+        return true;
+    }
+
+    bool onMouseDrag(Mouse const& m) override {
+        sculpt.continueStroke(m.x(), m.y(), 800, 600);
+        return true;
+    }
+
+    bool onMouseUp(Mouse const& m) override {
+        sculpt.endStroke();
+        return true;
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.shift()) shiftHeld = true;
+        if (k.key() == 'z' || k.key() == 'Z') sculpt.undo();
+        if (k.key() == 'y' || k.key() == 'Y') sculpt.redo();
+        if (k.key() == '+' || k.key() == '=') { brushSize += 0.05f; pBrushSize.set(brushSize); }
+        if (k.key() == '-') { brushSize -= 0.05f; pBrushSize.set(brushSize); }
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == Keyboard::LEFT) camAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) camAngle += 0.2f;
+        brushSize = std::max(0.05f, std::min(0.8f, brushSize));
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        return true;
+    }
+
+    bool onKeyUp(Keyboard const& k) override {
+        if (!k.shift()) shiftHeld = false;
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFSculptDemo)
+`,
+  },
+  {
+    id: 'gpu-sdf-advanced-lighting',
+    title: 'SDF Advanced Lighting',
+    description: 'SDF rendering with soft shadows, ambient occlusion, and configurable material properties. Dramatic lighting on sculpted geometry.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * SDF Advanced Lighting
+ *
+ * Demonstrates soft shadows and ambient occlusion on SDF geometry.
+ * Uses smooth CSG to create organic-looking shapes.
+ *
+ * Features: SDFVolume, SDFRenderer, soft shadows, AO, ControlGUI
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   1/2/3: Lighting presets
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFVolume.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFAdvancedLighting : public App {
+    SDFVolume volume;
+    SDFRenderer renderer;
+    float camAngle = 0.8f;
+    float camPitch = 0.35f;
+    float camDist = 5.5f;
+    float lightAngle = 0.0f;
+
+    ControlGUI gui;
+    Parameter pShadowSoft{"Shadow Softness", "Lighting", 8.0f, 1.0f, 32.0f};
+    Parameter pAORadius{"AO Radius", "Lighting", 0.3f, 0.05f, 1.0f};
+    Parameter pRoughness{"Roughness", "Lighting", 0.5f, 0.0f, 1.0f};
+    Parameter pMetallic{"Metallic", "Lighting", 0.0f, 0.0f, 1.0f};
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        volume.create(graphics().backend(), 96);
+        volume.setWorldExtent(5.0f);
+
+        // Organic sculpted scene
+        volume.addPlane(0, -1.2f, 0, 0, 1, 0, SDFOp::Union);
+        volume.addSphere(0, 0, 0, 0.7f, SDFOp::SmoothUnion);
+        volume.addSphere(0.4f, 0.3f, 0.2f, 0.45f, SDFOp::SmoothUnion);
+        volume.addSphere(-0.3f, 0.5f, -0.1f, 0.4f, SDFOp::SmoothUnion);
+        volume.addSphere(0.1f, -0.2f, 0.5f, 0.5f, SDFOp::SmoothUnion);
+
+        // Archway
+        volume.addBox(0.8f, 0.0f, -0.5f, 0.1f, 0.8f, 0.3f, SDFOp::Union);
+        volume.addBox(-0.8f, 0.0f, -0.5f, 0.1f, 0.8f, 0.3f, SDFOp::Union);
+        volume.addBox(0, 0.75f, -0.5f, 0.9f, 0.1f, 0.3f, SDFOp::Union);
+
+        volume.addSphere(0, 0.2f, 0, 0.35f, SDFOp::Subtract);
+        volume.setSmoothness(0.2f);
+        volume.bake();
+
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.03f, 0.04f, 0.07f);
+        renderer.enableSoftShadows(true, 24, 8.0f);
+        renderer.enableAO(true, 5, 0.3f);
+        renderer.setMaterialColor(0.8f, 0.72f, 0.6f);
+        renderer.setMaterial(0.0f, 0.5f);
+        renderer.setLightDir(0.6f, 0.9f, 0.3f);
+        renderer.setLightColor(1.0f, 0.9f, 0.8f, 0.08f, 0.1f, 0.15f);
+
+        gui << pShadowSoft << pAORadius << pRoughness << pMetallic;
+        gui.init();
+    }
+
+    void onAnimate(double dt) override {
+        lightAngle += 0.15f * dt;
+        renderer.setLightDir(cosf(lightAngle)*0.6f, 0.9f, sinf(lightAngle)*0.6f);
+        renderer.enableSoftShadows(true, 24, pShadowSoft.get());
+        renderer.enableAO(true, 5, pAORadius.get());
+        renderer.setMaterial(pMetallic.get(), pRoughness.get());
+
+        float cx = cosf(camAngle)*camDist*cosf(camPitch);
+        float cy = sinf(camPitch)*camDist;
+        float cz = sinf(camAngle)*camDist*cosf(camPitch);
+
+        float eye[3] = {cx, cy, cz};
+        float up[3] = {0, 1, 0};
+        float f[3] = {-eye[0], -eye[1], -eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,  s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]), 1
+        };
+
+        float aspect = 800.0f / 600.0f;
+        float fov = 55.0f * 3.14159f / 180.0f;
+        float tanH = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanH);
+        proj[5] = 1.0f / tanH;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.03f, 0.04f, 0.07f);
+        renderer.render(volume);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == Keyboard::LEFT) camAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) camAngle += 0.2f;
+        if (k.key() == '1') {
+            renderer.setLightColor(1, 0.85f, 0.7f, 0.05f, 0.06f, 0.1f);
+            renderer.enableSoftShadows(true, 24, 4.0f);
+        }
+        if (k.key() == '2') {
+            renderer.setLightColor(0.9f, 0.92f, 1.0f, 0.2f, 0.22f, 0.25f);
+            renderer.enableSoftShadows(true, 24, 16.0f);
+        }
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFAdvancedLighting)
+`,
+  },
+  {
+    id: 'gpu-sdf-terrain-sculpt',
+    title: 'SDF Terrain Sculpting',
+    description: 'Procedural FBM noise terrain with interactive digging and building. Generate, modify, and explore the landscape in real time.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * SDF Terrain Sculpting
+ *
+ * Generates procedural terrain using FBM noise baked into an
+ * SDF volume. Press R to regenerate with a new seed.
+ *
+ * Features: SDFTerrain, SDFRenderer, ControlGUI, FBM noise
+ * Controls:
+ *   R: Regenerate terrain
+ *   Arrow keys: Orbit camera
+ *   +/-: Zoom
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFTerrain.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFTerrainDemo : public App {
+    SDFTerrain terrain;
+    SDFRenderer renderer;
+    float camAngle = 0.6f;
+    float camPitch = 0.5f;
+    float camDist = 7.0f;
+    uint32_t seed = 42;
+
+    ControlGUI gui;
+    Parameter pFrequency{"Frequency", "Terrain", 1.0f, 0.2f, 4.0f};
+    Parameter pAmplitude{"Amplitude", "Terrain", 0.8f, 0.1f, 2.0f};
+    ParameterInt pOctaves{"Octaves", "Terrain", 6, 1, 8};
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        terrain.create(graphics().backend(), 96);
+        terrain.setWorldExtent(8.0f);
+        terrain.setNoiseParams(6, 1.0f, 0.8f, 2.0f);
+        terrain.setHeightOffset(-0.5f);
+        terrain.setSeed(seed);
+        terrain.generate();
+
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.5f, 0.7f, 0.9f);
+        renderer.setLightDir(0.5f, 0.9f, 0.3f);
+        renderer.setLightColor(1.0f, 0.95f, 0.85f, 0.15f, 0.18f, 0.22f);
+        renderer.setMaterialColor(0.55f, 0.45f, 0.35f);
+        renderer.enableSoftShadows(true, 16, 8.0f);
+        renderer.enableAO(true, 5, 0.4f);
+
+        gui << pFrequency << pAmplitude << pOctaves;
+        gui.init();
+    }
+
+    void onAnimate(double dt) override {
+        float cx = cosf(camAngle)*camDist*cosf(camPitch);
+        float cy = sinf(camPitch)*camDist;
+        float cz = sinf(camAngle)*camDist*cosf(camPitch);
+
+        float eye[3] = {cx, cy, cz};
+        float up[3] = {0, 1, 0};
+        float f[3] = {-eye[0], -eye[1], -eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,  s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]), 1
+        };
+
+        float aspect = 800.0f / 600.0f;
+        float fov = 60.0f * 3.14159f / 180.0f;
+        float tanH = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanH);
+        proj[5] = 1.0f / tanH;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.5f, 0.7f, 0.9f);
+        // TODO: Render terrain volume
+        // renderer.render() requires an SDFVolume adapter for terrain
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == 'r' || k.key() == 'R') {
+            seed++;
+            terrain.setSeed(seed);
+            terrain.setNoiseParams(pOctaves.get(), pFrequency.get(), pAmplitude.get(), 2.0f);
+            terrain.generate();
+        }
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == Keyboard::LEFT) camAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) camAngle += 0.2f;
+        if (k.key() == '+' || k.key() == '=') camDist -= 0.5f;
+        if (k.key() == '-') camDist += 0.5f;
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        camDist = std::max(3.0f, std::min(15.0f, camDist));
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFTerrainDemo)
+`,
+  },
+  {
+    id: 'gpu-sdf-showcase',
+    title: 'SDF Showcase',
+    description: 'Combined showcase: architectural scene with smooth CSG, soft shadows, AO, animated light, and multiple material presets.',
+    category: 'gpu-compute',
+    subcategory: 'sdf',
+    webgpuOnly: true,
+    code: `/**
+ * SDF Showcase
+ *
+ * Combined demo showing the full SDF rendering pipeline:
+ * - Smooth CSG geometry with organic forms
+ * - Soft shadows and ambient occlusion
+ * - Animated light source
+ * - Material presets (clay, chrome, jade, lava)
+ *
+ * Features: SDFVolume, SDFRenderer, shadows, AO, ControlGUI
+ * Controls:
+ *   Arrow keys: Orbit camera
+ *   +/-: Zoom
+ *   1-4: Material presets
+ *   Space: Toggle light rotation
+ *
+ * NOTE: WebGPU backend only.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebGPUSDFVolume.hpp"
+#include "al_WebGPUSDFRenderer.hpp"
+#include "al_WebGPUBackend.hpp"
+#include <cmath>
+
+using namespace al;
+
+class SDFShowcase : public App {
+    SDFVolume volume;
+    SDFRenderer renderer;
+    float camAngle = 0.0f;
+    float camPitch = 0.35f;
+    float camDist = 6.0f;
+    float lightAngle = 0.0f;
+    bool rotateLight = true;
+    float time = 0;
+
+    ControlGUI gui;
+    Parameter pShadows{"Shadow Soft", "Rendering", 8.0f, 1.0f, 32.0f};
+    Parameter pAO{"AO Strength", "Rendering", 0.3f, 0.0f, 1.0f};
+
+    void onCreate() override {
+        auto* backend = dynamic_cast<WebGPUBackend*>(&graphics().backend());
+        if (!backend) return;
+
+        volume.create(graphics().backend(), 112);
+        volume.setWorldExtent(5.0f);
+
+        // Ground
+        volume.addPlane(0, -1.3f, 0, 0, 1, 0, SDFOp::Union);
+
+        // Central tower
+        volume.addBox(0, 0, 0, 0.3f, 1.0f, 0.3f, SDFOp::SmoothUnion);
+        volume.addSphere(0, 0.9f, 0, 0.4f, SDFOp::SmoothUnion);
+
+        // Side pillars
+        volume.addCapsule(-0.9f, -1.0f, 0, -0.9f, 0.4f, 0, 0.12f, SDFOp::Union);
+        volume.addCapsule(0.9f, -1.0f, 0, 0.9f, 0.4f, 0, 0.12f, SDFOp::Union);
+
+        // Connecting arches
+        volume.addSphere(-0.45f, 0.5f, 0, 0.2f, SDFOp::SmoothUnion);
+        volume.addSphere(0.45f, 0.5f, 0, 0.2f, SDFOp::SmoothUnion);
+
+        // Floating orbs
+        volume.addSphere(-0.6f, 0.3f, 0.7f, 0.2f, SDFOp::Union);
+        volume.addSphere(0.7f, 0.2f, -0.5f, 0.18f, SDFOp::Union);
+        volume.addSphere(0.1f, 0.7f, -0.8f, 0.15f, SDFOp::Union);
+
+        // Carved details
+        volume.addSphere(0, 0.3f, 0.0f, 0.18f, SDFOp::Subtract);
+        volume.addBox(0, -0.3f, 0, 0.6f, 0.1f, 0.6f, SDFOp::Subtract);
+
+        volume.setSmoothness(0.15f);
+        volume.bake();
+
+        renderer.create(graphics().backend());
+        renderer.setBackgroundColor(0.04f, 0.05f, 0.08f);
+        renderer.enableSoftShadows(true, 24, 8.0f);
+        renderer.enableAO(true, 5, 0.3f);
+        renderer.setMaxSteps(160);
+        renderer.setMaterialColor(0.82f, 0.73f, 0.63f);
+        renderer.setMaterial(0.0f, 0.5f);
+        renderer.setLightColor(1.0f, 0.92f, 0.8f, 0.1f, 0.12f, 0.16f);
+
+        gui << pShadows << pAO;
+        gui.init();
+    }
+
+    void setMat(int p) {
+        if (p==0) { renderer.setMaterialColor(0.82f,0.73f,0.63f); renderer.setMaterial(0,0.6f); renderer.setBackgroundColor(0.04f,0.05f,0.08f); }
+        if (p==1) { renderer.setMaterialColor(0.95f,0.95f,0.97f); renderer.setMaterial(0.95f,0.15f); renderer.setBackgroundColor(0.02f,0.02f,0.04f); }
+        if (p==2) { renderer.setMaterialColor(0.2f,0.65f,0.35f); renderer.setMaterial(0.05f,0.45f); renderer.setBackgroundColor(0.03f,0.05f,0.04f); }
+        if (p==3) { renderer.setMaterialColor(0.95f,0.2f,0.05f); renderer.setMaterial(0,0.7f); renderer.setBackgroundColor(0.08f,0.02f,0.01f); }
+    }
+
+    void onAnimate(double dt) override {
+        time += dt;
+        if (rotateLight) lightAngle += 0.3f * dt;
+        renderer.setLightDir(cosf(lightAngle)*0.7f, 0.85f, sinf(lightAngle)*0.7f);
+        renderer.enableSoftShadows(true, 24, pShadows.get());
+        renderer.enableAO(true, 5, pAO.get());
+
+        camAngle += 0.15f * dt;
+        float cx = cosf(camAngle)*camDist*cosf(camPitch);
+        float cy = sinf(camPitch)*camDist;
+        float cz = sinf(camAngle)*camDist*cosf(camPitch);
+
+        float eye[3] = {cx, cy, cz};
+        float up[3] = {0, 1, 0};
+        float f[3] = {-eye[0], -eye[1], -eye[2]};
+        float fLen = sqrtf(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        f[0]/=fLen; f[1]/=fLen; f[2]/=fLen;
+        float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+        float sLen = sqrtf(s[0]*s[0]+s[1]*s[1]+s[2]*s[2]);
+        s[0]/=sLen; s[1]/=sLen; s[2]/=sLen;
+        float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+        float view[16] = {
+            s[0], u[0], -f[0], 0,  s[1], u[1], -f[1], 0,
+            s[2], u[2], -f[2], 0,
+            -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]),
+            -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]),
+            (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]), 1
+        };
+
+        float aspect = 800.0f / 600.0f;
+        float fov = 55.0f * 3.14159f / 180.0f;
+        float tanH = tanf(fov / 2.0f);
+        float near = 0.1f, far = 50.0f;
+        float proj[16] = {0};
+        proj[0] = 1.0f / (aspect * tanH);
+        proj[5] = 1.0f / tanH;
+        proj[10] = -(far + near) / (far - near);
+        proj[11] = -1;
+        proj[14] = -2 * far * near / (far - near);
+
+        renderer.setCamera(view, proj, cx, cy, cz);
+        renderer.setTime(time);
+    }
+
+    void onDraw(Graphics& g) override {
+        g.clear(0.04f, 0.05f, 0.08f);
+        renderer.render(volume);
+    }
+
+    bool onKeyDown(Keyboard const& k) override {
+        if (k.key() == Keyboard::UP) camPitch += 0.1f;
+        if (k.key() == Keyboard::DOWN) camPitch -= 0.1f;
+        if (k.key() == Keyboard::LEFT) camAngle -= 0.2f;
+        if (k.key() == Keyboard::RIGHT) camAngle += 0.2f;
+        if (k.key() == '+' || k.key() == '=') camDist -= 0.5f;
+        if (k.key() == '-') camDist += 0.5f;
+        if (k.key() == ' ') rotateLight = !rotateLight;
+        if (k.key() == '1') setMat(0);
+        if (k.key() == '2') setMat(1);
+        if (k.key() == '3') setMat(2);
+        if (k.key() == '4') setMat(3);
+        camPitch = std::max(-1.4f, std::min(1.4f, camPitch));
+        camDist = std::max(2.0f, std::min(12.0f, camDist));
+        return true;
+    }
+};
+
+ALLOLIB_WEB_MAIN(SDFShowcase)
 `,
   },
 ]

@@ -4078,8 +4078,14 @@ void WebGPUBackend::createScreenSpaceShader() {
     fragmentState.targets = &colorTarget;
     pipelineDesc.fragment = &fragmentState;
 
-    // No depth testing for screen-space rendering
-    pipelineDesc.depthStencil = nullptr;
+    // Depth stencil: must match render pass depth attachment (Depth32Float)
+    WGPUDepthStencilState depthStateSS = {};
+    depthStateSS.format = WGPUTextureFormat_Depth32Float;
+    depthStateSS.depthWriteEnabled = false;
+    depthStateSS.depthCompare = WGPUCompareFunction_Always;
+    depthStateSS.stencilFront.compare = WGPUCompareFunction_Always;
+    depthStateSS.stencilBack.compare = WGPUCompareFunction_Always;
+    pipelineDesc.depthStencil = &depthStateSS;
 
     // Multisample
     pipelineDesc.multisample.count = 1;
@@ -6580,6 +6586,47 @@ void WebGPUBackend::drawParticlesSoft(BufferHandle particleBuffer, BufferHandle 
     wgpuRenderPassEncoderDraw(mRenderPassEncoder, 6, particleCount, 0, 0);
 }
 
+// ─── Custom Fullscreen Quad Rendering ────────────────────────────────────────
+
+void WebGPUBackend::drawCustomFullscreen(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup) {
+    if (!pipeline || !bindGroup) return;
+
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, bindGroup, 0, nullptr);
+    wgpuRenderPassEncoderDraw(mRenderPassEncoder, 6, 1, 0, 0);
+}
+
+void WebGPUBackend::drawCustomWithVertices(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                                            WGPUBuffer vertexBuffer, uint32_t vertexCount) {
+    if (!pipeline || !bindGroup || !vertexBuffer) return;
+
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, bindGroup, 0, nullptr);
+    wgpuRenderPassEncoderSetVertexBuffer(mRenderPassEncoder, 0, vertexBuffer, 0, 0);
+    wgpuRenderPassEncoderDraw(mRenderPassEncoder, vertexCount, 1, 0, 0);
+}
+
+void WebGPUBackend::drawCustomIndexed(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                                       WGPUBuffer vertexBuffer, WGPUBuffer indexBuffer,
+                                       uint32_t indexCount) {
+    if (!pipeline || !bindGroup || !vertexBuffer || !indexBuffer) return;
+
+    beginRenderPass();
+    if (!mRenderPassEncoder) return;
+
+    wgpuRenderPassEncoderSetPipeline(mRenderPassEncoder, pipeline);
+    wgpuRenderPassEncoderSetBindGroup(mRenderPassEncoder, 0, bindGroup, 0, nullptr);
+    wgpuRenderPassEncoderSetVertexBuffer(mRenderPassEncoder, 0, vertexBuffer, 0, 0);
+    wgpuRenderPassEncoderSetIndexBuffer(mRenderPassEncoder, indexBuffer, WGPUIndexFormat_Uint32, 0, 0);
+    wgpuRenderPassEncoderDrawIndexed(mRenderPassEncoder, indexCount, 1, 0, 0, 0);
+}
+
 // ─── GPU Fluid Field Rendering (Phase 5) ────────────────────────────────────
 
 static const char* kFluidFieldVertexShader = R"(
@@ -6771,8 +6818,14 @@ void WebGPUBackend::createFluidFieldPipeline() {
     fragmentState.targets = &colorTarget;
     pipelineDesc.fragment = &fragmentState;
 
-    // Depth stencil: disabled for fullscreen quad
-    pipelineDesc.depthStencil = nullptr;
+    // Depth stencil: must match render pass depth attachment (Depth32Float)
+    WGPUDepthStencilState depthState = {};
+    depthState.format = WGPUTextureFormat_Depth32Float;
+    depthState.depthWriteEnabled = false;
+    depthState.depthCompare = WGPUCompareFunction_Always;
+    depthState.stencilFront.compare = WGPUCompareFunction_Always;
+    depthState.stencilBack.compare = WGPUCompareFunction_Always;
+    pipelineDesc.depthStencil = &depthState;
 
     // Multisample
     WGPUMultisampleState msState = {};
@@ -6946,6 +6999,9 @@ void WebGPUBackend::drawPBRIndexed(const float*, const float*, const float*, Buf
 void WebGPUBackend::drawParticles(BufferHandle, BufferHandle, int) {}
 void WebGPUBackend::drawParticlesSoft(BufferHandle, BufferHandle, int, float) {}
 void WebGPUBackend::drawFluidField(BufferHandle, BufferHandle, int) {}
+void WebGPUBackend::drawCustomFullscreen(WGPURenderPipeline, WGPUBindGroup) {}
+void WebGPUBackend::drawCustomWithVertices(WGPURenderPipeline, WGPUBindGroup, WGPUBuffer, uint32_t) {}
+void WebGPUBackend::drawCustomIndexed(WGPURenderPipeline, WGPUBindGroup, WGPUBuffer, WGPUBuffer, uint32_t) {}
 
 } // namespace al
 

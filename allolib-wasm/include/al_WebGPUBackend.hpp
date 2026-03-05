@@ -330,11 +330,52 @@ public:
     /// Draw fluid field as fullscreen quad from storage buffer
     void drawFluidField(BufferHandle fieldBuffer, BufferHandle renderParamsBuffer, int cellCount);
 
+    // ── Custom Fullscreen Quad Rendering ─────────────────────────────────
+
+    /// Draw a fullscreen quad with a custom render pipeline and bind group.
+    /// The pipeline must use the vertex-index fullscreen quad pattern (6 verts).
+    /// The caller creates the pipeline+bindGroup using getDevice(); this method
+    /// handles beginRenderPass and issues the draw call within the current frame.
+    void drawCustomFullscreen(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup);
+
+    /// Draw with a custom render pipeline, bind group, and vertex buffer.
+    /// Used for custom WGSL shaders that need mesh vertex data.
+    void drawCustomWithVertices(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                                WGPUBuffer vertexBuffer, uint32_t vertexCount);
+
+    /// Draw indexed with a custom render pipeline, bind group, vertex buffer, and index buffer.
+    void drawCustomIndexed(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                           WGPUBuffer vertexBuffer, WGPUBuffer indexBuffer,
+                           uint32_t indexCount);
+
 #ifdef __EMSCRIPTEN__
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
     WGPUDevice getDevice() const { return mDevice; }
     WGPUQueue getQueue() const { return mQueue; }
+    WGPUTextureFormat getSwapChainFormat() const { return mSwapChainFormat; }
+    WGPUTextureFormat getDepthFormat() const { return WGPUTextureFormat_Depth32Float; }
+
+    /// Get the raw WGPUTextureView for a texture handle (for custom bind groups)
+    WGPUTextureView getTextureView(TextureHandle handle) const {
+        auto it = mTextures.find(handle.id);
+        if (it != mTextures.end()) return it->second.view;
+        return nullptr;
+    }
+
+    /// Get the raw WGPUBuffer for a buffer handle (for custom bind groups)
+    WGPUBuffer getRawBuffer(BufferHandle handle) const {
+        auto it = mBuffers.find(handle.id);
+        if (it != mBuffers.end()) return it->second.buffer;
+        return nullptr;
+    }
+
+    /// Get raw buffer size
+    size_t getRawBufferSize(BufferHandle handle) const {
+        auto it = mBuffers.find(handle.id);
+        if (it != mBuffers.end()) return it->second.size;
+        return 0;
+    }
 #endif
 
 private:

@@ -273,6 +273,21 @@ TextureHandle Graphics_getTextureHandle(GLuint glTextureId) {
     return TextureHandle{0};
 }
 
+// Get the raw WGPUTextureView for a GL texture ID (for use in custom WGSL shaders)
+WGPUTextureView Graphics_getTextureViewForGL(unsigned int glTextureId) {
+#ifdef ALLOLIB_WEBGPU
+    if (!sWebGPUMode || !sGraphicsBackend || glTextureId == 0) return nullptr;
+    auto it = sTextureBridge.find(glTextureId);
+    if (it != sTextureBridge.end() && it->second.webgpuHandle.valid()) {
+        auto* backend = dynamic_cast<WebGPUBackend*>(sGraphicsBackend);
+        if (backend) {
+            return backend->getTextureView(it->second.webgpuHandle);
+        }
+    }
+#endif
+    return nullptr;
+}
+
 // Bind framebuffer - routes to WebGPU backend when in WebGPU mode
 void Graphics_bindFramebuffer(unsigned int fboId) {
     if (sWebGPUMode && sGraphicsBackend) {

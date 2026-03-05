@@ -15,6 +15,8 @@ Make ALL existing AlloLib Studio examples work with WebGPU **without changing ex
 - Diffuse lighting (Lambert shading)
 - Uniform color tint
 - **2D Textures** (Phase 1 complete) - Texture bridge syncs GL textures to WebGPU
+- **3D Textures** (Phase 9 complete) - `texture_3d<f32>` WGSL shader, `create3D()` API
+- **HDR Float Textures** (Phase 10 complete) - RGBA16F/RGBA32F format support
 
 ### Not Yet Implemented
 | Feature | Examples Affected | Priority |
@@ -27,8 +29,8 @@ Make ALL existing AlloLib Studio examples work with WebGPU **without changing ex
 | ~~WebPBR System~~ | ~~All PBR examples~~ | ✅ DONE |
 | ~~WebEnvironment~~ | ~~Environment Picker, Reflections~~ | ✅ DONE |
 | ~~ProceduralTexture~~ | ~~Procedural Noise, Patterns~~ | ✅ DONE (via Phase 1) |
-| 3D Textures | 3D Textures example | LOW |
-| HDR Textures | HDR examples | LOW |
+| ~~3D Textures~~ | ~~3D Textures example~~ | ✅ DONE (Phase 9) |
+| ~~HDR Textures~~ | ~~HDR examples~~ | ✅ DONE (Phase 10) |
 | ~~LOD System~~ | ~~All LOD examples~~ | ✅ DONE (backend-agnostic) |
 
 ---
@@ -316,6 +318,58 @@ Features implemented:
 
 ---
 
+### Phase 9: 3D Textures (Enables ~1 example) ✅ COMPLETE
+**Status:** Fully implemented with 3D texture upload, WGSL 3D sampling shader, and automatic shader selection.
+
+**Completed:**
+- [x] 3D texture upload with correct depth extent (`createTexture`/`updateTexture`)
+- [x] WGSL 3D fragment shader (`kTextured3DFragmentShader`) using `texture_3d<f32>`
+- [x] 3D texture bind group layout (`WGPUTextureViewDimension_3D`)
+- [x] Texture bridge extended: `Graphics_registerTexture3D()`, `Graphics_isTexture3D()`
+- [x] `Texture::submit()` detects `GL_TEXTURE_3D` and routes to 3D bridge
+- [x] Shader selection: `draw()`/`drawIndexed()`/`drawTriangleFanEmulated()` detect 3D texture → use 3D shader
+- [x] `createTextured3DShader()` pipeline with proper vertex layout
+- [x] `pointSize` uniform repurposed as Z slice coordinate for 3D texture sampling
+
+**Files modified:**
+- `al_WebGPUBackend.cpp` - 3D shader (lines 224-258), bind group (3783-3808), pipeline (3753-3908), shader selection
+- `al_Graphics_Web.cpp` - `Graphics_registerTexture3D()`, `Graphics_isTexture3D()`, `Graphics_isBoundTexture3D()`
+- `al_Texture_Web.cpp` - 3D texture detection in `submit()`
+
+**Lines added:** ~400
+
+**Playwright tests:** ✅ COMPLETE
+- [x] 3D texture creates and renders (WebGL2 + WebGPU)
+- [x] Visual baseline: `webgpu-phase9-3d-texture.png`
+- [x] 3D Texture WebGL2 vs WebGPU comparison
+
+---
+
+### Phase 10: HDR Float Textures (Enables ~2 examples) ✅ COMPLETE
+**Status:** Fully implemented with RGBA16F/RGBA32F format support through texture bridge.
+
+**Completed:**
+- [x] Float format detection in texture bridge: `Graphics_registerTextureWithFormat()`
+- [x] `Texture::submit()` detects `GL_FLOAT` → RGBA32F, `GL_HALF_FLOAT` → RGBA16F
+- [x] Correct bytes-per-pixel calculation for float formats in `createTexture()`/`updateTexture()`
+- [x] HDR render target creation with RGBA16Float format
+- [x] Example: `studio-tex-hdr-exposure` using WebPBR with HDR environment
+
+**Files modified:**
+- `al_Graphics_Web.cpp` - `Graphics_registerTextureWithFormat()` (lines 88-121)
+- `al_Texture_Web.cpp` - Float format detection (lines 287-294)
+- `al_WebGPUBackend.cpp` - Float bytes/pixel calc (lines 1896-1904, 1944-1952)
+
+**Lines added:** ~100
+
+**Playwright tests:** ✅ COMPLETE
+- [x] Float texture (RGBA32F) renders (WebGL2 + WebGPU)
+- [x] HDR PBR renders with exposure control (WebGL2 + WebGPU)
+- [x] Visual baseline: `webgpu-phase10-hdr-float.png`
+- [x] Float Texture WebGL2 vs WebGPU comparison
+
+---
+
 ## Summary Table
 
 | Phase | Feature | Examples Enabled | Est. Lines | Cumulative | Status |
@@ -328,8 +382,10 @@ Features implemented:
 | 6 | WebEnvironment | 6 | 400 | 2100 | ✅ DONE |
 | 7 | ProceduralTexture | 4 | 0 | 2100 | ✅ DONE (via Phase 1) |
 | 8 | LOD System | 4 | 0 | 2100 | ✅ DONE (backend-agnostic) |
+| 9 | 3D Textures | 1 | 400 | 2500 | ✅ DONE |
+| 10 | HDR Float Textures | 2 | 100 | 2600 | ✅ DONE |
 
-**Total: ~2,100 lines of new code - ALL PHASES COMPLETE**
+**Total: ~2,600 lines of new code - ALL PHASES COMPLETE**
 
 ---
 
@@ -743,6 +799,17 @@ that flows through the already-tested Phase 1 Texture Bridge.
 
 **Note:** No WebGPU-specific tests needed - LOD system operates entirely at
 C++ level above the graphics backend. Both backends receive the same mesh data.
+
+#### Phase 9: 3D Textures ✅ COMPLETE
+- [x] Test: 3D texture creates and renders (WebGL2 + WebGPU)
+- [x] Test: 3D Texture WebGL2 vs WebGPU comparison
+- [x] Visual baseline: `webgpu-phase9-3d-texture.png`
+
+#### Phase 10: HDR Float Textures ✅ COMPLETE
+- [x] Test: Float texture (RGBA32F) renders (WebGL2 + WebGPU)
+- [x] Test: HDR PBR renders with exposure (WebGL2 + WebGPU)
+- [x] Test: Float Texture WebGL2 vs WebGPU comparison
+- [x] Visual baseline: `webgpu-phase10-hdr-float.png`
 
 ### Test Template
 
