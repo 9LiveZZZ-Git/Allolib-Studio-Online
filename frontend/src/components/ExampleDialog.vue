@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { Example, MultiFileExample } from '@/data/examples'
+import { useSettingsStore } from '@/stores/settings'
+
+const settings = useSettingsStore()
 
 const props = defineProps<{
   example: Example | MultiFileExample | null
@@ -33,6 +36,14 @@ const fileList = computed(() => {
     return props.example.files.map(f => f.path)
   }
   return ['main.cpp']
+})
+
+const isWebGPUOnly = computed(() => {
+  return props.example && 'webgpuOnly' in props.example && props.example.webgpuOnly
+})
+
+const isWrongBackend = computed(() => {
+  return isWebGPUOnly.value && settings.graphics.backendType === 'webgl2'
 })
 
 function handleAddToProject() {
@@ -92,6 +103,22 @@ function handleClose() {
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                   {{ file }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- WebGPU Warning -->
+          <div v-if="isWrongBackend" class="bg-amber-900/30 border border-amber-600/50 rounded-lg p-3">
+            <div class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-amber-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <div>
+                <div class="text-amber-300 font-medium text-sm">WebGPU Backend Required</div>
+                <div class="text-amber-200/70 text-xs mt-1">
+                  This example uses GPU compute shaders and requires the WebGPU backend.
+                  Your current backend is WebGL2. Go to Settings &gt; Graphics to switch to WebGPU before running.
                 </div>
               </div>
             </div>

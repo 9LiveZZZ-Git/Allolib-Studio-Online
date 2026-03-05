@@ -32,13 +32,13 @@
               <svg class="w-12 h-12 mx-auto text-gray-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
-              <p class="text-gray-400 mb-2">Drag and drop a .allolib file here</p>
+              <p class="text-gray-400 mb-2">Drag and drop a .allolib or .cpp file here</p>
               <p class="text-gray-500 text-sm mb-4">or</p>
               <label class="inline-block px-4 py-2 text-sm bg-[#2d2d2d] text-white rounded cursor-pointer hover:bg-[#3c3c3c]">
                 Browse Files
                 <input
                   type="file"
-                  accept=".allolib"
+                  accept=".allolib,.cpp,.c,.h,.hpp"
                   class="hidden"
                   @change="handleFileSelect"
                 />
@@ -111,7 +111,9 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { importProjectFile } from '@/services/unifiedProject'
+import { importProjectFile, saveUnifiedProject } from '@/services/unifiedProject'
+import { transpileToWeb, detectCodeType } from '@/services/transpiler'
+import { useProjectStore } from '@/stores/project'
 
 const props = defineProps<{
   modelValue: boolean
@@ -154,10 +156,13 @@ function handleDrop(event: DragEvent) {
   }
 }
 
+const VALID_EXTENSIONS = ['.allolib', '.cpp', '.c', '.h', '.hpp']
+
 function selectFile(file: File) {
   error.value = ''
-  if (!file.name.endsWith('.allolib')) {
-    error.value = 'Please select a .allolib file'
+  const hasValidExt = VALID_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))
+  if (!hasValidExt) {
+    error.value = 'Please select a .allolib or C++ file (.cpp, .c, .h, .hpp)'
     return
   }
   selectedFile.value = file
@@ -176,10 +181,33 @@ async function handleImport() {
   error.value = ''
 
   try {
-    await importProjectFile(selectedFile.value)
+    const ext = selectedFile.value.name.substring(selectedFile.value.name.lastIndexOf('.')).toLowerCase()
+
+    if (ext === '.allolib') {
+      await importProjectFile(selectedFile.value)
+    } else if (['.cpp', '.c', '.h', '.hpp'].includes(ext)) {
+      // Read C++ file, transpile if native, and create project
+      const text = await selectedFile.value.text()
+      const codeType = detectCodeType(text)
+      let code = text
+      if (codeType === 'native' || codeType === 'unknown') {
+        const result = transpileToWeb(text)
+        if (result.errors.length > 0) {
+          error.value = 'Transpilation errors:\n' + result.errors.join('\n')
+          return
+        }
+        code = result.code
+        if (result.warnings.length > 0) {
+          console.warn('Transpilation warnings:', result.warnings)
+        }
+      }
+      const projectStore = useProjectStore()
+      projectStore.loadFromCode(code, selectedFile.value.name)
+      saveUnifiedProject()
+    }
+
     emit('imported')
     close()
-    // Reload to ensure all components reflect new state
     window.location.reload()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to import project'

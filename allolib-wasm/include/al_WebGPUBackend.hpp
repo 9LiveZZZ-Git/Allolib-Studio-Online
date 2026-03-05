@@ -19,6 +19,7 @@
 
 #include "al_WebGraphicsBackend.hpp"
 #include <unordered_map>
+#include <map>
 #include <vector>
 
 #ifdef __EMSCRIPTEN__
@@ -161,6 +162,7 @@ public:
     void destroyComputePipeline(ComputePipelineHandle handle) override;
     void bindStorageBuffer(int binding, BufferHandle handle) override;
     void bindStorageTexture(int binding, TextureHandle handle) override;
+    void bindUniformBuffer(int binding, BufferHandle handle) override;
 
     void dispatch(
         ComputePipelineHandle pipeline,
@@ -315,11 +317,64 @@ public:
         PrimitiveType primitive = PrimitiveType::Triangles
     );
 
+    // ── GPU Particle Rendering (Phase 4) ────────────────────────────────
+
+    /// Draw GPU particles as billboarded quads directly from storage buffer
+    void drawParticles(BufferHandle particleBuffer, BufferHandle renderParamsBuffer, int particleCount);
+
+    /// Draw GPU particles with soft depth-aware fade at geometry intersections
+    void drawParticlesSoft(BufferHandle particleBuffer, BufferHandle renderParamsBuffer, int particleCount, float fadeDistance = 0.5f);
+
+    // ── GPU Fluid Rendering (Phase 5) ────────────────────────────────────
+
+    /// Draw fluid field as fullscreen quad from storage buffer
+    void drawFluidField(BufferHandle fieldBuffer, BufferHandle renderParamsBuffer, int cellCount);
+
 #ifdef __EMSCRIPTEN__
+    // ── Custom Fullscreen Quad Rendering ─────────────────────────────────
+
+    /// Draw a fullscreen quad with a custom render pipeline and bind group.
+    /// The pipeline must use the vertex-index fullscreen quad pattern (6 verts).
+    /// The caller creates the pipeline+bindGroup using getDevice(); this method
+    /// handles beginRenderPass and issues the draw call within the current frame.
+    void drawCustomFullscreen(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup);
+
+    /// Draw with a custom render pipeline, bind group, and vertex buffer.
+    /// Used for custom WGSL shaders that need mesh vertex data.
+    void drawCustomWithVertices(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                                WGPUBuffer vertexBuffer, uint32_t vertexCount);
+
+    /// Draw indexed with a custom render pipeline, bind group, vertex buffer, and index buffer.
+    void drawCustomIndexed(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
+                           WGPUBuffer vertexBuffer, WGPUBuffer indexBuffer,
+                           uint32_t indexCount);
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
     WGPUDevice getDevice() const { return mDevice; }
     WGPUQueue getQueue() const { return mQueue; }
+    WGPUTextureFormat getSwapChainFormat() const { return mSwapChainFormat; }
+    WGPUTextureFormat getDepthFormat() const { return WGPUTextureFormat_Depth32Float; }
+
+    /// Get the raw WGPUTextureView for a texture handle (for custom bind groups)
+    WGPUTextureView getTextureView(TextureHandle handle) const {
+        auto it = mTextures.find(handle.id);
+        if (it != mTextures.end()) return it->second.view;
+        return nullptr;
+    }
+
+    /// Get the raw WGPUBuffer for a buffer handle (for custom bind groups)
+    WGPUBuffer getRawBuffer(BufferHandle handle) const {
+        auto it = mBuffers.find(handle.id);
+        if (it != mBuffers.end()) return it->second.buffer;
+        return nullptr;
+    }
+
+    /// Get raw buffer size
+    size_t getRawBufferSize(BufferHandle handle) const {
+        auto it = mBuffers.find(handle.id);
+        if (it != mBuffers.end()) return it->second.size;
+        return 0;
+    }
 #endif
 
 private:
@@ -371,6 +426,14 @@ private:
         WGPUBindGroup bindGroup = nullptr;
     };
 
+    // Compute binding tracking
+    struct ComputeBinding {
+        enum Type { StorageBuffer, StorageTexture, UniformBuffer } type;
+        uint64_t resourceId = 0;  // BufferHandle.id or TextureHandle.id
+    };
+    std::map<int, ComputeBinding> mPendingComputeBindings;
+    bool mComputeBindGroupDirty = true;
+
     // Resource maps (handle ID -> resource)
     std::unordered_map<uint64_t, BufferResource> mBuffers;
     std::unordered_map<uint64_t, TextureResource> mTextures;
@@ -405,6 +468,7 @@ private:
     ShaderHandle mCurrentShader;
     ShaderHandle mDefaultShader;    // Default mesh shader for fallback
     ShaderHandle mTexturedShader;   // Textured mesh shader
+    ShaderHandle mTextured3DShader;  // 3D textured mesh shader
     ShaderHandle mScreenSpaceShader; // Screen-space textured shader (for post-processing)
     ShaderHandle mLitShader;        // Lighting shader (Phase 2)
 
@@ -458,6 +522,10 @@ private:
     WGPUBindGroupLayout mPBRBindGroupLayout = nullptr;
     WGPURenderPipeline mPBRPipeline = nullptr;
     WGPURenderPipeline mPBRFallbackPipeline = nullptr;
+    std::unordered_map<int, WGPURenderPipeline> mPBRFallbackPipelineCache; // keyed by WGPUPrimitiveTopology
+    WGPUPipelineLayout mPBRFallbackPipelineLayout = nullptr;
+    WGPUShaderModule mPBRVertModule = nullptr;
+    WGPUShaderModule mPBRFallbackFragModule = nullptr;
     bool mPBREnabled = false;
     bool mPBRBindingDirty = true;
 
@@ -488,6 +556,34 @@ private:
 
     PBRMaterialData mPBRMaterial;
     PBRParamsData mPBRParams;
+
+    // Particle rendering state (Phase 4)
+    WGPURenderPipeline mParticlePipeline = nullptr;
+    WGPUBindGroupLayout mParticleBindGroupLayout = nullptr;
+    WGPUBuffer mParticleUniformBuffer = nullptr;
+    WGPUBindGroup mParticleBindGroup = nullptr;
+    BufferHandle mBoundParticleBuffer;
+    BufferHandle mBoundParticleRenderParams;
+    bool mParticleBindGroupDirty = true;
+
+    // Soft particle rendering state (Phase 6)
+    WGPURenderPipeline mSoftParticlePipeline = nullptr;
+    WGPUBindGroupLayout mSoftParticleBindGroupLayout = nullptr;
+    WGPUTexture mDepthCopyTexture = nullptr;
+    WGPUTextureView mDepthCopyView = nullptr;
+    WGPUSampler mDepthSampler = nullptr;
+    WGPUBindGroup mSoftParticleBindGroup = nullptr;
+    BufferHandle mBoundSoftParticleBuffer;
+    BufferHandle mBoundSoftParticleRenderParams;
+    bool mSoftParticleBindGroupDirty = true;
+
+    // Fluid field rendering state (Phase 5)
+    WGPURenderPipeline mFluidFieldPipeline = nullptr;
+    WGPUBindGroupLayout mFluidFieldBindGroupLayout = nullptr;
+    WGPUBindGroup mFluidFieldBindGroup = nullptr;
+    BufferHandle mBoundFluidFieldBuffer;
+    BufferHandle mBoundFluidRenderParams;
+    bool mFluidFieldBindGroupDirty = true;
 
     // Lighting data storage (matches WGSL struct layout)
     struct LightData {
@@ -522,7 +618,8 @@ private:
     TextureHandle mBoundTextures[8];  // Up to 8 texture units
     int mActiveTextureUnit = 0;
     bool mTextureBindingDirty = false;
-    WGPUBindGroup mTexturedBindGroup = nullptr;  // Bind group with texture
+    WGPUBindGroup mTexturedBindGroup = nullptr;    // Bind group with 2D texture
+    WGPUBindGroup mTextured3DBindGroup = nullptr;  // Bind group with 3D texture
 
     // Pending uniform data (accumulated before draw)
     std::vector<uint8_t> mUniformData;
@@ -563,18 +660,27 @@ private:
     void createDepthBuffer();
     void createDefaultShader();
     void createTexturedShader();
+    void createTextured3DShader();     // 3D textured shader
+    void updateTextured3DBindGroup();  // 3D textured bind group
     void createScreenSpaceShader();    // Screen-space shader for post-processing
     void createLightingShader();       // Phase 2: Lighting
     void createSkyboxShader();         // Phase 4: Skybox
     void createSkyboxMesh();           // Phase 4: Skybox
     void createPBRShader();            // Phase 5: PBR
     void createPBRFallbackShader();    // Phase 5: PBR fallback
+    WGPURenderPipeline getPBRFallbackPipelineForPrimitive(PrimitiveType primitive);
     void createEnvReflectShader();     // Phase 6: Environment reflections
     void updateTexturedBindGroup(ShaderHandle shaderToUse = {});
     void updateLightingBindGroup();    // Phase 2: Lighting
     void updateSkyboxBindGroup();      // Phase 4: Skybox
     void updatePBRBindGroup();         // Phase 5: PBR
     void updateEnvReflectBindGroup();  // Phase 6: Environment reflections
+    void createParticlePipeline();     // Phase 4: GPU Particles
+    void updateParticleBindGroup(BufferHandle particleBuffer, BufferHandle renderParams);
+    void createSoftParticlePipeline(); // Phase 6: Soft Particles
+    void updateSoftParticleBindGroup(BufferHandle particleBuffer, BufferHandle renderParams);
+    void createFluidFieldPipeline();   // Phase 5: GPU Fluid
+    void updateFluidFieldBindGroup(BufferHandle fieldBuffer, BufferHandle renderParams);
     void beginRenderPass();
     void endRenderPass();
     void flushUniforms();

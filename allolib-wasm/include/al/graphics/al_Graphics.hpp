@@ -16,6 +16,11 @@
 #include "al/graphics/al_OpenGL.hpp"
 #include "al/graphics/al_RenderManager.hpp"
 
+// Must be included OUTSIDE namespace al to keep WebGPU types in global namespace
+#ifdef __EMSCRIPTEN__
+#include <webgpu/webgpu.h>
+#endif
+
 namespace al {
 
 /**
@@ -333,6 +338,12 @@ GraphicsBackend* Graphics_getBackend();
 
 /// Check if WebGPU mode is active
 bool Graphics_isWebGPU();
+
+/// Get the raw WebGPU texture view for a GL texture ID (for custom WGSL shaders)
+/// Returns nullptr if not in WebGPU mode or texture not found in bridge
+#ifdef __EMSCRIPTEN__
+WGPUTextureView Graphics_getTextureViewForGL(unsigned int glTextureId);
+#endif
 
 } // namespace al
 #endif

@@ -20,7 +20,9 @@ import {
   type GlossaryEntry
 } from '@/data/glossary'
 import ExampleDialog from './ExampleDialog.vue'
-import { downloadProject, importProjectFile, newProject } from '@/services/unifiedProject'
+import { downloadProject, importProjectFile, newProject, saveUnifiedProject } from '@/services/unifiedProject'
+import { transpileToWeb, detectCodeType } from '@/services/transpiler'
+import { useProjectStore } from '@/stores/project'
 
 const props = defineProps<{
   status: AppStatus
@@ -76,8 +78,6 @@ function handleFileAction(action: string) {
 }
 
 // Project import/export handlers
-const projectFileInput = ref<HTMLInputElement | null>(null)
-
 function handleProjectExport() {
   closeFileMenu()
   downloadProject()
@@ -88,14 +88,36 @@ function handleProjectImport() {
   // Create a file input and trigger it
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.allolib'
+  input.accept = '.allolib,.cpp,.c,.h,.hpp'
   input.onchange = async (e) => {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) {
       try {
-        await importProjectFile(file)
-        // Reload the page to ensure all components reflect the new state
-        window.location.reload()
+        const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+        if (ext === '.allolib') {
+          await importProjectFile(file)
+          window.location.reload()
+        } else if (['.cpp', '.c', '.h', '.hpp'].includes(ext)) {
+          // Read C++ file, transpile, and create project
+          const text = await file.text()
+          const codeType = detectCodeType(text)
+          let code = text
+          if (codeType === 'native' || codeType === 'unknown') {
+            const result = transpileToWeb(text)
+            if (result.errors.length > 0) {
+              alert('Transpilation errors:\n' + result.errors.join('\n'))
+              return
+            }
+            code = result.code
+            if (result.warnings.length > 0) {
+              console.warn('Transpilation warnings:', result.warnings)
+            }
+          }
+          const projectStore = useProjectStore()
+          projectStore.loadFromCode(code, file.name)
+          saveUnifiedProject()
+          window.location.reload()
+        }
       } catch (error) {
         console.error('Failed to import project:', error)
         alert('Failed to import project. Please check the file format.')
@@ -191,12 +213,6 @@ function handleBackendChange() {
     // Show a notification that reload is required
     console.log('[Settings] Backend change will take effect on next compile/run')
   }
-}
-
-// Reset backendChanged flag when app is re-run
-function resetBackendChanged() {
-  initialBackendType.value = settings.graphics.backendType
-  backendChanged.value = false
 }
 
 const statusColors: Record<AppStatus, string> = {
@@ -376,7 +392,7 @@ function getPlatformBadgeClass(platform: string) {
       <!-- Project Menu Dropdown -->
       <div
         v-if="showFileMenu"
-        class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1"
+        class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1 max-h-[80vh] overflow-y-auto"
         @click.stop
       >
         <button
@@ -480,7 +496,7 @@ function getPlatformBadgeClass(platform: string) {
           <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
           </svg>
-          <span>Import .allolib Project...</span>
+          <span>Import Project...</span>
         </button>
 
         <div class="border-t border-editor-border my-1"></div>
@@ -760,6 +776,12 @@ function getPlatformBadgeClass(platform: string) {
                             class="text-[10px] px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded"
                           >
                             {{ example.files.length }} files
+                          </span>
+                          <span
+                            v-if="'webgpuOnly' in example && example.webgpuOnly"
+                            class="text-[10px] px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded"
+                          >
+                            WebGPU
                           </span>
                         </div>
                         <div class="text-xs text-gray-500 group-hover:text-gray-400">{{ example.description }}</div>

@@ -143,7 +143,7 @@ const nativeToWebPatterns: Array<{
     description: 'Base class AudioApp'
   },
 
-  // Main function transformations
+  // Main function transformations (with return 0)
   {
     pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+app\s*;\s*app\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g,
     replacement: 'ALLOLIB_WEB_MAIN($1)',
@@ -159,6 +159,8 @@ const nativeToWebPatterns: Array<{
     replacement: 'ALLOLIB_WEB_MAIN($1)',
     description: 'Main function with argc/argv'
   },
+  // Non-return-0 main() forms are handled by convertMainToWebMacro(),
+  // which verifies App inheritance via findAppClasses().
 
   // Audio configuration
   {
@@ -407,18 +409,13 @@ const webToNativePatterns: Array<{
     description: 'Base class WebApp'
   },
 
-  // Convert simple main() to ALLOLIB_WEB_MAIN for WebApp classes
-  // This is crucial for WASM exports to work correctly
+  // Normalize main() variants to ALLOLIB_WEB_MAIN, then expand below to canonical main()
+  // This ensures a consistent main() body regardless of the original format
+  // Only matches when the declared variable and .start() variable are the same
   {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;\s*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g,
+    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;\s*(?:return\s+0\s*;\s*)?\}/g,
     replacement: 'ALLOLIB_WEB_MAIN($1)',
     description: 'Convert simple main() to ALLOLIB_WEB_MAIN'
-  },
-  // Also handle main with configureAudio before start
-  {
-    pattern: /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;[^}]*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g,
-    replacement: 'ALLOLIB_WEB_MAIN($1)',
-    description: 'Convert main() with configureAudio to ALLOLIB_WEB_MAIN'
   },
 
   // Main macro to function (for native export)
@@ -563,6 +560,75 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
 }
 
 /**
+ * Collect class names that inherit from App-like base classes in the given code.
+ * Returns a Set of class names that are known App subclasses.
+ */
+function findAppClasses(code: string): Set<string> {
+  const appClasses = new Set<string>()
+  // Match: class/struct ClassName : [public] [al::]App/AudioApp/WebApp/DistributedApp
+  // struct uses public inheritance by default, so 'public' keyword is optional
+  const classPattern = /(?:class|struct)\s+(\w+)\s*:\s*(?:public\s+)?(?:al::)?(?:App|AudioApp|WebApp|DistributedApp)\b/g
+  let m
+  while ((m = classPattern.exec(code)) !== null) {
+    appClasses.add(m[1])
+  }
+  return appClasses
+}
+
+/**
+ * Robust main() → ALLOLIB_WEB_MAIN converter using brace-counting.
+ * Matches two strict patterns: `Type().start()` and `Type var; var.start()`.
+ * Only converts when the class used in main() is verified to extend App.
+ * Returns the converted code, or null if no App .start() pattern was found.
+ */
+function convertMainToWebMacro(code: string): string | null {
+  const appClasses = findAppClasses(code)
+
+  // Find int main(...)
+  const mainMatch = code.match(/int\s+main\s*\([^)]*\)\s*\{/)
+  if (!mainMatch || mainMatch.index === undefined) return null
+  const braceStart = code.indexOf('{', mainMatch.index)
+  if (braceStart === -1) return null
+
+  // Find matching closing brace by counting
+  let depth = 1
+  let i = braceStart + 1
+  while (i < code.length && depth > 0) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') depth--
+    i++
+  }
+  if (depth !== 0) return null
+  const mainEnd = i
+  const mainBody = code.substring(braceStart + 1, mainEnd - 1)
+
+  // Pattern 1: ClassName().start() — inline construction (only if it's the sole statement)
+  const inlineMatch = mainBody.match(
+    /^\s*(\w+)\(\s*\)\.start\s*\(\s*\)\s*;?\s*(?:return\s+0\s*;)?\s*$/
+  )
+  if (inlineMatch && appClasses.has(inlineMatch[1])) {
+    return code.substring(0, mainMatch.index) +
+      'ALLOLIB_WEB_MAIN(' + inlineMatch[1] + ')' +
+      code.substring(mainEnd)
+  }
+
+  // Pattern 2: ClassName varName; varName.start() (only if these are the sole statements)
+  const declStartMatch = mainBody.match(
+    /^\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;?\s*(?:return\s+0\s*;)?\s*$/
+  )
+  if (declStartMatch) {
+    const className = declStartMatch[1]
+    if (appClasses.has(className)) {
+      return code.substring(0, mainMatch.index) +
+        'ALLOLIB_WEB_MAIN(' + className + ')' +
+        code.substring(mainEnd)
+    }
+  }
+
+  return null
+}
+
+/**
  * Convert native AlloLib code to AlloLib Online (WASM)
  */
 export function transpileToWeb(code: string): TranspileResult {
@@ -573,15 +639,16 @@ export function transpileToWeb(code: string): TranspileResult {
   // Check if already web code
   const codeType = detectCodeType(code)
 
-  // Always ensure main() is converted to ALLOLIB_WEB_MAIN for WebApp classes
-  // This is required for WASM exports to work correctly
-  const mainToMacroPattern = /int\s+main\s*\(\s*\)\s*\{\s*(\w+)\s+\w+\s*;[^}]*\w+\.start\s*\(\s*\)\s*;\s*return\s+0\s*;\s*\}/g
-  const mainMatch = result.match(mainToMacroPattern)
-  if (mainMatch) {
-    result = result.replace(mainToMacroPattern, 'ALLOLIB_WEB_MAIN($1)')
+  // Try to convert main() to ALLOLIB_WEB_MAIN using brace-counting converter.
+  // Only handles two strict patterns: Type().start() and Type var; var.start()
+  // convertMainToWebMacro() verifies the class extends App before converting.
+  const mainConverted = !result.includes('ALLOLIB_WEB_MAIN') && /int\s+main\s*\(/.test(result)
+    ? convertMainToWebMacro(result) : null
+  if (mainConverted) {
+    result = mainConverted
   }
 
-  if (codeType === 'web' && !mainMatch) {
+  if (codeType === 'web' && !mainConverted) {
     warnings.push('Code appears to already be in AlloLib Online format')
     return { code: result, warnings, errors }
   } else if (codeType === 'web') {
@@ -598,6 +665,18 @@ export function transpileToWeb(code: string): TranspileResult {
       } else {
         result = result.replace(pattern, replacement)
       }
+    }
+  }
+
+  // Robust catch-all: if regex patterns didn't convert main() to ALLOLIB_WEB_MAIN,
+  // use brace-counting to find the full main() body and extract the App class name.
+  if (!result.includes('ALLOLIB_WEB_MAIN') && /int\s+main\s*\(/.test(result)) {
+    const converted = convertMainToWebMacro(result)
+    if (converted) {
+      result = converted
+    } else {
+      warnings.push('Could not convert int main() to ALLOLIB_WEB_MAIN. Please rewrite main() as ALLOLIB_WEB_MAIN(AppClass) for web export.')
+      console.warn('[transpiler] main() found but convertMainToWebMacro could not inject ALLOLIB_WEB_MAIN')
     }
   }
 

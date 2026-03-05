@@ -4660,7 +4660,7 @@ int main() {
   {
     id: 'studio-tex-3d-noise',
     title: '3D Noise Volume',
-    description: 'Volumetric 3D Perlin noise texture for clouds, fog, and procedural effects',
+    description: 'Volumetric 3D Perlin noise texture for clouds, fog, and procedural effects. Uses al::Texture 3D API for WebGPU compatibility.',
     category: 'studio-textures',
     subcategory: '3d-textures',
     code: `/**
@@ -4669,84 +4669,46 @@ int main() {
  * Demonstrates 3D texture generation with Perlin noise
  * for volumetric effects like clouds and fog.
  *
- * The 3D texture is sliced and animated to show
- * the volumetric nature of the data.
+ * Uses al::Texture with create3D() for WebGPU compatibility.
+ * The 3D WGSL shader uses pointSize as the Z slice coordinate.
  *
  * Controls:
  *   Space: Toggle animation
- *   1-3: Change slice axis (X/Y/Z)
  *   W/S: Zoom
  */
 
-#include "al_WebApp.hpp"
-#include "al/graphics/al_Shapes.hpp"
+#include "al_playground_compat.hpp"
 #include <cmath>
 #include <vector>
 
 using namespace al;
 
-class Volume3DDemo : public WebApp {
+class Volume3DDemo : public App {
 public:
-    ShaderProgram shader;
-    GLuint volumeTexId = 0;
-    GLuint quadVAO = 0, quadVBO = 0;
+    Texture volumeTex;
+    Mesh quad;
 
     std::vector<uint8_t> volumeData;
     int volumeSize = 64;
     float slicePos = 0.5f;
-    int sliceAxis = 2;  // 0=X, 1=Y, 2=Z
     bool animate = true;
     float time = 0;
-    float camDist = 3.0f;
-
-    void onCreate() override {
-        // Create display quad with VAO/VBO (avoid g.draw uniform conflicts)
-        float quadVerts[] = {
-            // pos x,y,z, uv u,v
-            -1, -1, 0, 0, 0,
-             1, -1, 0, 1, 0,
-            -1,  1, 0, 0, 1,
-             1,  1, 0, 1, 1
-        };
-        glGenVertexArrays(1, &quadVAO);
-        glGenBuffers(1, &quadVBO);
-        glBindVertexArray(quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
-        glEnableVertexAttribArray(1);
-        glBindVertexArray(0);
-
-        // Generate 3D noise volume
-        generateVolume();
-        createVolumeTexture();
-
-        // Create slice shader
-        createShader();
-
-        nav().pos(0, 0, camDist);
-    }
 
     // Hash function for noise
     float hash3D(float x, float y, float z) {
         float n = sin(x * 127.1f + y * 311.7f + z * 74.7f) * 43758.5453f;
-        return n - floor(n);  // fract
+        return n - floor(n);
     }
 
-    // Smooth interpolation
     float smoothstep(float t) {
         return t * t * (3.0f - 2.0f * t);
     }
 
-    // 3D value noise
     float noise3D(float x, float y, float z) {
         float ix = floor(x), iy = floor(y), iz = floor(z);
         float fx = x - ix, fy = y - iy, fz = z - iz;
         fx = smoothstep(fx); fy = smoothstep(fy); fz = smoothstep(fz);
 
-        // 8 corners of the cube
         float n000 = hash3D(ix, iy, iz);
         float n100 = hash3D(ix+1, iy, iz);
         float n010 = hash3D(ix, iy+1, iz);
@@ -4756,7 +4718,6 @@ public:
         float n011 = hash3D(ix, iy+1, iz+1);
         float n111 = hash3D(ix+1, iy+1, iz+1);
 
-        // Trilinear interpolation
         float nx00 = n000 + fx * (n100 - n000);
         float nx10 = n010 + fx * (n110 - n010);
         float nx01 = n001 + fx * (n101 - n001);
@@ -4766,7 +4727,6 @@ public:
         return nxy0 + fz * (nxy1 - nxy0);
     }
 
-    // Fractal Brownian Motion for cloud-like noise
     float fbm3D(float x, float y, float z, int octaves = 5) {
         float value = 0.0f, amplitude = 0.5f;
         for (int i = 0; i < octaves; i++) {
@@ -4783,12 +4743,10 @@ public:
         for (int z = 0; z < volumeSize; z++) {
             for (int y = 0; y < volumeSize; y++) {
                 for (int x = 0; x < volumeSize; x++) {
-                    // Scale to create good noise frequency
                     float fx = (float)x / volumeSize * 4.0f;
                     float fy = (float)y / volumeSize * 4.0f;
                     float fz = (float)z / volumeSize * 4.0f;
 
-                    // Use FBM for cloud-like appearance
                     float n = fbm3D(fx, fy, fz, 5);
 
                     int idx = (z * volumeSize * volumeSize + y * volumeSize + x) * 4;
@@ -4803,55 +4761,27 @@ public:
         printf("Generated %dx%dx%d volume\\n", volumeSize, volumeSize, volumeSize);
     }
 
-    void createVolumeTexture() {
-        glGenTextures(1, &volumeTexId);
-        glBindTexture(GL_TEXTURE_3D, volumeTexId);
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, volumeSize, volumeSize, volumeSize,
-                     0, GL_RGBA, GL_UNSIGNED_BYTE, volumeData.data());
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
-    }
+    void onCreate() override {
+        // Generate 3D noise data
+        generateVolume();
 
-    void createShader() {
-        const char* vert = R"(#version 300 es
-            layout(location = 0) in vec3 position;
-            layout(location = 1) in vec2 texCoord;
-            out vec2 vUV;
-            uniform mat4 MVP;
-            void main() {
-                vUV = texCoord;
-                gl_Position = MVP * vec4(position, 1.0);
-            }
-        )";
+        // Create 3D texture using AlloLib Texture API
+        volumeTex.create3D(volumeSize, volumeSize, volumeSize,
+                           GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        volumeTex.filter(Texture::LINEAR);
+        volumeTex.wrap(Texture::REPEAT);
+        volumeTex.submit(volumeData.data());
 
-        const char* frag = R"(#version 300 es
-            precision highp float;
-            precision highp sampler3D;
-            in vec2 vUV;
-            out vec4 fragColor;
-            uniform sampler3D volumeTex;
-            uniform float slicePos;
-            uniform int sliceAxis;
+        // Create display quad using Mesh
+        quad.primitive(Mesh::TRIANGLE_STRIP);
+        quad.vertex(-1, -1, 0); quad.texCoord(0, 0);
+        quad.vertex( 1, -1, 0); quad.texCoord(1, 0);
+        quad.vertex(-1,  1, 0); quad.texCoord(0, 1);
+        quad.vertex( 1,  1, 0); quad.texCoord(1, 1);
+        // White vertex colors
+        for (int i = 0; i < 4; i++) quad.color(1, 1, 1);
 
-            void main() {
-                vec3 uvw;
-                if (sliceAxis == 0) uvw = vec3(slicePos, vUV.x, vUV.y);
-                else if (sliceAxis == 1) uvw = vec3(vUV.x, slicePos, vUV.y);
-                else uvw = vec3(vUV.x, vUV.y, slicePos);
-
-                vec4 color = texture(volumeTex, uvw);
-
-                // Color mapping - blue to white
-                float v = color.r;
-                vec3 finalColor = mix(vec3(0.1, 0.2, 0.4), vec3(1.0), v);
-                fragColor = vec4(finalColor, 1.0);
-            }
-        )";
-
-        shader.compile(vert, frag);
+        nav().pos(0, 0, 3);
     }
 
     void onAnimate(double dt) override {
@@ -4864,53 +4794,37 @@ public:
     void onDraw(Graphics& g) override {
         g.clear(0.1, 0.1, 0.15);
 
-        shader.use();
+        // Bind the 3D texture
+        volumeTex.bind();
 
-        // Set uniforms
-        Mat4f mvp = g.projMatrix() * g.viewMatrix() * g.modelMatrix();
-        shader.uniform("MVP", mvp);
-        shader.uniform("slicePos", slicePos);
-        shader.uniform("sliceAxis", sliceAxis);
+        // pointSize is repurposed as the Z slice coordinate
+        // for the 3D textured WGSL shader
+        g.pointSize(slicePos);
 
-        // Bind 3D texture
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_3D, volumeTexId);
-        shader.uniform("volumeTex", 0);
+        // Draw the textured quad
+        g.draw(quad);
 
-        // Draw quad directly (avoid g.draw which sets extra uniforms)
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindVertexArray(0);
+        volumeTex.unbind();
     }
 
     bool onKeyDown(Keyboard const& k) override {
-        const char* axisNames[] = {"X", "Y", "Z"};
         switch (k.key()) {
             case ' ':
                 animate = !animate;
                 printf("Animation: %s\\n", animate ? "ON" : "OFF");
                 break;
-            case '1': sliceAxis = 0; printf("Slice axis: %s\\n", axisNames[0]); break;
-            case '2': sliceAxis = 1; printf("Slice axis: %s\\n", axisNames[1]); break;
-            case '3': sliceAxis = 2; printf("Slice axis: %s\\n", axisNames[2]); break;
             case 'w': case 'W':
-                camDist = std::max(1.5f, camDist - 0.3f);
-                nav().pos(0, 0, camDist);
+                nav().pos(0, 0, std::max(1.5f, (float)nav().pos().z - 0.3f));
                 break;
             case 's': case 'S':
-                camDist = std::min(8.0f, camDist + 0.3f);
-                nav().pos(0, 0, camDist);
+                nav().pos(0, 0, std::min(8.0f, (float)nav().pos().z + 0.3f));
                 break;
         }
         return true;
     }
 };
 
-int main() {
-    Volume3DDemo app;
-    app.start();
-    return 0;
-}
+ALLOLIB_WEB_MAIN(Volume3DDemo)
 `,
   },
 

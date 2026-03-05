@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  auto_title_placeholder: "@coderabbitai"
+  review_status: true
+  poem: false
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  changed_files_summary: true
+  labeling_instructions: []
+  path_filters: []
+  path_instructions:
+    - path: "allolib-wasm/**"
+      instructions: "This is the C++ WebAssembly compatibility layer. Focus on WebGPU validation rules, memory safety, and pipeline/render-pass compatibility."
+    - path: "frontend/src/**"
+      instructions: "Vue 3 + TypeScript frontend. Check for type safety, reactive state management, and proper async handling."
+    - path: "backend/src/**"
+      instructions: "Node/Express backend with Redis/BullMQ. Focus on error handling, security, and Docker compilation pipeline."
+    - path: "tests/**"
+      instructions: "Playwright E2E tests. Check for test reliability, proper timeouts, and assertion quality."
+
+chat:
+  auto_reply: true
