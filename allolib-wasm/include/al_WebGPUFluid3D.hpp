@@ -577,6 +577,7 @@ public:
     FluidSim3D() = default;
 
     void create(GraphicsBackend& backend, int gridW = 64, int gridH = 64, int gridD = 64) {
+        if (gridW <= 0 || gridH <= 0 || gridD <= 0) return;
         mBackend = &backend;
         mGridW = gridW;
         mGridH = gridH;
@@ -800,7 +801,7 @@ public:
         rp.cameraUpX = view[1];
         rp.cameraUpY = view[5];
         rp.cameraUpZ = view[9];
-        rp._pad1 = 0.0f;
+        rp.shapeMode = 0.0f;
 
         mRenderParamsBuffer.upload(rp);
 

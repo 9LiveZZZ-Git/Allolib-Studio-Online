@@ -126,7 +126,13 @@ public:
     void setUniforms(const T& data) {
 #ifdef ALLOLIB_WEBGPU
         if (!mUniformBuffer || !mBackend) return;
-        wgpuQueueWriteBuffer(mBackend->getQueue(), mUniformBuffer, 0, &data, sizeof(T));
+        const size_t bytes = sizeof(T);
+        const size_t allocatedSize = ((size_t)mUniformSize + 15) & ~15;
+        if (mUniformSize <= 0 || bytes > allocatedSize) {
+            printf("[FullscreenShader] ERROR: uniform upload too large (%zu > %d)\n", bytes, mUniformSize);
+            return;
+        }
+        wgpuQueueWriteBuffer(mBackend->getQueue(), mUniformBuffer, 0, &data, bytes);
 #else
         (void)data;
 #endif

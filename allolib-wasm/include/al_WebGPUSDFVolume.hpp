@@ -333,6 +333,7 @@ public:
     /// Add a sphere SDF primitive
     int addSphere(float cx, float cy, float cz, float radius,
                   SDFOp op = SDFOp::Union) {
+        if ((int)mOps.size() >= MAX_OPS) return -1;
         SDFOperation sdfOp = {};
         sdfOp.posX = cx; sdfOp.posY = cy; sdfOp.posZ = cz;
         sdfOp.radius = radius;
@@ -348,6 +349,7 @@ public:
     int addBox(float cx, float cy, float cz,
                float hx, float hy, float hz,
                SDFOp op = SDFOp::Union) {
+        if ((int)mOps.size() >= MAX_OPS) return -1;
         SDFOperation sdfOp = {};
         sdfOp.posX = cx; sdfOp.posY = cy; sdfOp.posZ = cz;
         sdfOp.paramX = hx; sdfOp.paramY = hy; sdfOp.paramZ = hz;
@@ -363,6 +365,7 @@ public:
     int addCapsule(float ax, float ay, float az,
                    float bx, float by, float bz,
                    float radius, SDFOp op = SDFOp::Union) {
+        if ((int)mOps.size() >= MAX_OPS) return -1;
         SDFOperation sdfOp = {};
         sdfOp.posX = ax; sdfOp.posY = ay; sdfOp.posZ = az;
         sdfOp.radius = radius;
@@ -379,6 +382,7 @@ public:
     int addPlane(float px, float py, float pz,
                  float nx, float ny, float nz,
                  SDFOp op = SDFOp::Union) {
+        if ((int)mOps.size() >= MAX_OPS) return -1;
         SDFOperation sdfOp = {};
         sdfOp.posX = px; sdfOp.posY = py; sdfOp.posZ = pz;
         sdfOp.paramX = nx; sdfOp.paramY = ny; sdfOp.paramZ = nz;
@@ -464,12 +468,14 @@ public:
         float invSize = (float)mResolution / mWorldExtent;
         float margin = brushRadius * 1.5f;
 
-        int minX = std::max(0, (int)((wx - margin + half) * invSize));
-        int minY = std::max(0, (int)((wy - margin + half) * invSize));
-        int minZ = std::max(0, (int)((wz - margin + half) * invSize));
+        int minX = std::max(0, std::min(mResolution, (int)((wx - margin + half) * invSize)));
+        int minY = std::max(0, std::min(mResolution, (int)((wy - margin + half) * invSize)));
+        int minZ = std::max(0, std::min(mResolution, (int)((wz - margin + half) * invSize)));
         int maxX = std::min(mResolution, (int)((wx + margin + half) * invSize) + 1);
         int maxY = std::min(mResolution, (int)((wy + margin + half) * invSize) + 1);
         int maxZ = std::min(mResolution, (int)((wz + margin + half) * invSize) + 1);
+
+        if (minX >= maxX || minY >= maxY || minZ >= maxZ) return;
 
         struct RegionParams {
             uint32_t minX, minY, minZ, _pad0;
@@ -529,7 +535,7 @@ public:
 
     /// Set operations (for undo/redo restore)
     void setOperations(const std::vector<SDFOperation>& ops) {
-        mOps = ops;
+        mOps.assign(ops.begin(), ops.begin() + std::min(ops.size(), (size_t)MAX_OPS));
         mDirty = true;
     }
 

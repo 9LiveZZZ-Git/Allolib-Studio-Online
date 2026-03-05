@@ -30,21 +30,25 @@ public:
 
     /// Bind a storage buffer at the given binding index
     void bind(int binding, BufferHandle buffer) {
+        if (!mBackend || !mPipeline.valid()) return;
         mBackend->bindStorageBuffer(binding, buffer);
     }
 
     /// Bind a uniform buffer at the given binding index
     void bindUniform(int binding, BufferHandle buffer) {
+        if (!mBackend || !mPipeline.valid()) return;
         mBackend->bindUniformBuffer(binding, buffer);
     }
 
     /// Bind a storage texture at the given binding index
     void bindTexture(int binding, TextureHandle texture) {
+        if (!mBackend || !mPipeline.valid()) return;
         mBackend->bindStorageTexture(binding, texture);
     }
 
     /// Dispatch compute work groups
     void dispatch(int groupsX, int groupsY = 1, int groupsZ = 1) {
+        if (!mBackend || !mPipeline.valid()) return;
         mBackend->dispatch(mPipeline, groupsX, groupsY, groupsZ);
     }
 

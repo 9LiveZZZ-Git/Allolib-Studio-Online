@@ -617,22 +617,23 @@ function convertMainToWebMacro(code: string): string | null {
   const mainEnd = i
   const mainBody = code.substring(braceStart + 1, mainEnd - 1)
 
-  // Pattern 1: ClassName().start() — inline construction
-  const inlineMatch = mainBody.match(/(\w+)\(\s*\)\.start\s*\(\s*\)/)
+  // Pattern 1: ClassName().start() — inline construction (only if it's the sole statement)
+  const inlineMatch = mainBody.match(
+    /^\s*(\w+)\(\s*\)\.start\s*\(\s*\)\s*;?\s*(?:return\s+0\s*;)?\s*$/
+  )
   if (inlineMatch && appClasses.has(inlineMatch[1])) {
     return code.substring(0, mainMatch.index) +
       'ALLOLIB_WEB_MAIN(' + inlineMatch[1] + ')' +
       code.substring(mainEnd)
   }
 
-  // Pattern 2: ClassName varName; ... varName.start()
-  const declRegex = /(\w+)\s+(\w+)\s*;/g
-  let declMatch
-  while ((declMatch = declRegex.exec(mainBody)) !== null) {
-    const className = declMatch[1]
-    const varName = declMatch[2]
-    if (!appClasses.has(className)) continue
-    if (mainBody.includes(varName + '.start()')) {
+  // Pattern 2: ClassName varName; varName.start() (only if these are the sole statements)
+  const declStartMatch = mainBody.match(
+    /^\s*(\w+)\s+(\w+)\s*;\s*\2\.start\s*\(\s*\)\s*;?\s*(?:return\s+0\s*;)?\s*$/
+  )
+  if (declStartMatch) {
+    const className = declStartMatch[1]
+    if (appClasses.has(className)) {
       return code.substring(0, mainMatch.index) +
         'ALLOLIB_WEB_MAIN(' + className + ')' +
         code.substring(mainEnd)

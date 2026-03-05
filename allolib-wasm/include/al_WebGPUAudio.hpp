@@ -64,6 +64,7 @@ public:
     AudioRingBuffer() = default;
 
     void create(GraphicsBackend& backend, int windowSize = 2048, int sampleRate = 44100) {
+        if (windowSize <= 0 || sampleRate <= 0) return;
         mWindowSize = windowSize;
         mSampleRate = sampleRate;
         mRing.resize(windowSize * 4, 0.0f);
@@ -84,6 +85,7 @@ public:
 
     /// Push a block of audio samples (call from onSound)
     void pushSamples(const float* samples, int count) {
+        if (!mCreated || !samples || count <= 0 || mRing.empty()) return;
         int ringSize = (int)mRing.size();
         for (int i = 0; i < count; i++) {
             float s = samples[i];

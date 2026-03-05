@@ -178,7 +178,13 @@ class AudioVisualBridge {
     GPUFFT mFFT;
     GPUBuffer<AudioFeatures> mFeaturesBuffer;
     GPUBuffer<float> mPrevMagnitudes;    // for spectral flux
-    GPUUniformBuffer<uint32_t> mFeatureParamsBuffer;  // [fftSize, sampleRate, pad, pad]
+    struct FeatureParams {
+        uint32_t fftSize;
+        uint32_t sampleRate;
+        uint32_t _pad0;
+        uint32_t _pad1;
+    };
+    GPUUniformBuffer<FeatureParams> mFeatureParamsBuffer;
     ComputeShader mFeatureShader;
 
     GraphicsBackend* mBackend = nullptr;
@@ -215,9 +221,9 @@ public:
         std::vector<float> zeroMags(numBins, 0.0f);
         mPrevMagnitudes.create(backend, zeroMags);
 
-        // Feature extraction params: [fftSize, sampleRate, pad, pad]
-        uint32_t featureParams[4] = {(uint32_t)fftSize, (uint32_t)sampleRate, 0, 0};
-        mFeatureParamsBuffer.create(backend, (uint32_t*)featureParams);
+        // Feature extraction params
+        FeatureParams fp = {(uint32_t)fftSize, (uint32_t)sampleRate, 0, 0};
+        mFeatureParamsBuffer.create(backend, &fp);
 
         mFeatureShader.create(backend, kFeatureExtractionWGSL);
 

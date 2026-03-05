@@ -330,6 +330,7 @@ public:
     /// Draw fluid field as fullscreen quad from storage buffer
     void drawFluidField(BufferHandle fieldBuffer, BufferHandle renderParamsBuffer, int cellCount);
 
+#ifdef __EMSCRIPTEN__
     // ── Custom Fullscreen Quad Rendering ─────────────────────────────────
 
     /// Draw a fullscreen quad with a custom render pipeline and bind group.
@@ -347,8 +348,6 @@ public:
     void drawCustomIndexed(WGPURenderPipeline pipeline, WGPUBindGroup bindGroup,
                            WGPUBuffer vertexBuffer, WGPUBuffer indexBuffer,
                            uint32_t indexCount);
-
-#ifdef __EMSCRIPTEN__
     // ── WebGPU-specific accessors ────────────────────────────────────────
 
     WGPUDevice getDevice() const { return mDevice; }

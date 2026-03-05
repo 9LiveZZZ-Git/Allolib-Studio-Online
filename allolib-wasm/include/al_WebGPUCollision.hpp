@@ -71,14 +71,18 @@ struct Particle {
 }
 
 struct ColliderDesc {
-    pos: vec3f,
+    posX: f32,
+    posY: f32,
+    posZ: f32,
     colliderType: u32,
     paramA: f32,
     paramB: f32,
     paramC: f32,
     restitution: f32,
     friction: f32,
-    dir: vec3f,
+    dirX: f32,
+    dirY: f32,
+    dirZ: f32,
 }
 
 struct Params {
@@ -148,30 +152,32 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     for (var i = 0u; i < params.colliderCount; i++) {
         let col = params.colliders[i];
+        let colPos = vec3f(col.posX, col.posY, col.posZ);
+        let colDir = vec3f(col.dirX, col.dirY, col.dirZ);
         var dist: f32;
         var normal: vec3f;
 
         switch col.colliderType {
             case 0u: { // Sphere
                 let radius = col.paramA;
-                dist = sdfSphere(p.position, col.pos, radius);
-                normal = sdfSphereNormal(p.position, col.pos);
+                dist = sdfSphere(p.position, colPos, radius);
+                normal = sdfSphereNormal(p.position, colPos);
             }
             case 1u: { // Box
                 let halfExtents = vec3f(col.paramA, col.paramB, col.paramC);
-                dist = sdfBox(p.position, col.pos, halfExtents);
-                normal = sdfBoxNormal(p.position, col.pos, halfExtents);
+                dist = sdfBox(p.position, colPos, halfExtents);
+                normal = sdfBoxNormal(p.position, colPos, halfExtents);
             }
             case 2u: { // Plane
-                let planeNormal = normalize(col.dir);
-                dist = sdfPlane(p.position, col.pos, planeNormal);
+                let planeNormal = normalize(colDir);
+                dist = sdfPlane(p.position, colPos, planeNormal);
                 normal = planeNormal;
             }
             case 3u: { // Capsule
-                let endPoint = col.dir;  // dir stores end point for capsule
+                let endPoint = colDir;  // dir stores end point for capsule
                 let radius = col.paramA;
-                dist = sdfCapsule(p.position, col.pos, endPoint, radius);
-                normal = sdfCapsuleNormal(p.position, col.pos, endPoint);
+                dist = sdfCapsule(p.position, colPos, endPoint, radius);
+                normal = sdfCapsuleNormal(p.position, colPos, endPoint);
             }
             default: { continue; }
         }

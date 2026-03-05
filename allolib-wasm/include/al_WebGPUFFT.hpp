@@ -215,7 +215,10 @@ class GPUFFT {
 public:
     GPUFFT() = default;
 
+    static bool isPowerOfTwo(int n) { return n > 0 && (n & (n - 1)) == 0; }
+
     void create(GraphicsBackend& backend, int fftSize = 1024) {
+        if (!isPowerOfTwo(fftSize)) return;
         mSize = fftSize;
         mNumPasses = log2i(fftSize);
 

@@ -33,6 +33,7 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
 
 namespace al {
 
@@ -295,6 +296,7 @@ class GranularSynth {
     std::vector<float> mReadbackA, mReadbackB;
     int mReadbackCurrent = 0;  // 0 = read A, write B; 1 = read B, write A
     int mPlaybackPos = 0;
+    std::mutex mReadbackMutex;
 
     int mMaxGrains = 0;
     int mOutputFrames = 0;
@@ -363,13 +365,10 @@ public:
 
     /// Upload source audio to GPU (mono, call once or when source changes)
     void setSourceAudio(const float* samples, int count) {
-        if (!mCreated) return;
-        mSource.destroy();
-        // Recreate with new size — need backend reference
-        // Use upload instead if same size
-        std::vector<float> data(samples, samples + count);
-        // For simplicity, just upload up to current capacity
-        mSource.upload(data.data(), std::min(count, (int)mSource.count()));
+        if (!mCreated || !samples || count <= 0) return;
+        const int n = std::min(count, static_cast<int>(mSource.count()));
+        if (n <= 0) return;
+        mSource.upload(samples, n);
     }
 
     /// Set grain emission parameters
@@ -433,9 +432,12 @@ public:
         auto& writeBuffer = (mReadbackCurrent == 0) ? mReadbackB : mReadbackA;
         mOutputFloat.readback(writeBuffer.data(), mOutputFrames * 2);
 
-        // Swap for next frame
-        mReadbackCurrent = 1 - mReadbackCurrent;
-        mPlaybackPos = 0;
+        // Swap for next frame (synchronized with fillAudioBuffer)
+        {
+            std::lock_guard<std::mutex> lock(mReadbackMutex);
+            mReadbackCurrent = 1 - mReadbackCurrent;
+            mPlaybackPos = 0;
+        }
     }
 
     /// Fill audio output from the readback buffer (call from onSound)
@@ -443,6 +445,7 @@ public:
     int fillAudioBuffer(float* outL, float* outR, int frames) {
         if (!mCreated) return 0;
 
+        std::lock_guard<std::mutex> lock(mReadbackMutex);
         const auto& readBuffer = (mReadbackCurrent == 0) ? mReadbackA : mReadbackB;
         int available = mOutputFrames - mPlaybackPos;
         int toFill = std::min(frames, available);
