@@ -46,6 +46,9 @@ export const categories: GlossaryCategory[] = [
 
   // Studio Extended Features
   { id: 'studio', title: 'Studio Features', description: 'Extended features: OBJ loading, HDR environments, PBR materials, LOD, quality management' },
+
+  // Tutorials - Step-by-step guides
+  { id: 'tutorials', title: 'Tutorials', description: 'Step-by-step guides for common tasks' },
 ]
 
 export const glossary: GlossaryEntry[] = [
@@ -4028,6 +4031,505 @@ if (getBackendType() == BackendType::WebGPU) {
     definition: 'Default graphics backend for AlloLib Studio. Based on OpenGL ES 3.0, provides broad browser compatibility. Use WebGPU for improved performance on supported browsers.',
     platforms: ['web'],
     relatedTerms: ['WebGPU', 'GraphicsBackend'],
+  },
+
+  // ============================================================================
+  // TUTORIALS
+  // ============================================================================
+  {
+    term: 'Your First App',
+    category: 'tutorials',
+    definition: 'The minimum structure for any AlloLib Studio app: inherit from al::App, override onCreate and onDraw, then use ALLOLIB_MAIN.',
+    syntax: `struct MyApp : public al::App {
+  void onCreate() override { ... }
+  void onDraw(al::Graphics& g) override { ... }
+};
+ALLOLIB_MAIN(MyApp)`,
+    example: `#include "al_compat.hpp"
+
+struct MyApp : public al::App {
+  al::VAOMesh mSphere;
+
+  void onCreate() override {
+    nav().pos(0, 0, 5);   // place camera at z = 5
+    lens().fovy(60);
+    al::addSphere(mSphere, 1.0f);
+    mSphere.generateNormals();
+    mSphere.update();
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.08f, 0.08f, 0.1f);
+    g.lighting(true);
+    g.draw(mSphere);
+  }
+};
+
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['App', 'ALLOLIB_MAIN', 'onCreate()', 'onDraw()', 'App Lifecycle'],
+  },
+  {
+    term: 'App Lifecycle',
+    category: 'tutorials',
+    definition: 'The virtual methods you can override in al::App, called in this order: onCreate (once at startup), onAnimate (every frame, for logic), onDraw (every frame, for rendering), onSound (every audio block), onExit (once at shutdown). Input callbacks fire on demand.',
+    syntax: `void onCreate() override { }      // once — init
+void onAnimate(double dt) override { } // every frame — logic
+void onDraw(al::Graphics& g) override { } // every frame — render
+void onSound(al::AudioIOData& io) override { } // every audio block
+void onExit() override { }           // once — cleanup
+bool onKeyDown(const al::Keyboard& k) override { return false; }
+bool onMouseDrag(const al::Mouse& m) override { return false; }`,
+    example: `struct MyApp : public al::App {
+  double mTime = 0;
+
+  void onCreate() override {
+    nav().pos(0, 0, 5);
+  }
+
+  void onAnimate(double dt) override {
+    mTime += dt;              // accumulate elapsed time
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0);
+    // draw using mTime
+  }
+
+  void onSound(al::AudioIOData& io) override {
+    while (io()) {
+      io.out(0) = 0.0f;     // silence
+      io.out(1) = 0.0f;
+    }
+  }
+
+  void onExit() override {
+    // release custom resources here
+  }
+
+  bool onKeyDown(const al::Keyboard& k) override {
+    if (k.key() == al::Keyboard::ESCAPE) quit();
+    return true;
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['onCreate()', 'onAnimate()', 'onDraw()', 'onSound()', 'onKeyDown()'],
+  },
+  {
+    term: 'Drawing a Shape',
+    category: 'tutorials',
+    definition: 'Use al:: shape-helper functions to fill a VAOMesh, call mesh.update() once, then call g.draw(mesh) in onDraw every frame.',
+    syntax: `al::addSphere(mesh, radius);
+al::addCube(mesh, halfwidth);
+al::addCylinder(mesh, radius, height);
+mesh.generateNormals();
+mesh.update();           // upload to GPU
+g.draw(mesh);            // render`,
+    example: `struct MyApp : public al::App {
+  al::VAOMesh mSphere, mCube, mCylinder;
+
+  void onCreate() override {
+    al::addSphere(mSphere, 0.5f);
+    mSphere.generateNormals();
+    mSphere.update();
+
+    al::addCube(mCube, 0.4f);
+    mCube.generateNormals();
+    mCube.update();
+
+    al::addCylinder(mCylinder, 0.3f, 1.0f);
+    mCylinder.generateNormals();
+    mCylinder.update();
+
+    nav().pos(0, 0, 6);
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.1f);
+    g.lighting(true);
+
+    g.pushMatrix();
+    g.translate(-1.5f, 0, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+
+    g.pushMatrix();
+    g.draw(mCube);
+    g.popMatrix();
+
+    g.pushMatrix();
+    g.translate(1.5f, 0, 0);
+    g.draw(mCylinder);
+    g.popMatrix();
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['VAOMesh', 'addSphere', 'addCube', 'Graphics', 'onDraw()'],
+  },
+  {
+    term: 'Animating with Time',
+    category: 'tutorials',
+    definition: 'onAnimate(double dt) is called every frame. dt is seconds since the last frame. Accumulate time into a member variable and use it to drive transforms in onDraw.',
+    syntax: `void onAnimate(double dt) override {
+  mTime += dt;
+}
+void onDraw(al::Graphics& g) override {
+  g.rotate(mTime * speed, 0, 1, 0); // rotate over time
+}`,
+    example: `struct MyApp : public al::App {
+  al::VAOMesh mSphere;
+  double mTime = 0.0;
+  float mSpeed = 1.0f;   // radians per second
+
+  void onCreate() override {
+    al::addSphere(mSphere, 0.8f);
+    mSphere.generateNormals();
+    mSphere.update();
+    nav().pos(0, 0, 4);
+  }
+
+  void onAnimate(double dt) override {
+    mTime += dt;
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.08f, 0.08f, 0.12f);
+    g.lighting(true);
+
+    g.pushMatrix();
+    // rotate around Y axis, oscillate up/down on X axis
+    g.rotate((float)mTime * mSpeed, 0, 1, 0);
+    g.translate(std::sin((float)mTime) * 0.5f, 0, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['onAnimate()', 'onDraw()', 'Graphics', 'Your First App'],
+  },
+  {
+    term: 'Camera Setup',
+    category: 'tutorials',
+    definition: 'nav() controls the camera position and orientation. lens() controls the projection (field of view, near/far clip). Call g.camera(view()) in onDraw to apply the current nav pose.',
+    syntax: `nav().pos(x, y, z);          // world position
+nav().quat(al::Quatf::identity()); // reset orientation
+lens().fovy(degrees);            // vertical FOV
+lens().near(0.01f);
+lens().far(1000.0f);`,
+    example: `struct MyApp : public al::App {
+  al::VAOMesh mScene;
+
+  void onCreate() override {
+    // Place camera 8 units back, 2 up, looking at origin
+    nav().pos(0, 2, 8);
+    nav().faceToward(al::Vec3f(0, 0, 0), al::Vec3f(0, 1, 0));
+
+    lens().fovy(45.0f);   // tighter FOV
+    lens().near(0.05f);
+    lens().far(500.0f);
+
+    al::addSphere(mScene, 1.0f);
+    mScene.generateNormals();
+    mScene.update();
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.1f);
+    g.lighting(true);
+    // g.camera(view()) is called automatically by the framework
+    g.draw(mScene);
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['Nav', 'Lens', 'Pose', 'onDraw()', 'Your First App'],
+  },
+  {
+    term: 'Adding Parameters',
+    category: 'tutorials',
+    definition: 'Declare al::Parameter members and register them with gui << param. They appear in the Parameter Panel automatically, giving you runtime sliders without recompiling.',
+    syntax: `al::Parameter myParam{"name", "group", defaultVal, min, max};
+void onCreate() override { gui << myParam; }`,
+    example: `#include "al_compat.hpp"
+
+struct MyApp : public al::App {
+  al::Parameter mRadius{"Radius", "Shape", 0.5f, 0.05f, 2.0f};
+  al::Parameter mSpeed{"Speed",  "Anim",  1.0f, 0.0f, 5.0f};
+
+  al::VAOMesh mSphere;
+  double mTime = 0;
+
+  void onCreate() override {
+    gui << mRadius << mSpeed;   // register with the GUI panel
+    nav().pos(0, 0, 5);
+  }
+
+  void onAnimate(double dt) override {
+    mTime += dt * mSpeed.get();
+  }
+
+  void onDraw(al::Graphics& g) override {
+    // Rebuild sphere only when radius changes
+    mSphere.reset();
+    al::addSphere(mSphere, mRadius.get());
+    mSphere.generateNormals();
+    mSphere.update();
+
+    g.clear(0.08f);
+    g.lighting(true);
+    g.pushMatrix();
+    g.rotate((float)mTime, 0, 1, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['Parameter', 'ParameterBool', 'ControlGUI', 'onCreate()'],
+  },
+  {
+    term: 'Making Sound',
+    category: 'tutorials',
+    definition: 'Override onSound(AudioIOData& io) and write samples to io.out(channel, frame). Call configureAudio() in onCreate to set sample rate and block size. Use Gamma oscillators for synthesis.',
+    syntax: `void onCreate() override {
+  configureAudio(44100, 128, 2, 0); // sr, blockSize, out, in
+}
+void onSound(AudioIOData& io) override {
+  while (io()) {
+    float s = osc() * 0.3f;
+    io.out(0) = s;
+    io.out(1) = s;
+  }
+}`,
+    example: `#include "al_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+struct MyApp : public al::App {
+  gam::Sine<> mOsc;
+  al::Parameter mFreq{"Freq", "Audio", 440.0f, 55.0f, 2000.0f};
+  al::Parameter mAmp {"Amp",  "Audio", 0.3f,   0.0f,  1.0f};
+
+  void onCreate() override {
+    gui << mFreq << mAmp;
+    configureAudio(44100, 256, 2, 0);
+    mOsc.freq(mFreq.get());
+  }
+
+  void onAnimate(double /*dt*/) override {
+    mOsc.freq(mFreq.get());   // update freq each frame
+  }
+
+  void onSound(al::AudioIOData& io) override {
+    while (io()) {
+      float s = mOsc() * mAmp.get();
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.05f, 0.05f, 0.1f);
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['onSound()', 'AudioIOData', 'configureAudio', 'gam::Sine', 'Parameter'],
+  },
+  {
+    term: 'Keyboard Input',
+    category: 'tutorials',
+    definition: 'Override onKeyDown(const Keyboard& k). Use k.key() for printable characters and Keyboard:: constants for special keys. Return true to consume the event.',
+    syntax: `bool onKeyDown(const al::Keyboard& k) override {
+  if (k.key() == ' ') { /* space */ }
+  if (k.key() == al::Keyboard::ESCAPE) quit();
+  return true;
+}`,
+    example: `struct MyApp : public al::App {
+  al::VAOMesh mSphere;
+  bool mPaused = false;
+  float mHue = 0.0f;
+  double mTime = 0;
+
+  void onCreate() override {
+    al::addSphere(mSphere, 0.8f);
+    mSphere.generateNormals();
+    mSphere.update();
+    nav().pos(0, 0, 4);
+  }
+
+  void onAnimate(double dt) override {
+    if (!mPaused) mTime += dt;
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.08f);
+    al::Color c;
+    c.setHSV(mHue, 0.8f, 0.9f);
+    g.color(c);
+    g.lighting(true);
+    g.pushMatrix();
+    g.rotate((float)mTime, 0, 1, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+  }
+
+  bool onKeyDown(const al::Keyboard& k) override {
+    if (k.key() == ' ') {
+      mPaused = !mPaused;         // space = pause/resume
+    } else if (k.key() == 'r') {
+      mTime = 0; mHue = 0;        // r = reset
+    } else if (k.key() == al::Keyboard::UP) {
+      mHue = std::fmod(mHue + 0.05f, 1.0f);  // up arrow = shift hue
+    } else if (k.key() == al::Keyboard::ESCAPE) {
+      quit();
+    }
+    return true;
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['onKeyDown()', 'onKeyUp()', 'Keyboard', 'App Lifecycle'],
+  },
+  {
+    term: 'Mouse Input',
+    category: 'tutorials',
+    definition: 'Override onMouseDrag or onMouseMove. m.x()/m.y() give the current pixel position. m.dx()/m.dy() give the delta since the last event. Normalize by window dimensions for 0-1 range.',
+    syntax: `bool onMouseMove(const al::Mouse& m) override {
+  float nx = (float)m.x() / width();   // 0..1
+  float ny = (float)m.y() / height();  // 0..1
+  return true;
+}
+bool onMouseDrag(const al::Mouse& m) override {
+  float dx = m.dx(); float dy = m.dy();
+  return true;
+}`,
+    example: `struct MyApp : public al::App {
+  al::VAOMesh mSphere;
+  float mColorR = 0.5f, mColorG = 0.5f, mColorB = 0.8f;
+  float mRotY = 0.0f;
+
+  void onCreate() override {
+    al::addSphere(mSphere, 0.8f);
+    mSphere.generateNormals();
+    mSphere.update();
+    nav().pos(0, 0, 4);
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.08f);
+    g.color(mColorR, mColorG, mColorB);
+    g.lighting(true);
+    g.pushMatrix();
+    g.rotate(mRotY, 0, 1, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+  }
+
+  // Mouse move: map X position to hue
+  bool onMouseMove(const al::Mouse& m) override {
+    float nx = (float)m.x() / (float)width();    // 0..1
+    float ny = 1.0f - (float)m.y() / (float)height(); // 0..1 (flip Y)
+    al::Color c;
+    c.setHSV(nx, 0.9f, ny * 0.8f + 0.2f);
+    mColorR = c.r; mColorG = c.g; mColorB = c.b;
+    return true;
+  }
+
+  // Mouse drag: rotate sphere
+  bool onMouseDrag(const al::Mouse& m) override {
+    mRotY += (float)m.dx() * 0.5f;
+    return true;
+  }
+};
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['onMouseDrag()', 'onMouseMove()', 'Mouse', 'App Lifecycle'],
+  },
+  {
+    term: 'Complete Working Example',
+    category: 'tutorials',
+    definition: 'A complete AlloLib Studio app combining graphics (spinning lit sphere), audio (sine oscillator), parameter controls (frequency, amplitude, radius), and keyboard interaction (space to pause, R to reset).',
+    syntax: 'Combine App lifecycle, VAOMesh, Parameter, gam::Sine, onKeyDown',
+    example: `#include "al_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+struct MyApp : public al::App {
+  // --- geometry ---
+  al::VAOMesh mSphere;
+
+  // --- audio ---
+  gam::Sine<> mOsc;
+
+  // --- parameters ---
+  al::Parameter mFreq  {"Freq",   "Audio", 440.0f, 55.0f,  2000.0f};
+  al::Parameter mAmp   {"Amp",    "Audio", 0.25f,  0.0f,   1.0f};
+  al::Parameter mRadius{"Radius", "Shape", 0.8f,   0.05f,  2.0f};
+
+  // --- state ---
+  double mTime   = 0.0;
+  bool   mPaused = false;
+
+  void onCreate() override {
+    gui << mFreq << mAmp << mRadius;
+    configureAudio(44100, 256, 2, 0);
+
+    al::addSphere(mSphere, mRadius.get());
+    mSphere.generateNormals();
+    mSphere.update();
+
+    nav().pos(0, 0, 5);
+    lens().fovy(60.0f);
+  }
+
+  void onAnimate(double dt) override {
+    if (!mPaused) mTime += dt;
+    mOsc.freq(mFreq.get());
+  }
+
+  void onDraw(al::Graphics& g) override {
+    g.clear(0.07f, 0.07f, 0.12f);
+    g.lighting(true);
+
+    // Rebuild sphere if radius changed
+    mSphere.reset();
+    al::addSphere(mSphere, mRadius.get());
+    mSphere.generateNormals();
+    mSphere.update();
+
+    g.pushMatrix();
+    g.rotate((float)mTime * 1.2f, 0, 1, 0);
+    g.rotate((float)mTime * 0.4f, 1, 0, 0);
+    g.draw(mSphere);
+    g.popMatrix();
+  }
+
+  void onSound(al::AudioIOData& io) override {
+    while (io()) {
+      float s = mPaused ? 0.0f : mOsc() * mAmp.get();
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  bool onKeyDown(const al::Keyboard& k) override {
+    if (k.key() == ' ') {
+      mPaused = !mPaused;
+    } else if (k.key() == 'r') {
+      mTime = 0;
+      mPaused = false;
+    } else if (k.key() == al::Keyboard::ESCAPE) {
+      quit();
+    }
+    return true;
+  }
+};
+
+ALLOLIB_MAIN(MyApp)`,
+    platforms: ['both'],
+    relatedTerms: ['Your First App', 'App Lifecycle', 'Making Sound', 'Keyboard Input', 'Adding Parameters'],
   },
 ]
 
