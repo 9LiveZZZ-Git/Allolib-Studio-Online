@@ -451,22 +451,6 @@ export const useSettingsStore = defineStore('settings', () => {
         auto: 1, // screen size
       }
       w.allolib.autoLOD.setMode(modes[graphics.value.qualityPreset] || 1)
-
-        '[Settings] LOD settings applied: enabled=' +
-          graphics.value.lodEnabled +
-          ', bias=' +
-          graphics.value.lodBias +
-          ', distanceScale=' +
-          graphics.value.lodDistanceScale +
-          ', levels=' +
-          graphics.value.lodLevels +
-          ', unload=' +
-          graphics.value.lodUnloadEnabled +
-          '@' +
-          graphics.value.lodUnloadDistance +
-          ', preset=' +
-          graphics.value.qualityPreset
-      )
     }
 
     // Send texture LOD settings
@@ -475,18 +459,6 @@ export const useSettingsStore = defineStore('settings', () => {
       w.allolib.textureLOD.setBias(graphics.value.textureLODBias)
       w.allolib.textureLOD.setMaxResolution(graphics.value.maxTextureSize)
       w.allolib.textureLOD.setReferenceDistance(graphics.value.textureReferenceDistance)
-
-        '[Settings] Texture LOD settings applied: enabled=' +
-          graphics.value.textureLODEnabled +
-          ', bias=' +
-          graphics.value.textureLODBias +
-          ', maxResolution=' +
-          graphics.value.maxTextureSize +
-          ', refDist=' +
-          graphics.value.textureReferenceDistance +
-          ', quality=' +
-          graphics.value.textureQuality
-      )
     }
   }
 
