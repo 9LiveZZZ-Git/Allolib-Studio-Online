@@ -34,14 +34,12 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        working-directory: frontend
         run: npm ci
 
       - name: Build
-        working-directory: frontend
         env:
           VITE_BACKEND_URL: https://eloquent-miracle-production-b369.up.railway.app
-        run: npm run build
+        run: npm run build:frontend
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
