@@ -364,7 +364,7 @@ export class AllolibRuntime {
     ;(window as any).__pendingTimelineObjects = pendingObjects
   }
 
-  private async loadAudioWorklet(baseUrl: string): Promise<void> {
+  private async loadAudioWorklet(_baseUrl: string): Promise<void> {
     try {
       // Create audio context if needed
       if (!window.alloAudioContext) {
@@ -376,8 +376,8 @@ export class AllolibRuntime {
         this.onPrint(`[INFO] Audio context created (state: ${window.alloAudioContext.state}, sampleRate: ${window.alloAudioContext.sampleRate})`)
       }
 
-      // Load the audio worklet processor
-      const workletUrl = `${baseUrl}/allolib-audio-processor.js`
+      // Audio worklet is a static asset served from the frontend — same origin, no CORS needed.
+      const workletUrl = `${import.meta.env.BASE_URL}allolib-audio-processor.js`
       this.onPrint(`[INFO] Loading audio worklet from: ${workletUrl}`)
       await window.alloAudioContext.audioWorklet.addModule(workletUrl)
       this.onPrint('[INFO] Audio worklet processor registered')
