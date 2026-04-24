@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { submitCompilation, pollJobCompletion, cleanupJob, type ProjectFile, type BackendType } from '@/services/compiler'
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
+function toAbsoluteUrl(url: string): string {
+  return url.startsWith('/') ? `${BACKEND_URL}${url}` : url
+}
 import { parseCompilerOutput, type CompilerDiagnostic } from '@/utils/error-parser'
 import { useSettingsStore } from '@/stores/settings'
 
@@ -160,8 +165,8 @@ export const useAppStore = defineStore('app', () => {
       }
 
       if (result.result?.wasmUrl && result.result?.jsUrl) {
-        wasmUrl.value = result.result.wasmUrl
-        jsUrl.value = result.result.jsUrl
+        wasmUrl.value = toAbsoluteUrl(result.result.wasmUrl)
+        jsUrl.value = toAbsoluteUrl(result.result.jsUrl)
         log(`[SUCCESS] Compilation complete (${result.result.duration}ms)`)
         status.value = 'loading'
       } else {
