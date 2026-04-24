@@ -1,135 +1,189 @@
+<div align="center">
+
 # AlloLib Studio Online
 
-**Write, compile, and run AlloLib C++ code directly in your browser — no installation required.**
+**A browser-based IDE for the AlloLib C++ creative coding framework.**
 
-**[Launch the app →](https://9livezzz-git.github.io/Allolib-Studio-Online/)**
-**[Wiki & Documentation →](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)**
+Write C++, compile server-side via Emscripten, run as WebAssembly with WebGL2/WebGPU rendering and Web Audio — all in the browser.
 
-AlloLib Studio Online is a browser-based IDE for the [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) C++ creative coding framework. Write C++ in Monaco Editor, compile server-side via Emscripten, and run the result as WebAssembly with WebGL2/WebGPU rendering and Web Audio — all in the browser.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
+[![WebGL2](https://img.shields.io/badge/WebGL2-supported-success.svg)]()
+[![WebGPU](https://img.shields.io/badge/WebGPU-supported-success.svg)]()
+[![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)
+
+[**Launch App**](https://9livezzz-git.github.io/Allolib-Studio-Online/) · [**Documentation**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki) · [**Examples**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Examples-Guide) · [**Report Bug**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/issues) · [**Security**](SECURITY.md)
+
+</div>
 
 ---
 
-> Built on the work of the [AlloSphere Research Group](https://allosphere.ucsb.edu/) at UC Santa Barbara.
->
-> Special thanks to **Dr. JoAnn Kuchera-Morin** (Director, AlloSphere Research Facility), **Dr. Andres Cabrera** (AlloLib architect), **Dr. Lance Putnam** (Gamma DSP / AlloSystem), and all AlloLib contributors.
+## ✨ Features
 
----
+- 🎨 **Monaco Editor** — Full C++ syntax highlighting, snippets, error diagnostics, multi-file projects
+- ⚡ **Live Compilation** — Emscripten server compiles to WASM in seconds, results stream back
+- 🖥 **Dual Graphics** — WebGL2 (stable, universal) and WebGPU (modern compute-capable) backends
+- 🔊 **Web Audio + Gamma DSP** — AudioWorklet at 128 samples/buffer, full Gamma synthesis library
+- 📚 **155+ Examples** — AlloLib core, Playground, and Studio GPU examples ready to run
+- 🎹 **Sequencer** — Clip-based timeline, 2D/3D tone lattice (just intonation), polyphonic synths
+- 🎞 **Timeline** — 4-category keyframe animation (audio, objects, environment, events)
+- 📦 **Asset Library** — Built-in PBR textures, OBJ meshes, HDR environments (all CC0)
+- 💻 **Terminal** — Virtual shell with `compile`, `run`, sequencer control, and JS scripting
+- 📼 **Export** — WebM video, PNG/JPEG/WebP screenshots, social media presets
 
-## Features
+## 🚀 Quick Start
 
-- **Monaco Editor** — C++ syntax highlighting, snippets, error diagnostics, multi-file projects
-- **Live Compilation** — Emscripten server compiles to WASM; results stream back in seconds
-- **WebGL2 + WebGPU** — Dual rendering backends; switch per-example or in settings
-- **Web Audio** — Gamma DSP runs in an AudioWorklet at 128 samples/buffer
-- **155 Examples** — AlloLib, Playground, and Studio GPU examples, ready to run
-- **Sequencer** — Clip-based timeline, tone lattice (2D/3D just intonation), polyphonic synths
-- **Asset Library** — Built-in PBR textures, OBJ meshes (bunny, teapot, suzanne), HDR environments
-- **Terminal** — Shell-like interface with `compile`, `run`, sequencer control, and JS scripting
-- **Recording** — Export video (WebM) or screenshots (PNG/JPEG/WebP) with social media size presets
-- **Parameter Panel** — Runtime GUI sliders and toggles (AlloLib GUI / ImGui-style)
+### Use Online
+Open **[9livezzz-git.github.io/Allolib-Studio-Online](https://9livezzz-git.github.io/Allolib-Studio-Online/)**, pick an example, press `Ctrl+Enter`.
 
-## Usage
-
-1. Open **[https://9livezzz-git.github.io/Allolib-Studio-Online/](https://9livezzz-git.github.io/Allolib-Studio-Online/)**
-2. Write C++ or pick an example from the **Examples** dropdown
-3. Click **Run** (or `Ctrl+Enter`) to compile and execute
-4. Interact with the canvas — WASD to move, mouse to look, keyboard for synth notes
-
-### Keyboard shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Enter` | Compile and run |
-| `Ctrl+S` | Save to browser |
-| `Ctrl+F` | Find in editor |
-
-### Musical keyboard (synth examples)
-
-| Keys | Octave |
-|------|--------|
-| `ZXCVBNM` | C3–B3 |
-| `ASDFGHJ` | C4–B4 |
-| `QWERTYU` | C5–B5 |
-
-## Running Locally
-
-The frontend is a static site served from GitHub Pages. To run with a local compilation backend:
+### Run Locally
 
 ```bash
 git clone https://github.com/9LiveZZZ-Git/Allolib-Studio-Online.git
 cd Allolib-Studio-Online
-
-# Install dependencies
-npm install
-
-# Start Docker containers (Redis + compiler)
-docker start allolib-compiler redis
-
-# Run backend and frontend
-npm run dev
-# → Frontend: http://localhost:3000
-# → Backend:  http://localhost:4000
+npm install                              # install workspace dependencies
+docker start allolib-compiler redis      # first-time? see Wiki: Getting Started Local
+npm run dev                              # http://localhost:3000
 ```
 
-**Requirements:** Node.js 18+, Docker
+**Requirements:** Node.js 18+ · Docker · Git
 
-See `PROJECT.md` for full architecture and Docker setup instructions.
+See **[Wiki: Getting Started Local](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Getting-Started-Local)** for Docker container setup.
 
-## Tech Stack
+## 📖 Documentation
 
+All documentation lives on the **[GitHub Wiki](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)**:
+
+<table>
+<tr>
+<td>
+
+**Tutorials**
+- [Your First App](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Tutorial-Your-First-App)
+- [Graphics](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Tutorial-Graphics)
+- [Audio](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Tutorial-Audio)
+- [Interactive](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Tutorial-Interactive)
+
+</td>
+<td>
+
+**Core API**
+- [App & Lifecycle](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/AlloLib-API-App)
+- [Graphics](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/AlloLib-API-Graphics)
+- [Camera & Nav](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/AlloLib-API-Camera)
+- [Synth System](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/AlloLib-API-Synth)
+- [Gamma DSP](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Gamma-DSP-Reference)
+
+</td>
+<td>
+
+**Web API**
+- [Textures & PBR](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-API-Textures)
+- [Environments/HDR](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-API-Environment)
+- [OBJ Meshes](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-API-Meshes)
+- [Materials](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-API-Materials)
+- [Platform Guide](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-Platform-Guide)
+
+</td>
+</tr>
+</table>
+
+## 🏗 Architecture
+
+```
+┌─────────────────────┐        ┌──────────────────┐       ┌────────────────┐
+│  Browser (Vue 3)    │  HTTP  │  Express Server  │  exec │  Emscripten    │
+│  Monaco Editor ────▶│───────▶│  BullMQ + Redis ─┼──────▶│  (Docker)      │
+│  WASM Runtime  ◀────│◀───────│  app.js + .wasm  │◀──────│  al_web lib    │
+│  WebGL2 / WebGPU    │        └──────────────────┘       └────────────────┘
+│  Web Audio Worklet  │
+└─────────────────────┘
+```
+
+**Tech Stack**
 | Layer | Technologies |
 |-------|-------------|
-| Frontend | Vue 3, TypeScript, Pinia, Monaco Editor |
+| Frontend | Vue 3, TypeScript, Pinia, Monaco Editor, Vite |
 | Backend | Node.js, Express, BullMQ, Redis |
 | Compiler | Emscripten 3.1.73, Docker |
 | Graphics | WebGL2 (default), WebGPU |
 | Audio | Web Audio API, AudioWorklet, Gamma DSP |
+| Testing | Playwright (E2E), visual regression |
 
-## Documentation
+## 🧪 Testing
 
-Full documentation is available on the **[GitHub Wiki](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)**:
+```bash
+cd tests && npx playwright test                    # run all E2E tests
+cd tests && UPDATE_BASELINES=true npx playwright test  # update visual baselines
+```
 
-- [Getting Started](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Getting-Started-Online)
-- [Web API Reference](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Web-API-Reference) — WebTexture, WebPBR, WebOBJ, WebHDR, WebEnvironment, LOD, Quality
-- [AlloLib Synth API](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/AlloLib-API-Synth) — SynthVoice, PolySynth, DynamicScene
-- [Gamma DSP Reference](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Gamma-DSP-Reference) — Oscillators, Filters, Envelopes, Effects
-- [Architecture Overview](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Architecture-Overview)
-- [Examples Guide](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Examples-Guide)
+Four test suites: comprehensive functional (155 examples × 2 backends), WebGPU features, enhanced visual verification, and interaction tests. See the [Contributing guide](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Contributing).
 
-## Acknowledgments
+## 🗺 Roadmap
+
+- [x] Dual backend (WebGL2 + WebGPU Phases 1-8)
+- [x] 155 examples, 100% compile + render pass rate
+- [x] Cloud compilation (Railway-hosted)
+- [x] Tone lattice sequencer
+- [x] Full wiki documentation
+- [ ] Events-track keyframe wiring (in progress)
+- [ ] WebGPU mipmap compute shaders
+- [ ] PresetHandler localStorage backend
+- [ ] GPU compute examples (fluid, particles)
+
+See [WIKI_PLAN.md](WIKI_PLAN.md) for reference tab expansion plans.
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Work on the `dev` branch (not `main`)
+2. Run tests before submitting: `cd tests && npx playwright test`
+3. See [Contributing guide](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Contributing) for patterns and conventions
+
+## 🔒 Security
+
+See [SECURITY.md](SECURITY.md) for our security policy, supported versions, and how to report vulnerabilities responsibly.
+
+## 📜 License
+
+MIT License — see [LICENSE](LICENSE). Copyright (c) 2025 Luc Freiburg.
+
+## 🙏 Acknowledgments
 
 Built on the work of the [AlloSphere Research Group](https://allosphere.ucsb.edu/) at UC Santa Barbara.
 
+<details>
+<summary><strong>Full contributor credits</strong></summary>
+
 **AlloLib** — [github.com/AlloSphere-Research-Group/allolib](https://github.com/AlloSphere-Research-Group/allolib)
 Created and led by **Dr. Andres Cabrera** ([@mantaraya36](https://github.com/mantaraya36)).
-Contributors: **Keehong Youn**, **Kon Hyong Kim**, **Karl Yerkes**, **Myungin Lee**, **Timothy Wood**, **Joel A. Jaffe**, **Sihwa Park**, **Graham Wakefield**, **Aaron Anderson**, **Dennis Adderton**, **Ricky Walsh**
+Contributors: Keehong Youn, Kon Hyong Kim, Karl Yerkes, Myungin Lee, Timothy Wood, Joel A. Jaffe, Sihwa Park, Graham Wakefield, Aaron Anderson, Dennis Adderton, Ricky Walsh.
 
 **AlloLib Playground** — [github.com/AlloSphere-Research-Group/allolib_playground](https://github.com/AlloSphere-Research-Group/allolib_playground)
-Created by **Dr. Andres Cabrera** and **Myungin Lee**, with tutorials and examples by the UCSB MAT community.
+By Dr. Andres Cabrera, Myungin Lee, and the UCSB MAT community.
 
 **Gamma DSP** — [github.com/LancePutnam/Gamma](https://github.com/LancePutnam/Gamma)
 Created by **Dr. Lance Putnam** ([@LancePutnam](https://github.com/LancePutnam)).
 
-**AlloSystem** — [github.com/AlloSphere-Research-Group/AlloSystem](https://github.com/AlloSphere-Research-Group/AlloSystem)
-Original AlloSphere C++ libraries by **Dr. Lance Putnam** and **Graham Wakefield**.
+**AlloSystem** — Original AlloSphere C++ libraries by Dr. Lance Putnam and Graham Wakefield.
 
-**AlloSphere Research Facility** — Directed by **Dr. JoAnn Kuchera-Morin**, inventor of the AlloSphere and pioneer of immersive multimedia research at UC Santa Barbara.
+**AlloSphere Research Facility** — Directed by **Dr. JoAnn Kuchera-Morin**, inventor of the AlloSphere.
 
-**Assets:**
-- HDR Environments & Textures: [Poly Haven](https://polyhaven.com) (CC0)
-- Stanford Bunny: Stanford University Computer Graphics Laboratory (public domain)
-- Utah Teapot: Martin Newell, University of Utah (public domain)
-- Suzanne: Blender Foundation (CC0)
-- Spot the Cow: Keenan Crane, Carnegie Mellon University (CC0)
+**Assets (all CC0):**
+- HDR Environments & Textures from [Poly Haven](https://polyhaven.com)
+- Stanford Bunny — Stanford CGL · Utah Teapot — Martin Newell · Suzanne — Blender Foundation · Spot the Cow — Keenan Crane
 
-**Tools & Libraries:**
-- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — Microsoft (MIT)
-- [Emscripten](https://emscripten.org/) — Emscripten contributors (MIT/LLVM)
-- [Vue 3](https://vuejs.org/) — Evan You and Vue contributors (MIT)
-- [Vite](https://vitejs.dev/) — Evan You and Vite contributors (MIT)
+**Tools:**
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) (Microsoft, MIT)
+- [Emscripten](https://emscripten.org/) (MIT/LLVM)
+- [Vue 3](https://vuejs.org/) and [Vite](https://vitejs.dev/) (MIT)
 
-## License
+</details>
 
-MIT License — see [LICENSE](LICENSE) for details.
+---
 
-Copyright (c) 2025 Luc Freiburg
+<div align="center">
+
+Made with ♥ at UC Santa Barbara · [Issues](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/issues) · [Discussions](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/discussions) · [Wiki](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)
+
+</div>
