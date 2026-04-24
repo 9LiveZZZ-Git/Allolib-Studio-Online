@@ -281,6 +281,12 @@ public:
                 return ptr;
             }
 
+            // Prepend app base path so /assets/... works on GitHub Pages subdirectory deployments
+            var basePath = window.__alloBasePath || '/';
+            if (url.charAt(0) === '/' && url.indexOf('/assets/') === 0) {
+                url = basePath + url.slice(1);
+            }
+
             fetch(url)
                 .then(function(response) {
                     if (!response.ok) throw new Error('HTTP error ' + response.status);

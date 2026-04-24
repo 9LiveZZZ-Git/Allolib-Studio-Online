@@ -297,6 +297,10 @@ export class AllolibRuntime {
       this.onPrint(`[Backend] Active backend: ${activeBackend}`)
       this.onPrint(`[Backend] Compute shaders: ${useWebGPU ? 'ENABLED' : 'DISABLED'}`)
 
+      // Expose base path so EM_ASM blocks in al_WebFile.hpp / al_WebImage.hpp
+      // can rewrite /assets/... to the correct subdirectory on GitHub Pages.
+      ;(window as any).__alloBasePath = import.meta.env.BASE_URL
+
       // Dynamically import the ES6 module
       // The module exports a factory function that returns a Promise<Module>
       this.onPrint('[INFO] Importing ES6 module...')

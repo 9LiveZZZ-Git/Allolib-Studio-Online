@@ -86,6 +86,11 @@ public:
                 Module.ccall('_al_web_image_error', null, ['number'], [imgPtr]);
             };
 
+            // Prepend app base path so /assets/... works on GitHub Pages subdirectory deployments
+            var basePath = window.__alloBasePath || '/';
+            if (url.charAt(0) === '/' && url.indexOf('/assets/') === 0) {
+                url = basePath + url.slice(1);
+            }
             img.src = url;
         }, this, url.c_str());
     }
