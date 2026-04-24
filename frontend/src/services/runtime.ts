@@ -894,9 +894,17 @@ export class AllolibRuntime {
       }
     }
 
-    // Close audio context
+    // Close audio context (guarded — already-closed contexts throw InvalidStateError)
     if (window.alloAudioContext) {
-      window.alloAudioContext.close()
+      try {
+        if (window.alloAudioContext.state !== 'closed') {
+          window.alloAudioContext.close().catch(err => {
+            console.warn('[runtime] audioContext.close() rejected:', err)
+          })
+        }
+      } catch (err) {
+        console.warn('[runtime] audioContext.close() threw:', err)
+      }
       window.alloAudioContext = null
     }
 

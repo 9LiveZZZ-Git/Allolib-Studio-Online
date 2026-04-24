@@ -10,6 +10,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { parameterSystem, ParameterType, type Parameter, type ParameterGroup } from '@/utils/parameter-system'
 import { useProjectStore } from '@/stores/project'
+import { useResizableDrag } from '@/composables/useResizableDrag'
 import TimelinePanel from './timeline/TimelinePanel.vue'
 
 const props = defineProps<{
@@ -21,41 +22,17 @@ const emit = defineEmits<{
   resize: [height: number]
 }>()
 
-// Resize state
+// Resize state — bottom-anchored panel, dragging up grows it
 const containerRef = ref<HTMLDivElement>()
-const isResizing = ref(false)
-const startY = ref(0)
-const startHeight = ref(0)
-
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  isResizing.value = true
-  startY.value = e.clientY
-  startHeight.value = containerRef.value?.offsetHeight || 200
-
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', stopResize)
-  document.body.style.cursor = 'ns-resize'
-  document.body.style.userSelect = 'none'
-}
-
-function onMouseMove(e: MouseEvent) {
-  if (!isResizing.value) return
-
-  // Calculate new height (dragging up increases height)
-  const delta = startY.value - e.clientY
-  const newHeight = Math.max(100, Math.min(400, startHeight.value + delta))
-
-  emit('resize', newHeight)
-}
-
-function stopResize() {
-  isResizing.value = false
-  document.removeEventListener('mousemove', onMouseMove)
-  document.removeEventListener('mouseup', stopResize)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-}
+const { startResize, isResizing } = useResizableDrag({
+  axis: 'vertical',
+  min: 100,
+  max: 400,
+  invert: true,
+  getElement: () => containerRef.value,
+  fallbackSize: 200,
+  onResize: (h) => emit('resize', h),
+})
 
 // Parameter panel state
 const parameterGroups = ref<ParameterGroup[]>([])
@@ -1261,8 +1238,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   teardownAnalyser()
   window.removeEventListener('resize', setupCanvases)
-  document.removeEventListener('mousemove', onMouseMove)
-  document.removeEventListener('mouseup', stopResize)
+  // Resize drag listeners are managed by useResizableDrag
   if (paramUnsubscribe) paramUnsubscribe()
 })
 </script>

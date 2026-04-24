@@ -42,6 +42,22 @@ export interface JobStatusResponse {
 }
 
 /**
+ * Read a fetch response as JSON, surfacing HTTP errors instead of returning
+ * malformed data. Response body is consumed once and reused as the thrown message.
+ */
+async function readJsonOrThrow<T>(response: Response, context: string): Promise<T> {
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`
+    try {
+      const body = await response.text()
+      if (body) detail += ` — ${body.slice(0, 500)}`
+    } catch { /* body unreadable */ }
+    throw new Error(`${context} failed: ${detail}`)
+  }
+  return response.json() as Promise<T>
+}
+
+/**
  * Submit a multi-file project for compilation
  */
 export async function submitCompilation(request: CompilationRequest): Promise<CompilationResponse> {
@@ -57,7 +73,7 @@ export async function submitCompilation(request: CompilationRequest): Promise<Co
     }),
   })
 
-  return response.json()
+  return readJsonOrThrow<CompilationResponse>(response, 'Submit compilation')
 }
 
 /**
@@ -72,7 +88,7 @@ export async function submitSingleFileCompilation(source: string): Promise<Compi
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   const response = await fetch(`${API_BASE}/status/${jobId}`)
-  return response.json()
+  return readJsonOrThrow<JobStatusResponse>(response, `Get job status ${jobId}`)
 }
 
 export async function pollJobCompletion(
@@ -99,5 +115,10 @@ export async function pollJobCompletion(
 }
 
 export async function cleanupJob(jobId: string): Promise<void> {
-  await fetch(`${API_BASE}/${jobId}`, { method: 'DELETE' })
+  try {
+    await fetch(`${API_BASE}/${jobId}`, { method: 'DELETE' })
+  } catch (err) {
+    // Cleanup is best-effort — the job will expire server-side regardless
+    console.warn(`[compiler] cleanupJob(${jobId}) failed:`, err)
+  }
 }

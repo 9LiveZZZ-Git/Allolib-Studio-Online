@@ -86,6 +86,7 @@ export class MediaRecorderService {
   private recordedChunks: Blob[] = []
   private canvas: HTMLCanvasElement | null = null
   private audioDestination: MediaStreamAudioDestinationNode | null = null
+  private audioSourceNode: AudioNode | null = null
   private isRecording = false
   private startTime = 0
   private onProgressCallback: ((duration: number) => void) | null = null
@@ -105,19 +106,38 @@ export class MediaRecorderService {
    * This connects to the existing audio chain for recording
    */
   setAudioContext(audioContext: AudioContext | null): void {
+    // Disconnect any previous destination before creating a new one,
+    // otherwise each call appends another branch to the audio graph and leaks.
+    this.disconnectAudioCapture()
+
     if (!audioContext) return
 
     // Create a media stream destination for recording
     this.audioDestination = audioContext.createMediaStreamDestination()
 
-    // Connect the limiter gain (end of audio chain) to our recording destination
-    // This captures the final processed audio
+    // Connect the limiter gain (end of audio chain) to our recording destination.
+    // Remember which source we connected so we can disconnect just that branch.
     if (window.alloLimiterGain) {
       window.alloLimiterGain.connect(this.audioDestination)
+      this.audioSourceNode = window.alloLimiterGain
     } else if (window.alloWorkletNode) {
-      // Fallback: connect directly to worklet output
       window.alloWorkletNode.connect(this.audioDestination)
+      this.audioSourceNode = window.alloWorkletNode
     }
+  }
+
+  /**
+   * Disconnect the recording branch from the main audio graph.
+   * Safe to call multiple times; silently handles already-disconnected nodes.
+   */
+  disconnectAudioCapture(): void {
+    if (this.audioSourceNode && this.audioDestination) {
+      try {
+        this.audioSourceNode.disconnect(this.audioDestination)
+      } catch { /* already disconnected */ }
+    }
+    this.audioSourceNode = null
+    this.audioDestination = null
   }
 
   /**
@@ -245,6 +265,9 @@ export class MediaRecorderService {
         const blob = new Blob(this.recordedChunks, { type: mimeType })
         this.isRecording = false
         this.recordedChunks = []
+        // Release the recording branch of the audio graph so repeated
+        // start/stop cycles don't keep stacking up connections.
+        this.disconnectAudioCapture()
         resolve(blob)
       }
 

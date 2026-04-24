@@ -414,7 +414,14 @@ class ParameterSystem {
     if (this.pollInterval) return
 
     this.pollInterval = window.setInterval(() => {
-      this.syncFromWasm()
+      // Guard against any sync error killing the interval callback forever.
+      // Without this, a single WASM-side throw would silently freeze parameter
+      // UI updates for the rest of the session.
+      try {
+        this.syncFromWasm()
+      } catch (err) {
+        console.error('[parameter-system] syncFromWasm failed:', err)
+      }
     }, 100) // Poll every 100ms
   }
 

@@ -285,47 +285,53 @@ class ObjectManagerBridge {
         continue
       }
 
-      // Allocate ID string for subsequent calls
+      // Allocate ID string for subsequent calls (guarded — always freed)
       const idStrPtr = this.allocString(id)
+      let name = '', primitive = '', materialType = ''
+      let posX = 0, posY = 0, posZ = 0
+      let scaleX = 1, scaleY = 1, scaleZ = 1
+      let rotX = 0, rotY = 0, rotZ = 0, rotW = 1
+      let colorR = 1, colorG = 1, colorB = 1, colorA = 1
+      let metallic = 0, roughness = 0.5
+      let visible = true, spawnTime = -1, destroyTime = -1
 
-      // Get object info from WASM
-      const namePtr = this.wasmModule._al_obj_get_name(idStrPtr)
-      const name = this.wasmModule.UTF8ToString(namePtr)
+      try {
+        const namePtr = this.wasmModule._al_obj_get_name(idStrPtr)
+        name = this.wasmModule.UTF8ToString(namePtr)
 
-      const primitivePtr = this.wasmModule._al_obj_get_primitive(idStrPtr)
-      const primitive = this.wasmModule.UTF8ToString(primitivePtr)
+        const primitivePtr = this.wasmModule._al_obj_get_primitive(idStrPtr)
+        primitive = this.wasmModule.UTF8ToString(primitivePtr)
 
-      const materialTypePtr = this.wasmModule._al_obj_get_material_type(idStrPtr)
-      const materialType = this.wasmModule.UTF8ToString(materialTypePtr)
+        const materialTypePtr = this.wasmModule._al_obj_get_material_type(idStrPtr)
+        materialType = this.wasmModule.UTF8ToString(materialTypePtr)
 
-      // Get transform
-      const posX = this.wasmModule._al_obj_get_pos_x(idStrPtr)
-      const posY = this.wasmModule._al_obj_get_pos_y(idStrPtr)
-      const posZ = this.wasmModule._al_obj_get_pos_z(idStrPtr)
+        // Transform
+        posX = this.wasmModule._al_obj_get_pos_x(idStrPtr)
+        posY = this.wasmModule._al_obj_get_pos_y(idStrPtr)
+        posZ = this.wasmModule._al_obj_get_pos_z(idStrPtr)
+        scaleX = this.wasmModule._al_obj_get_scale_x(idStrPtr)
+        scaleY = this.wasmModule._al_obj_get_scale_y(idStrPtr)
+        scaleZ = this.wasmModule._al_obj_get_scale_z(idStrPtr)
+        rotX = this.wasmModule._al_obj_get_rot_x(idStrPtr)
+        rotY = this.wasmModule._al_obj_get_rot_y(idStrPtr)
+        rotZ = this.wasmModule._al_obj_get_rot_z(idStrPtr)
+        rotW = this.wasmModule._al_obj_get_rot_w(idStrPtr)
 
-      const scaleX = this.wasmModule._al_obj_get_scale_x(idStrPtr)
-      const scaleY = this.wasmModule._al_obj_get_scale_y(idStrPtr)
-      const scaleZ = this.wasmModule._al_obj_get_scale_z(idStrPtr)
+        // Material
+        colorR = this.wasmModule._al_obj_get_color_r(idStrPtr)
+        colorG = this.wasmModule._al_obj_get_color_g(idStrPtr)
+        colorB = this.wasmModule._al_obj_get_color_b(idStrPtr)
+        colorA = this.wasmModule._al_obj_get_color_a(idStrPtr)
+        metallic = this.wasmModule._al_obj_get_metallic(idStrPtr)
+        roughness = this.wasmModule._al_obj_get_roughness(idStrPtr)
 
-      const rotX = this.wasmModule._al_obj_get_rot_x(idStrPtr)
-      const rotY = this.wasmModule._al_obj_get_rot_y(idStrPtr)
-      const rotZ = this.wasmModule._al_obj_get_rot_z(idStrPtr)
-      const rotW = this.wasmModule._al_obj_get_rot_w(idStrPtr)
-
-      // Get material
-      const colorR = this.wasmModule._al_obj_get_color_r(idStrPtr)
-      const colorG = this.wasmModule._al_obj_get_color_g(idStrPtr)
-      const colorB = this.wasmModule._al_obj_get_color_b(idStrPtr)
-      const colorA = this.wasmModule._al_obj_get_color_a(idStrPtr)
-      const metallic = this.wasmModule._al_obj_get_metallic(idStrPtr)
-      const roughness = this.wasmModule._al_obj_get_roughness(idStrPtr)
-
-      // Get lifecycle
-      const visible = this.wasmModule._al_obj_get_visible(idStrPtr) !== 0
-      const spawnTime = this.wasmModule._al_obj_get_spawn_time(idStrPtr)
-      const destroyTime = this.wasmModule._al_obj_get_destroy_time(idStrPtr)
-
-      this.freeString(idStrPtr)
+        // Lifecycle
+        visible = this.wasmModule._al_obj_get_visible(idStrPtr) !== 0
+        spawnTime = this.wasmModule._al_obj_get_spawn_time(idStrPtr)
+        destroyTime = this.wasmModule._al_obj_get_destroy_time(idStrPtr)
+      } finally {
+        this.freeString(idStrPtr)
+      }
 
       // Create object in store (this adds it to the timeline)
       const sceneObject: SceneObject = {
@@ -375,6 +381,19 @@ class ObjectManagerBridge {
   }
 
   /**
+   * Run `fn` with a temporary UTF8 string allocated in WASM memory, and
+   * guarantee the pointer is freed even if `fn` throws. Prevents heap leaks.
+   */
+  private withStr<T>(str: string, fn: (ptr: number) => T): T {
+    const ptr = this.allocString(str)
+    try {
+      return fn(ptr)
+    } finally {
+      this.freeString(ptr)
+    }
+  }
+
+  /**
    * Create a single object in WASM
    */
   private createWasmObject(obj: SceneObject): void {
@@ -384,11 +403,14 @@ class ObjectManagerBridge {
     const namePtr = this.allocString(obj.name)
     const primitivePtr = this.allocString(obj.mesh.primitive || 'cube')
 
-    const result = this.wasmModule._al_obj_create(idPtr, namePtr, primitivePtr)
-
-    this.freeString(idPtr)
-    this.freeString(namePtr)
-    this.freeString(primitivePtr)
+    let result = 0
+    try {
+      result = this.wasmModule._al_obj_create(idPtr, namePtr, primitivePtr)
+    } finally {
+      this.freeString(idPtr)
+      this.freeString(namePtr)
+      this.freeString(primitivePtr)
+    }
 
     if (result === 1) {
       this.syncedObjects.add(obj.id)
@@ -404,9 +426,9 @@ class ObjectManagerBridge {
   private removeWasmObject(id: string): void {
     if (!this.wasmModule || !this.syncedObjects.has(id)) return
 
-    const idPtr = this.allocString(id)
-    this.wasmModule._al_obj_remove(idPtr)
-    this.freeString(idPtr)
+    this.withStr(id, (idPtr) => {
+      this.wasmModule!._al_obj_remove(idPtr)
+    })
 
     this.syncedObjects.delete(id)
   }
@@ -417,18 +439,16 @@ class ObjectManagerBridge {
   private syncObjectTransform(obj: SceneObject): void {
     if (!this.wasmModule || !this.syncedObjects.has(obj.id)) return
 
-    const idPtr = this.allocString(obj.id)
+    this.withStr(obj.id, (idPtr) => {
+      const [px, py, pz] = obj.transform.position
+      this.wasmModule!._al_obj_set_position(idPtr, px, py, pz)
 
-    const [px, py, pz] = obj.transform.position
-    this.wasmModule._al_obj_set_position(idPtr, px, py, pz)
+      const [rx, ry, rz, rw] = obj.transform.rotation
+      this.wasmModule!._al_obj_set_rotation(idPtr, rx, ry, rz, rw)
 
-    const [rx, ry, rz, rw] = obj.transform.rotation
-    this.wasmModule._al_obj_set_rotation(idPtr, rx, ry, rz, rw)
-
-    const [sx, sy, sz] = obj.transform.scale
-    this.wasmModule._al_obj_set_scale(idPtr, sx, sy, sz)
-
-    this.freeString(idPtr)
+      const [sx, sy, sz] = obj.transform.scale
+      this.wasmModule!._al_obj_set_scale(idPtr, sx, sy, sz)
+    })
   }
 
   /**
@@ -437,26 +457,24 @@ class ObjectManagerBridge {
   private syncObjectMaterial(obj: SceneObject): void {
     if (!this.wasmModule || !this.syncedObjects.has(obj.id)) return
 
-    const idPtr = this.allocString(obj.id)
+    this.withStr(obj.id, (idPtr) => {
+      if (obj.material.color) {
+        const [r, g, b, a] = obj.material.color
+        this.wasmModule!._al_obj_set_color(idPtr, r, g, b, a)
+      }
 
-    if (obj.material.color) {
-      const [r, g, b, a] = obj.material.color
-      this.wasmModule._al_obj_set_color(idPtr, r, g, b, a)
-    }
+      this.withStr(obj.material.type, (typePtr) => {
+        this.wasmModule!._al_obj_set_material_type(idPtr, typePtr)
+      })
 
-    const typePtr = this.allocString(obj.material.type)
-    this.wasmModule._al_obj_set_material_type(idPtr, typePtr)
-    this.freeString(typePtr)
-
-    if (obj.material.type === 'pbr') {
-      this.wasmModule._al_obj_set_pbr_params(
-        idPtr,
-        obj.material.metallic ?? 0.5,
-        obj.material.roughness ?? 0.5
-      )
-    }
-
-    this.freeString(idPtr)
+      if (obj.material.type === 'pbr') {
+        this.wasmModule!._al_obj_set_pbr_params(
+          idPtr,
+          obj.material.metallic ?? 0.5,
+          obj.material.roughness ?? 0.5
+        )
+      }
+    })
   }
 
   /**
@@ -465,13 +483,11 @@ class ObjectManagerBridge {
   private syncObjectLifecycle(obj: SceneObject): void {
     if (!this.wasmModule || !this.syncedObjects.has(obj.id)) return
 
-    const idPtr = this.allocString(obj.id)
-
-    this.wasmModule._al_obj_set_visible(idPtr, obj.visible ? 1 : 0)
-    this.wasmModule._al_obj_set_spawn_time(idPtr, obj.spawnTime ?? -1)
-    this.wasmModule._al_obj_set_destroy_time(idPtr, obj.destroyTime ?? -1)
-
-    this.freeString(idPtr)
+    this.withStr(obj.id, (idPtr) => {
+      this.wasmModule!._al_obj_set_visible(idPtr, obj.visible ? 1 : 0)
+      this.wasmModule!._al_obj_set_spawn_time(idPtr, obj.spawnTime ?? -1)
+      this.wasmModule!._al_obj_set_destroy_time(idPtr, obj.destroyTime ?? -1)
+    })
   }
 
   /**

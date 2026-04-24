@@ -83,6 +83,9 @@ export class WebSocketService {
       this.ws.close()
       this.ws = null
     }
+    // Clear listener registry so a later reconnect starts fresh
+    // (prevents accumulation of stale handlers across disconnect/reconnect cycles)
+    this.listeners.clear()
   }
 
   on(type: string, handler: MessageHandler) {

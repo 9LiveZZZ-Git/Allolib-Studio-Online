@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, nextTick } from 'vue'
+import { ref, nextTick } from 'vue'
 import Console from './Console.vue'
 import XTerminal from './XTerminal.vue'
 import TerminalReference from './TerminalReference.vue'
+import { useResizableDrag } from '@/composables/useResizableDrag'
 
 const props = defineProps<{
   output: string[]
@@ -21,40 +22,18 @@ const emit = defineEmits<{
 
 const activeTab = ref<'output' | 'terminal' | 'reference'>('output')
 const xtermRef = ref<InstanceType<typeof XTerminal>>()
-
-// Resize state
-const isResizing = ref(false)
-const startY = ref(0)
-const startHeight = ref(0)
 const containerRef = ref<HTMLDivElement>()
 
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  isResizing.value = true
-  startY.value = e.clientY
-  startHeight.value = containerRef.value?.offsetHeight || 200
-
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', stopResize)
-  document.body.style.cursor = 'ns-resize'
-  document.body.style.userSelect = 'none'
-}
-
-function onMouseMove(e: MouseEvent) {
-  if (!isResizing.value) return
-
-  const delta = startY.value - e.clientY
-  const newHeight = Math.max(100, Math.min(600, startHeight.value + delta))
-  emit('resize', newHeight)
-}
-
-function stopResize() {
-  isResizing.value = false
-  document.removeEventListener('mousemove', onMouseMove)
-  document.removeEventListener('mouseup', stopResize)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-}
+// Bottom-anchored panel: dragging upward grows it, downward shrinks it.
+const { startResize } = useResizableDrag({
+  axis: 'vertical',
+  min: 100,
+  max: 600,
+  invert: true,
+  getElement: () => containerRef.value,
+  fallbackSize: 200,
+  onResize: (h) => emit('resize', h),
+})
 
 function switchTab(tab: 'output' | 'terminal' | 'reference') {
   activeTab.value = tab
@@ -65,11 +44,6 @@ function switchTab(tab: 'output' | 'terminal' | 'reference') {
     })
   }
 }
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousemove', onMouseMove)
-  document.removeEventListener('mouseup', stopResize)
-})
 </script>
 
 <template>
