@@ -77,7 +77,40 @@ export const glossary: GlossaryEntry[] = [
     category: 'core',
     definition: 'Asynchronous execution contexts that handle different aspects of the application. Includes AudioDomain, OpenGLGraphicsDomain, SimulationDomain, and OSCDomain.',
     platforms: ['native'],
-    relatedTerms: ['AudioDomain', 'OpenGLGraphicsDomain'],
+    relatedTerms: ['AudioDomain', 'OpenGLGraphicsDomain', 'SimulationDomain', 'AudioCallback'],
+  },
+  {
+    term: 'SimulationDomain',
+    category: 'core',
+    definition: 'Separate tick domain for physics, AI, or agent simulation logic, decoupled from the graphics frame rate. Access via app.simulationDomain() and override its update callback.',
+    syntax: 'app.simulationDomain()->updateCallback([](double dt){ ... });',
+    example: `void onCreate() override {
+  app.simulationDomain()->updateCallback([this](double dt) {
+    // physics update at fixed sim rate
+    for (auto& p : particles) p.update(dt);
+  });
+}`,
+    platforms: ['native'],
+    relatedTerms: ['Domain', 'AudioCallback'],
+  },
+  {
+    term: 'AudioCallback',
+    category: 'core',
+    definition: 'Chainable audio processor object that can be appended to the AudioDomain. Lets you inject DSP stages without overriding onSound.',
+    syntax: 'app.audioDomain()->append(myCallback);',
+    example: `struct MyFilter : AudioCallback {
+  void onAudioCB(AudioIOData& io) override {
+    while (io()) { io.out(0) = filter(io.in(0)); }
+  }
+};
+
+MyFilter myFilter;
+
+void onCreate() override {
+  app.audioDomain()->append(myFilter);
+}`,
+    platforms: ['native'],
+    relatedTerms: ['Domain', 'SimulationDomain', 'AudioIOData'],
   },
   {
     term: 'ALLOLIB_WEB_MAIN',
@@ -819,12 +852,58 @@ shader.end();`,
     relatedTerms: ['Spatializer', 'VBAP'],
   },
   {
+    term: 'Vbap',
+    category: 'audio',
+    definition: 'Vector-Based Amplitude Panning spatializer class. Provides high-quality 2D/3D panning by computing amplitude gains across a set of speaker triplets.',
+    syntax: 'Vbap vbap(speakers);',
+    example: `Vbap vbap(SpeakerRingLayout<8>());
+vbap.compile();
+vbap.renderSample(io, sourcePos, sample, frame);`,
+    platforms: ['native'],
+    relatedTerms: ['VBAP', 'Dbap', 'Lbap', 'Spatializer', 'Speakers'],
+  },
+  {
+    term: 'Dbap',
+    category: 'audio',
+    definition: 'Distance-Based Amplitude Panning spatializer class. Simpler alternative to VBAP that distributes gain inversely proportional to speaker distance.',
+    syntax: 'Dbap dbap(speakers);',
+    example: `Dbap dbap(SpeakerRingLayout<8>());
+dbap.renderSample(io, sourcePos, sample, frame);`,
+    platforms: ['native'],
+    relatedTerms: ['DBAP', 'Vbap', 'Lbap', 'Spatializer'],
+  },
+  {
     term: 'SoundFile',
     category: 'audio',
     definition: 'Class for reading and writing audio files (WAV, FLAC, OGG).',
+    syntax: 'SoundFile sf;',
+    example: `SoundFile sf;
+sf.openRead("sound.wav");
+int frames = sf.frames();
+int chans = sf.channels();`,
     platforms: ['native'],
     webAlternative: 'WebSamplePlayer',
-    relatedTerms: ['WebSamplePlayer'],
+    relatedTerms: ['SoundFilePlayer', 'WebSamplePlayer'],
+  },
+  {
+    term: 'SoundFilePlayer',
+    category: 'audio',
+    definition: 'Audio file playback with loop control and seek. Wraps SoundFile for convenient real-time playback inside onSound.',
+    syntax: 'SoundFilePlayer player;',
+    example: `SoundFilePlayer player;
+
+void onCreate() override {
+  player.load("sound.wav");
+  player.loop(true);
+}
+
+void onSound(AudioIOData& io) override {
+  while (io()) {
+    player(io.out(0), io.out(1));
+  }
+}`,
+    platforms: ['native'],
+    relatedTerms: ['SoundFile', 'AudioIOData'],
   },
 
   // ============================================================================
@@ -1912,6 +1991,15 @@ lpf.type(gam::LOW_PASS);`,
     platforms: ['both'],
     relatedTerms: ['gam::NoiseBrown'],
   },
+  {
+    term: 'gam::NoiseBinary',
+    category: 'gamma',
+    definition: 'Random binary noise generator. Outputs +amplitude or -amplitude with equal probability, producing a two-valued random signal.',
+    syntax: 'gam::NoiseBinary<> bin(amplitude);',
+    example: 'NoiseBinary<> bin(1.f);\nfloat s = bin();',
+    platforms: ['both'],
+    relatedTerms: ['gam::NoiseWhite', 'gam::NoisePink'],
+  },
 
   // ============================================================================
   // GAMMA DSP - EFFECTS
@@ -2108,6 +2196,29 @@ float out = player();`,
     syntax: 'gam::Dist<> dist;',
     platforms: ['both'],
     relatedTerms: ['gam::Pan', 'gam::Echo'],
+  },
+  {
+    term: 'gam::ChebyN',
+    category: 'gamma',
+    definition: 'Chebyshev polynomial waveshaper for harmonic distortion. Uses Chebyshev polynomials to add controlled harmonics to a signal. The template parameter sets the number of harmonics.',
+    syntax: 'gam::ChebyN<N> cheby;  // N = number of Chebyshev terms',
+    example: `gam::ChebyN<6> cheby;
+cheby[0] = 1;   // fundamental
+cheby[1] = 0.5; // 2nd harmonic
+float out = cheby(in);`,
+    platforms: ['both'],
+    relatedTerms: ['gam::Dist', 'gam::AM'],
+  },
+  {
+    term: 'gam::Param',
+    category: 'gamma',
+    definition: 'Smoothed parameter with exponential lag (glide). Interpolates from the current value to a target value to prevent zipper noise on control changes.',
+    syntax: 'gam::Param<T> p(initialValue);',
+    example: `gam::Param<float> p;
+p.target(440);      // Set target
+float cur = p();    // Get smoothed current value`,
+    platforms: ['both'],
+    relatedTerms: ['gam::SegExp', 'gam::OnePole'],
   },
 
   // ============================================================================
@@ -2745,6 +2856,24 @@ float wet = reverb(input);`,
     relatedTerms: ['gam::ReverbMS'],
   },
   {
+    term: 'StaticDelayLine<N>',
+    category: 'audio',
+    definition: 'Fixed-size ring-buffer delay line templated on buffer length in samples. Provides write and fractional-sample read with no dynamic allocation.',
+    syntax: 'StaticDelayLine<N> line;  // N = max delay in samples',
+    example: `StaticDelayLine<44100> line;  // up to 1 second at 44.1 kHz
+
+void onSound(AudioIOData& io) override {
+  while (io()) {
+    float in = io.in(0);
+    line.write(in);
+    float out = line.read(0.25f);  // read 250 ms ago
+    io.out(0) = out;
+  }
+}`,
+    platforms: ['native'],
+    relatedTerms: ['Reverb', 'gam::Delay'],
+  },
+  {
     term: 'BiQuad',
     category: 'audio',
     definition: 'Biquad filter (allolib version). Supports LP, HP, BP, notch, peaking, shelving.',
@@ -2968,8 +3097,20 @@ float wet = reverb(input);`,
     category: 'types',
     definition: 'Thread-safe integer parameter with range and callbacks.',
     syntax: 'ParameterInt param{"name", "group", 0, 0, 100};',
+    example: 'ParameterInt voices{"voices", "", 4, 1, 16};',
     platforms: ['native'],
-    relatedTerms: ['Parameter', 'ParameterBool'],
+    relatedTerms: ['Parameter', 'ParameterBool', 'ParameterMIDI'],
+  },
+  {
+    term: 'ParameterMIDI',
+    category: 'types',
+    definition: 'Connects a MIDI CC message to a Parameter for hardware control. Maps a specific MIDI channel and controller number to a parameter.',
+    syntax: 'ParameterMIDI pm;',
+    example: `ParameterMIDI pm;
+pm.connectControl(cutoffFreq, 1, 74);  // ch 1, CC 74 (filter cutoff)
+pm.connectControl(reverbMix,  1,  91); // ch 1, CC 91 (reverb send)`,
+    platforms: ['native'],
+    relatedTerms: ['Parameter', 'ParameterInt', 'MIDI'],
   },
   {
     term: 'ParameterString',
@@ -3076,7 +3217,35 @@ presets.setMorphTime(2.0);  // 2 second morph`,
 bundle << frequency << amplitude << detune;
 presets << bundle;`,
     platforms: ['both'],
-    relatedTerms: ['Parameter', 'PresetHandler'],
+    relatedTerms: ['Parameter', 'PresetHandler', 'BundleGUIManager'],
+  },
+  {
+    term: 'Composition',
+    category: 'types',
+    definition: 'Sequence of timed preset steps that plays back automatically. Pairs with PresetHandler to create scripted performances.',
+    syntax: 'Composition comp(presetHandler);',
+    example: `PresetHandler presets{"presets"};
+Composition comp(presets);
+comp.insertStep("intro", 2.0);   // hold "intro" for 2 s
+comp.insertStep("build", 4.0);
+comp.insertStep("drop",  8.0);
+comp.play();`,
+    platforms: ['native'],
+    relatedTerms: ['PresetHandler', 'SequencerState'],
+  },
+  {
+    term: 'BundleGUIManager',
+    category: 'types',
+    definition: 'Manages multiple ParameterBundles in a single tabbed ImGui GUI. Each bundle appears as a labelled tab.',
+    syntax: 'BundleGUIManager mgr;',
+    example: `BundleGUIManager mgr;
+mgr << oscBundle << filterBundle << reverbBundle;
+
+void onAnimate(double dt) override {
+  mgr.drawBundleGUI();
+}`,
+    platforms: ['native'],
+    relatedTerms: ['ParameterBundle', 'ControlGUI'],
   },
 
   // ============================================================================
