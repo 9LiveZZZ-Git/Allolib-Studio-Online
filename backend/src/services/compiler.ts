@@ -38,7 +38,9 @@ const jobs = new Map<string, CompilationJob>()
 const COMPILE_DIR = process.env.COMPILE_DIR || './compiled'
 const SOURCE_DIR = process.env.SOURCE_DIR || './source'
 const USE_DOCKER = process.env.USE_DOCKER === 'true'
+const USE_EMCC = process.env.USE_EMCC === 'true'
 const COMPILER_CONTAINER = process.env.COMPILER_CONTAINER || 'allolib-compiler'
+const COMPILE_SCRIPT = process.env.COMPILE_SCRIPT || '/app/compile.sh'
 
 export async function createCompilationJob(
   files: ProjectFile[],
@@ -101,6 +103,8 @@ async function compileAsync(job: CompilationJob): Promise<void> {
 
     if (USE_DOCKER) {
       await compileWithDocker(job, mainSourceFile, outputDir)
+    } else if (USE_EMCC) {
+      await compileWithEmcc(job, mainSourceFile, outputDir)
     } else {
       await compileLocal(job, mainSourceFile, outputDir)
     }
@@ -193,6 +197,61 @@ async function compileWithDocker(
 
     dockerProcess.on('error', (err) => {
       logger.error(`[${job.id}] Docker process error: ${err.message}`)
+      reject(err)
+    })
+  })
+}
+
+async function compileWithEmcc(
+  job: CompilationJob,
+  sourceFile: string,
+  outputDir: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    logger.info(`[${job.id}] Starting native emcc compilation via ${COMPILE_SCRIPT}`)
+    logger.info(`[${job.id}] Source: ${sourceFile}`)
+    logger.info(`[${job.id}] Output: ${outputDir}`)
+    logger.info(`[${job.id}] Backend: ${job.backend}`)
+
+    broadcast('compile:status', { jobId: job.id, status: 'compiling', backend: job.backend })
+
+    const proc = spawn('bash', [COMPILE_SCRIPT, sourceFile, outputDir, job.id, job.backend], {
+      env: { ...process.env },
+    })
+
+    let stderr = ''
+
+    proc.stdout.on('data', (data) => {
+      const text = data.toString()
+      for (const line of text.split('\n').filter((l: string) => l.trim())) {
+        logger.info(`[${job.id}] ${line.trim()}`)
+        broadcast('compile:output', { jobId: job.id, stream: 'stdout', line: line.trim() })
+      }
+    })
+
+    proc.stderr.on('data', (data) => {
+      const text = data.toString()
+      stderr += text
+      for (const line of text.split('\n').filter((l: string) => l.trim())) {
+        logger.warn(`[${job.id}] ${line.trim()}`)
+        broadcast('compile:output', { jobId: job.id, stream: 'stderr', line: line.trim() })
+      }
+    })
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        logger.info(`[${job.id}] emcc compilation successful`)
+        broadcast('compile:complete', { jobId: job.id, success: true })
+        resolve()
+      } else {
+        logger.error(`[${job.id}] emcc compilation failed with code ${code}`)
+        broadcast('compile:complete', { jobId: job.id, success: false, code })
+        reject(new Error(`Compilation failed with code ${code}: ${stderr}`))
+      }
+    })
+
+    proc.on('error', (err) => {
+      logger.error(`[${job.id}] Spawn error: ${err.message}`)
       reject(err)
     })
   })
