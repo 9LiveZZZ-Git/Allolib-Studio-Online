@@ -18,6 +18,8 @@ import {
 import ExampleDialog from './ExampleDialog.vue'
 import { downloadProject, importProjectFile } from '@/services/unifiedProject'
 
+const appVersion = __APP_VERSION__
+
 const props = defineProps<{
   status: AppStatus
 }>()
@@ -1750,6 +1752,11 @@ function getPlatformBadgeClass(platform: string) {
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
       </svg>
     </a>
+
+    <!-- Version Badge -->
+    <span class="text-xs text-gray-600 font-mono select-none px-2" title="AlloLib Studio Online version">
+      v{{ appVersion }}
+    </span>
   </header>
 
   <!-- Glossary Modal -->

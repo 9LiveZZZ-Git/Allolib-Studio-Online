@@ -39,7 +39,11 @@
 #include "al_compat.hpp"
 #include "al/scene/al_PolySynth.hpp"
 #include "al/scene/al_SynthSequencer.hpp"
+#ifndef __EMSCRIPTEN__
+// SynthRecorder uses fstream / native file I/O — excluded from WASM builds.
+// A WASM-compatible stub is provided below under #ifdef __EMSCRIPTEN__.
 #include "al/scene/al_SynthRecorder.hpp"
+#endif
 #include "al/ui/al_Parameter.hpp"
 #include "al/ui/al_ParameterBundle.hpp"
 #include "al/graphics/al_Light.hpp"
@@ -47,6 +51,12 @@
 
 // Gamma DSP library for sample rate configuration
 #include "Gamma/Domain.h"
+
+// Ensure Gamma sample rate is synchronized when audio is configured
+// WebApp calls this automatically via _allolib_configure_audio
+inline void gammaSetSampleRate(int sr) {
+    gam::sampleRate((double)sr);
+}
 
 // Standard library
 #include <cmath>
@@ -214,6 +224,68 @@ public:
 } // namespace al
 
 // ============================================================================
+// BundleGUIManager Stub
+// ============================================================================
+namespace al {
+class BundleGUIManager {
+public:
+    BundleGUIManager(const std::string& name = "") : mName(name) {}
+    BundleGUIManager& operator<<(ParameterBundle& b) { return *this; }
+    void registerParameterBundle(ParameterBundle& b) {}
+    int currentBundle() const { return 0; }
+    void setCurrentBundle(int) {}
+    void drawBundleGUI() {}
+    void drawBundleGlobal() {}
+    const std::string& name() const { return mName; }
+private:
+    std::string mName;
+};
+} // namespace al
+
+// ============================================================================
+// Composition Stub (uses file system - not available in WASM)
+// ============================================================================
+namespace al {
+class CompositionStep {
+public:
+    std::string presetName;
+    double deltaTime = 0.0;
+};
+class Composition {
+public:
+    Composition(PresetHandler& handler, const std::string& name = "") {}
+    void insertStep(const std::string& presetName, double deltaTime, int index = -1) {}
+    void deleteStep(int index) {}
+    CompositionStep getStep(int index) const { return {}; }
+    int size() const { return 0; }
+    void play() {}
+    void stop() {}
+    bool running() const { return false; }
+    void write() {}
+    std::string getName() const { return ""; }
+    void registerBeginCallback(std::function<void(Composition*)>) {}
+    void registerEndCallback(std::function<void(Composition*)>) {}
+};
+} // namespace al
+
+// ============================================================================
+// CSVReader Stub (uses file system - limited in WASM)
+// ============================================================================
+namespace al {
+class CSVReader {
+public:
+    enum class DataType { STRING, INT64, REAL, BOOLEAN, IGNORE_COLUMN };
+    CSVReader() = default;
+    bool readFile(const std::string& fileName, bool hasColumnNames = true) { return false; }
+    void addType(DataType) {}
+    void clearTypes() {}
+    std::vector<std::string> getColumnNames() const { return {}; }
+    int size() const { return 0; }
+    void setBasePath(const std::string&) {}
+};
+} // namespace al
+
+// ============================================================================
 // PresetSequencer Stub (uses file system)
 // ============================================================================
 
@@ -235,6 +307,66 @@ public:
 
     std::vector<std::string> getSequenceList() const { return {}; }
 };
+
+} // namespace al
+
+// ============================================================================
+// SynthRecorder WASM stub (replaces native fstream-based recorder)
+// The native al::SynthRecorder writes .synthSequence files to disk via
+// fstream — that path does not compile cleanly in Emscripten. This stub
+// provides the same public API so user code compiles without changes.
+// To actually record a session use the Studio recording panel in the UI.
+// ============================================================================
+
+namespace al {
+
+class SynthRecorder {
+public:
+    enum TextFormat { SEQUENCER_EVENT, SEQUENCER_TRIGGERS, CPP_FORMAT, NONE };
+
+    explicit SynthRecorder(TextFormat /*format*/ = SEQUENCER_EVENT) {}
+
+    // Register a PolySynth to record from (matches native operator<<)
+    SynthRecorder& operator<<(PolySynth& /*synth*/) { return *this; }
+    void registerPolySynth(PolySynth& /*synth*/) {}
+
+    // Start/stop recording — no-ops on WASM (use Studio panel)
+    void startRecord(std::string /*name*/ = "", bool /*overwrite*/ = false,
+                     bool /*startOnEvent*/ = true) {
+        printf("[WASM] SynthRecorder::startRecord: use the Studio recording panel.\n");
+    }
+    void stopRecord() {}
+
+    // Time / path configuration
+    void setMaxRecordTime(double /*maxTime*/) {}
+    void setDirectory(std::string /*path*/) {}
+    void verbose(bool /*v*/) {}
+    bool verbose() const { return false; }
+
+    // Trigger callbacks — required by PolySynth registration internally
+    static void onTriggerOn(SynthVoice* /*voice*/, int /*offsetFrames*/,
+                            int /*id*/, void* /*userData*/) {}
+    static void onTriggerOff(int /*id*/, void* /*userData*/) {}
+};
+
+} // namespace al
+
+// ============================================================================
+// SynthSequencer URL helper (WASM extension)
+// ============================================================================
+// al::SynthSequencer IS included (from al/scene/al_SynthSequencer.hpp).
+// Most methods work. However, playSequence(filename) reads from disk.
+// On WASM, use WebSequencerBridge for frontend-driven sequencing instead.
+// The extension below adds a web-safe helper that logs a clear message.
+
+namespace al {
+
+inline void playSynthSequenceFromURL(SynthSequencer& /*seq*/,
+                                     const std::string& /*url*/,
+                                     float /*startTime*/ = 0.0f) {
+    printf("[WASM] playSynthSequenceFromURL: not implemented. "
+           "Use the sequencer panel in the Studio UI instead.\n");
+}
 
 } // namespace al
 
@@ -451,6 +583,34 @@ public:
     bool active() const { return false; }
 };
 
+} // namespace al
+
+// ============================================================================
+// Clock Stub
+// ============================================================================
+namespace al {
+class Clock {
+public:
+    void update() {}
+    double now() const { return 0.0; }
+    double dt() const { return 0.0; }
+    double fps() const { return 60.0; }
+    int frame() const { return 0; }
+};
+} // namespace al
+
+// ============================================================================
+// AppRecorder Stub
+// ============================================================================
+namespace al {
+class AppRecorder {
+public:
+    AppRecorder() = default;
+    void startRecording() {}
+    void stopRecording() {}
+    bool isRecording() const { return false; }
+    void setOutputFile(const std::string&) {}
+};
 } // namespace al
 
 #endif // AL_PLAYGROUND_COMPAT_HPP

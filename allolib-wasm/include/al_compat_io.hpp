@@ -34,6 +34,9 @@ namespace al {
 // Sample loading - use WebSamplePlayer
 using SamplePlayer = WebSamplePlayer;
 
+// SoundFile alias - map to WebSamplePlayer for basic read/write ops
+using SoundFile = WebSamplePlayer;
+
 // MIDI - use WebMIDI
 using MIDIIn = WebMIDI;
 using MIDIOut = WebMIDI;
@@ -48,6 +51,9 @@ using FileIO = WebFile;
 // Image loading
 using ImageLoader = WebImage;
 
+// Image - WebImage already included, make it the standard Image
+using Image = WebImage;
+
 } // namespace al
 
 #else
@@ -60,21 +66,22 @@ using ImageLoader = WebImage;
 
 #include "al/io/al_File.hpp"
 #include "al/graphics/al_Image.hpp"
+#include "al/sound/al_SoundFile.hpp"
 
 // If you have these on desktop:
 // #include "al/io/al_MIDI.hpp"
 // #include "al/protocol/al_OSC.hpp"
-// #include "al/sound/al_SoundFile.hpp"
 
 namespace al {
 
-// On desktop, you'd typically use:
-// using SamplePlayer = SoundFilePlayer;  // or similar
-// using MIDIIn = MIDIInput;
-// using OSCSend = osc::Send;
-// using OSCRecv = osc::Recv;
+// Sample loading - use native SoundFilePlayer
+using SamplePlayer = SoundFilePlayer;
+
+// SoundFile is the native struct (already in al namespace from al_SoundFile.hpp)
+// No alias needed — al::SoundFile and al::SoundFilePlayer are already defined.
 
 // Image loading on desktop uses stb_image via al::Image
+// al::Image is already defined by al_Image.hpp — no alias needed.
 using ImageLoader = Image;
 
 } // namespace al
