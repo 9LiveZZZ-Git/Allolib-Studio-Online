@@ -18,6 +18,8 @@
  * - Stores sync to WASM when values change
  */
 
+import type { WasmModule } from '@/services/runtime'
+
 // Parameter type enum matching WebParamType in C++
 export enum ParameterType {
   FLOAT = 0,
@@ -108,7 +110,7 @@ class ParameterSystem {
   private environmentParameters: Parameter[] = []
   private cameraParameters: Parameter[] = []
   private callbacks: Set<ParameterCallback> = new Set()
-  private wasmModule: any = null
+  private wasmModule: WasmModule | null = null
   private pollInterval: number | null = null
   private retryTimeouts: number[] = []
 
@@ -268,7 +270,6 @@ class ParameterSystem {
       value: number
       defaultValue: number
     }) => {
-      console.log('[ParameterSystem] Parameter added from C++:', info)
       const param: Parameter = {
         name: info.name,
         displayName: info.name,
@@ -301,12 +302,11 @@ class ParameterSystem {
   /**
    * Connect to WASM module
    */
-  connectWasm(module: any): void {
+  connectWasm(module: WasmModule): void {
     this.stopPolling()
     this.cancelRetries()
     this.wasmModule = module
     this.parameters.clear()
-    console.log('[ParameterSystem] Connected to WASM module')
 
     // Load any existing parameters from WASM
     this.loadFromWasm()
@@ -344,7 +344,6 @@ class ParameterSystem {
     for (const delay of delays) {
       const t = window.setTimeout(() => {
         if (this.parameters.size === 0 && this.wasmModule) {
-          console.log(`[ParameterSystem] Retry loading parameters (${delay}ms)`)
           this.loadFromWasm()
         }
       }, delay)
@@ -370,12 +369,10 @@ class ParameterSystem {
 
     const getCount = this.wasmModule._al_webgui_get_parameter_count
     if (!getCount) {
-      console.log('[ParameterSystem] WebGUI functions not available')
       return
     }
 
     const count = getCount()
-    console.log(`[ParameterSystem] Loading ${count} parameters from WASM`)
 
     for (let i = 0; i < count; i++) {
       const namePtr = this.wasmModule._al_webgui_get_parameter_name(i)
@@ -404,7 +401,6 @@ class ParameterSystem {
         hasKeyframes: false,
       }
 
-      console.log(`[ParameterSystem] Loaded parameter: ${name} (${group})`, param)
       this.parameters.set(i, param)
     }
 
@@ -446,7 +442,6 @@ class ParameterSystem {
     // Check if new parameters were added since last load
     const wasmCount = getCount()
     if (wasmCount > this.parameters.size) {
-      console.log(`[ParameterSystem] New parameters detected (${this.parameters.size} → ${wasmCount}), reloading`)
       this.loadFromWasm()
       return
     }
@@ -667,7 +662,6 @@ class ParameterSystem {
     }
 
     this.objectParameters.set(objectId, params)
-    console.log(`[ParameterSystem] Registered object: ${objectId} with ${params.length} parameters`)
     this.notifyChange()
   }
 
@@ -676,7 +670,6 @@ class ParameterSystem {
    */
   unregisterObject(objectId: string): void {
     this.objectParameters.delete(objectId)
-    console.log(`[ParameterSystem] Unregistered object: ${objectId}`)
     this.notifyChange()
   }
 
@@ -942,7 +935,6 @@ class ParameterSystem {
     }
 
     if (added > 0) {
-      console.log(`[ParameterSystem] Added ${added} parameters from C++ source detection`)
       this.notifyChange()
     }
   }
@@ -1052,7 +1044,6 @@ class PresetManager {
         for (const preset of data) {
           this.presets.set(preset.name, preset)
         }
-        console.log(`[PresetManager] Loaded ${this.presets.size} presets from storage`)
       }
     } catch (error) {
       console.warn('[PresetManager] Failed to load presets:', error)
@@ -1092,7 +1083,6 @@ class PresetManager {
 
     this.presets.set(name, preset)
     this.saveToStorage()
-    console.log(`[PresetManager] Saved preset: ${name}`)
   }
 
   /**
@@ -1110,7 +1100,6 @@ class PresetManager {
       parameterSystem.set(paramName, value)
     }
 
-    console.log(`[PresetManager] Loaded preset: ${name}`)
     return true
   }
 
@@ -1121,7 +1110,6 @@ class PresetManager {
     const deleted = this.presets.delete(name)
     if (deleted) {
       this.saveToStorage()
-      console.log(`[PresetManager] Deleted preset: ${name}`)
     }
     return deleted
   }

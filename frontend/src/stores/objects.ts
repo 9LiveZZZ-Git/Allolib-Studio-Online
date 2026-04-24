@@ -12,7 +12,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { coercePropertyValue } from '@/utils/property-validation'
-import { useCommandsStore, createPropertyCommand, createKeyframeCommand, createObjectCommand } from './commands'
+import { useCommandsStore, createPropertyCommand } from './commands'
+import { type EasingType, type BezierPoints, type Keyframe, applyEasing as _applyEasing } from '@/composables/useKeyframes'
+import type { WasmModule } from '@/services/runtime'
+
+// Re-export so consumers that import these from this module continue to work
+export type { EasingType, BezierPoints, Keyframe }
 
 // ─── Object Definition Types ─────────────────────────────────────────────────
 
@@ -66,27 +71,11 @@ export interface SceneObject {
 
 // ─── Keyframe Types ──────────────────────────────────────────────────────────
 
-export type EasingType =
-  | 'linear'
-  | 'easeIn'
-  | 'easeOut'
-  | 'easeInOut'
-  | 'easeOutBack'
-  | 'bounce'
-  | 'elastic'
-  | 'step'
-  | 'bezier'  // Custom bezier curve
+// EasingType, BezierPoints, and Keyframe<T> are imported from @/composables/useKeyframes
+// and re-exported above for backward compatibility.
 
-// Bezier control points: [x1, y1, x2, y2] where x is time (0-1) and y is value (0-1, can overshoot)
-export type BezierPoints = [number, number, number, number]
-
-export interface Keyframe<T> {
-  time: number
-  value: T
-  easing: EasingType
-  bezierPoints?: BezierPoints  // Only used when easing === 'bezier'
-}
-
+// KeyframeCurve in this store intentionally extends the base type by adding `objectId`,
+// which is needed to key the curve map in the objects store.
 export interface KeyframeCurve<T> {
   objectId: string
   property: string       // e.g., 'positionX', 'scaleY', 'color'
@@ -99,7 +88,7 @@ export const useObjectsStore = defineStore('objects', () => {
   // State
   const objects = ref<Map<string, SceneObject>>(new Map())
   const selectedObjectId = ref<string | null>(null)
-  const keyframeCurves = ref<Map<string, KeyframeCurve<any>>>(new Map())
+  const keyframeCurves = ref<Map<string, KeyframeCurve<number | number[]>>>(new Map())
 
   // ─── Computed ────────────────────────────────────────────────────────────
 
@@ -146,7 +135,6 @@ export const useObjectsStore = defineStore('objects', () => {
     }
 
     objects.value.set(id, obj)
-    console.log(`[ObjectsStore] Created object: ${obj.name} (${id})`)
 
     // Create in WASM if connected
     createObjectInWasm(obj)
@@ -174,7 +162,6 @@ export const useObjectsStore = defineStore('objects', () => {
     removeObjectFromWasm(id)
 
     objects.value.delete(id)
-    console.log(`[ObjectsStore] Deleted object: ${obj.name} (${id})`)
 
     return true
   }
@@ -185,9 +172,6 @@ export const useObjectsStore = defineStore('objects', () => {
 
   function selectObject(id: string | null): void {
     selectedObjectId.value = id
-    if (id) {
-      console.log(`[ObjectsStore] Selected: ${objects.value.get(id)?.name || id}`)
-    }
   }
 
   // ─── Property Setters (Called by Parameter System) ──────────────────────
@@ -382,7 +366,7 @@ export const useObjectsStore = defineStore('objects', () => {
     objectId: string,
     property: string,
     time: number,
-    value: any,
+    value: number | number[],
     easing: EasingType = 'linear'
   ): void {
     const curveKey = `${objectId}:${property}`
@@ -410,7 +394,6 @@ export const useObjectsStore = defineStore('objects', () => {
       curve.keyframes.sort((a, b) => a.time - b.time)
     }
 
-    console.log(`[ObjectsStore] Added keyframe: ${objectId}.${property} @ ${time}s = ${value}`)
   }
 
   /**
@@ -424,7 +407,6 @@ export const useObjectsStore = defineStore('objects', () => {
     const idx = curve.keyframes.findIndex(kf => Math.abs(kf.time - time) < 0.001)
     if (idx >= 0) {
       curve.keyframes.splice(idx, 1)
-      console.log(`[ObjectsStore] Removed keyframe: ${objectId}.${property} @ ${time}s`)
 
       // Remove curve if no keyframes left
       if (curve.keyframes.length === 0) {
@@ -438,7 +420,7 @@ export const useObjectsStore = defineStore('objects', () => {
   /**
    * Get keyframe curve for a property
    */
-  function getKeyframeCurve(objectId: string, property: string): KeyframeCurve<any> | undefined {
+  function getKeyframeCurve(objectId: string, property: string): KeyframeCurve<number | number[]> | undefined {
     return keyframeCurves.value.get(`${objectId}:${property}`)
   }
 
@@ -453,7 +435,7 @@ export const useObjectsStore = defineStore('objects', () => {
   /**
    * Interpolate value at a given time
    */
-  function getValueAtTime(objectId: string, property: string, time: number): any {
+  function getValueAtTime(objectId: string, property: string, time: number): number | number[] | undefined {
     const curve = keyframeCurves.value.get(`${objectId}:${property}`)
     if (!curve || curve.keyframes.length === 0) {
       return getProperty(objectId, property)
@@ -481,7 +463,7 @@ export const useObjectsStore = defineStore('objects', () => {
     const kf2 = keyframes[i + 1]
     const t = (time - kf1.time) / (kf2.time - kf1.time)
 
-    return interpolate(kf1.value, kf2.value, applyEasing(t, kf1.easing, kf1.bezierPoints))
+    return interpolate(kf1.value, kf2.value, _applyEasing(t, kf1.easing, kf1.bezierPoints))
   }
 
   // ─── WASM Sync ───────────────────────────────────────────────────────────
@@ -512,20 +494,7 @@ export const useObjectsStore = defineStore('objects', () => {
     const wasmModule = (window as any).__alloWasmModule
     if (!wasmModule) return
 
-    // Convert string ID to C string for WASM
-    const allocString = (str: string): number => {
-      const encoder = new TextEncoder()
-      const bytes = encoder.encode(str + '\0')
-      const ptr = wasmModule._malloc(bytes.length)
-      wasmModule.HEAPU8.set(bytes, ptr)
-      return ptr
-    }
-
-    const freeString = (ptr: number): void => {
-      wasmModule._free(ptr)
-    }
-
-    const idPtr = allocString(obj.id)
+    const idPtr = wasmAllocString(wasmModule, obj.id)
 
     try {
       // Sync transform - Position
@@ -593,7 +562,7 @@ export const useObjectsStore = defineStore('objects', () => {
         wasmModule._al_obj_set_destroy_time(idPtr, obj.destroyTime)
       }
     } finally {
-      freeString(idPtr)
+      wasmFreeString(wasmModule, idPtr)
     }
   }
 
@@ -604,30 +573,18 @@ export const useObjectsStore = defineStore('objects', () => {
     const wasmModule = (window as any).__alloWasmModule
     if (!wasmModule || !wasmModule._al_obj_create) return
 
-    const allocString = (str: string): number => {
-      const encoder = new TextEncoder()
-      const bytes = encoder.encode(str + '\0')
-      const ptr = wasmModule._malloc(bytes.length)
-      wasmModule.HEAPU8.set(bytes, ptr)
-      return ptr
-    }
-
-    const freeString = (ptr: number): void => {
-      wasmModule._free(ptr)
-    }
-
-    const idPtr = allocString(obj.id)
-    const namePtr = allocString(obj.name)
-    const primitivePtr = allocString(obj.mesh.primitive || 'cube')
+    const idPtr = wasmAllocString(wasmModule, obj.id)
+    const namePtr = wasmAllocString(wasmModule, obj.name)
+    const primitivePtr = wasmAllocString(wasmModule, obj.mesh.primitive || 'cube')
 
     try {
       wasmModule._al_obj_create(idPtr, namePtr, primitivePtr)
       // Now sync all properties
       syncObjectToWasm(obj.id)
     } finally {
-      freeString(idPtr)
-      freeString(namePtr)
-      freeString(primitivePtr)
+      wasmFreeString(wasmModule, idPtr)
+      wasmFreeString(wasmModule, namePtr)
+      wasmFreeString(wasmModule, primitivePtr)
     }
   }
 
@@ -638,15 +595,12 @@ export const useObjectsStore = defineStore('objects', () => {
     const wasmModule = (window as any).__alloWasmModule
     if (!wasmModule || !wasmModule._al_obj_remove) return
 
-    const encoder = new TextEncoder()
-    const bytes = encoder.encode(id + '\0')
-    const ptr = wasmModule._malloc(bytes.length)
-    wasmModule.HEAPU8.set(bytes, ptr)
+    const ptr = wasmAllocString(wasmModule, id)
 
     try {
       wasmModule._al_obj_remove(ptr)
     } finally {
-      wasmModule._free(ptr)
+      wasmFreeString(wasmModule, ptr)
     }
   }
 
@@ -667,7 +621,7 @@ export const useObjectsStore = defineStore('objects', () => {
    */
   function toJSON(): {
     objects: SceneObject[]
-    keyframeCurves: Array<{ key: string; curve: KeyframeCurve<any> }>
+    keyframeCurves: Array<{ key: string; curve: KeyframeCurve<number | number[]> }>
   } {
     return {
       objects: Array.from(objects.value.values()),
@@ -698,7 +652,6 @@ export const useObjectsStore = defineStore('objects', () => {
       keyframeCurves.value.set(key, curve)
     }
 
-    console.log(`[ObjectsStore] Loaded ${data.objects.length} objects, ${data.keyframeCurves.length} curves`)
   }
 
   /**
@@ -765,72 +718,29 @@ export const useObjectsStore = defineStore('objects', () => {
 
 // ─── Utility Functions ───────────────────────────────────────────────────────
 
-function applyEasing(t: number, easing: EasingType, bezierPoints?: BezierPoints): number {
-  switch (easing) {
-    case 'linear':
-      return t
-    case 'easeIn':
-      return t * t * t  // Cubic ease in
-    case 'easeOut':
-      return 1 - Math.pow(1 - t, 3)  // Cubic ease out
-    case 'easeInOut':
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-    case 'easeOutBack':
-      const c1 = 1.70158
-      const c3 = c1 + 1
-      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
-    case 'bounce':
-      // Approximate bounce with overshoot bezier
-      return bezierEase(t, 0.68, -0.55, 0.27, 1.55)
-    case 'elastic':
-      if (t === 0 || t === 1) return t
-      return -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * ((2 * Math.PI) / 3)) + 1
-    case 'step':
-      return t < 1 ? 0 : 1
-    case 'bezier':
-      if (bezierPoints) {
-        return bezierEase(t, bezierPoints[0], bezierPoints[1], bezierPoints[2], bezierPoints[3])
-      }
-      return t
-    default:
-      return t
-  }
-}
-
-// Cubic bezier easing function
-function bezierEase(t: number, x1: number, y1: number, x2: number, y2: number): number {
-  // Newton-Raphson iteration to find parameter at time t
-  let guess = t
-  for (let i = 0; i < 8; i++) {
-    const x = cubicBezier(guess, 0, x1, x2, 1)
-    const dx = 3 * (1 - guess) * (1 - guess) * x1 +
-               6 * (1 - guess) * guess * (x2 - x1) +
-               3 * guess * guess * (1 - x2)
-    if (Math.abs(dx) < 0.0001) break
-    guess -= (x - t) / dx
-    guess = Math.max(0, Math.min(1, guess))
-  }
-  return cubicBezier(guess, 0, y1, y2, 1)
-}
-
-function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
-  const t2 = t * t
-  const t3 = t2 * t
-  const mt = 1 - t
-  const mt2 = mt * mt
-  const mt3 = mt2 * mt
-  return mt3 * p0 + 3 * mt2 * t * p1 + 3 * mt * t2 * p2 + t3 * p3
-}
-
-function interpolate(a: any, b: any, t: number): any {
+function interpolate(a: number | number[], b: number | number[], t: number): number | number[] {
   if (typeof a === 'number' && typeof b === 'number') {
     return a + (b - a) * t
   }
   if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
-    return a.map((v, i) => v + (b[i] - v) * t)
+    return a.map((v, i) => v + ((b as number[])[i] - v) * t)
   }
   // For non-interpolatable types, use step
   return t < 1 ? a : b
+}
+
+// ─── WASM String Helpers ─────────────────────────────────────────────────────
+
+function wasmAllocString(wasmModule: WasmModule & { _malloc: (size: number) => number; HEAPU8: Uint8Array }, str: string): number {
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(str + '\0')
+  const ptr = wasmModule._malloc(bytes.length)
+  wasmModule.HEAPU8.set(bytes, ptr)
+  return ptr
+}
+
+function wasmFreeString(wasmModule: WasmModule, ptr: number): void {
+  wasmModule._free?.(ptr)
 }
 
 // Register on window for terminal access

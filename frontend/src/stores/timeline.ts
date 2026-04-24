@@ -17,7 +17,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSequencerStore } from './sequencer'
-import { useObjectsStore } from './objects'
+import { useObjectsStore, type EasingType } from './objects'
 import { useEnvironmentStore } from './environment'
 
 // ─── Track Category Types ────────────────────────────────────────────────────
@@ -169,7 +169,6 @@ export const useTimelineStore = defineStore('timeline', () => {
     const cat = categories.value.find(c => c.id === categoryId)
     if (cat) {
       cat.collapsed = !cat.collapsed
-      console.log(`[Timeline] ${categoryId} section ${cat.collapsed ? 'collapsed' : 'expanded'}`)
     }
   }
 
@@ -215,7 +214,6 @@ export const useTimelineStore = defineStore('timeline', () => {
    */
   function play(): void {
     sequencer.play()
-    console.log('[Timeline] Play')
   }
 
   /**
@@ -223,7 +221,6 @@ export const useTimelineStore = defineStore('timeline', () => {
    */
   function pause(): void {
     sequencer.pause()
-    console.log('[Timeline] Pause')
   }
 
   /**
@@ -231,7 +228,6 @@ export const useTimelineStore = defineStore('timeline', () => {
    */
   function stop(): void {
     sequencer.stop()
-    console.log('[Timeline] Stop')
   }
 
   /**
@@ -288,8 +284,8 @@ export const useTimelineStore = defineStore('timeline', () => {
     objectId?: string    // For objects category
     property: string
     time: number
-    value: any
-    easing: string
+    value: number | number[]
+    easing: EasingType
   }
 
   const selectedKeyframes = ref<KeyframeSelection[]>([])
@@ -374,9 +370,38 @@ export const useTimelineStore = defineStore('timeline', () => {
    * Select all keyframes in a category
    */
   function selectAllInCategory(category: TrackCategory): void {
-    // This would need to query the appropriate store for all keyframes
-    // Implementation depends on category
-    console.log(`[Timeline] Select all in ${category} - requires store integration`)
+    const newSelections: KeyframeSelection[] = []
+
+    if (category === 'objects') {
+      const objectsStore = useObjectsStore()
+      for (const curve of objectsStore.keyframeCurves.values()) {
+        for (const kf of curve.keyframes) {
+          newSelections.push({
+            category: 'objects',
+            objectId: curve.objectId,
+            property: curve.property,
+            time: kf.time,
+            value: kf.value,
+            easing: kf.easing,
+          })
+        }
+      }
+    } else if (category === 'environment') {
+      const environmentStore = useEnvironmentStore()
+      for (const [property, curve] of environmentStore.keyframeCurves) {
+        for (const kf of curve.keyframes) {
+          newSelections.push({
+            category: 'environment',
+            property,
+            time: kf.time,
+            value: kf.value as number | number[],
+            easing: kf.easing,
+          })
+        }
+      }
+    }
+
+    selectedKeyframes.value = newSelections
   }
 
   /**
@@ -429,7 +454,6 @@ export const useTimelineStore = defineStore('timeline', () => {
       referenceTime: minTime,
     }
 
-    console.log(`[Timeline] Copied ${selectedKeyframes.value.length} keyframes`)
   }
 
   /**
@@ -465,7 +489,6 @@ export const useTimelineStore = defineStore('timeline', () => {
     // Select pasted keyframes
     selectedKeyframes.value = pasted
 
-    console.log(`[Timeline] Pasted ${pasted.length} keyframes at ${pasteTime.toFixed(2)}s`)
     return pasted
   }
 
@@ -477,7 +500,6 @@ export const useTimelineStore = defineStore('timeline', () => {
       removeKeyframeFromStore(kf)
     }
 
-    console.log(`[Timeline] Deleted ${selectedKeyframes.value.length} keyframes`)
     selectedKeyframes.value = []
   }
 
@@ -508,10 +530,10 @@ export const useTimelineStore = defineStore('timeline', () => {
       // Remove old keyframe and add at new time
       if (kf.category === 'objects' && kf.objectId) {
         objectsStore.removeKeyframe(kf.objectId, kf.property, kf.time)
-        objectsStore.addKeyframe(kf.objectId, kf.property, newTime, kf.value, kf.easing as any)
+        objectsStore.addKeyframe(kf.objectId, kf.property, newTime, kf.value, kf.easing)
       } else if (kf.category === 'environment') {
         environmentStore.removeKeyframe(kf.property, kf.time)
-        environmentStore.addKeyframe(kf.property, newTime, kf.value, kf.easing as any)
+        environmentStore.addKeyframe(kf.property, newTime, kf.value, kf.easing)
       }
 
       kf.time = newTime
@@ -525,11 +547,11 @@ export const useTimelineStore = defineStore('timeline', () => {
     const environmentStore = useEnvironmentStore()
 
     if (kf.category === 'objects' && kf.objectId) {
-      objectsStore.addKeyframe(kf.objectId, kf.property, kf.time, kf.value, kf.easing as any)
+      objectsStore.addKeyframe(kf.objectId, kf.property, kf.time, kf.value, kf.easing)
     } else if (kf.category === 'environment') {
-      environmentStore.addKeyframe(kf.property, kf.time, kf.value, kf.easing as any)
+      environmentStore.addKeyframe(kf.property, kf.time, kf.value, kf.easing)
     }
-    // TODO: Add events category support
+    // TODO: Events keyframes — EventsStore doesn't yet expose addKeyframe/removeKeyframe
   }
 
   function removeKeyframeFromStore(kf: KeyframeSelection): void {
@@ -541,7 +563,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     } else if (kf.category === 'environment') {
       environmentStore.removeKeyframe(kf.property, kf.time)
     }
-    // TODO: Add events category support
+    // TODO: Events keyframes — EventsStore doesn't yet expose addKeyframe/removeKeyframe
   }
 
   // ─── Serialization ─────────────────────────────────────────────────────────

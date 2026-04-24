@@ -25,10 +25,3 @@ export function broadcast(type: string, payload: Record<string, unknown>) {
     }
   })
 }
-
-/**
- * Get the count of currently connected clients.
- */
-export function getClientCount(): number {
-  return wss?.clients.size ?? 0
-}

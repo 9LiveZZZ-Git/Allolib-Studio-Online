@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, reactive } from 'vue'
+import { ref, computed } from 'vue'
 import { useProjectStore } from './project'
 
 // ─── Asset Types ─────────────────────────────────────────────────────────────
@@ -3045,7 +3045,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       const fileName = targetPath || `${asset.name.replace(/\s+/g, '_').toLowerCase()}.cpp`
       projectStore.addOrUpdateFile(fileName, asset.content)
       projectStore.setActiveFile(fileName)
-      console.log(`[AssetLibrary] Added file: ${fileName}`)
       return true
     }
 
@@ -3060,7 +3059,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       }
 
       projectStore.addOrUpdateFile(fileName, content)
-      console.log(`[AssetLibrary] Added object: ${fileName}`)
       return true
     }
 
@@ -3073,7 +3071,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       }
 
       projectStore.addOrUpdateFile(fileName, asset.content)
-      console.log(`[AssetLibrary] Added shader: ${fileName}`)
       return true
     }
 
@@ -3100,7 +3097,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       }
 
       projectStore.addOrUpdateFile(fileName, content)
-      console.log(`[AssetLibrary] Added environment: ${fileName}${asset.localPath ? ' (local)' : ' (remote)'}`)
       return true
     }
 
@@ -3126,7 +3122,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       }
 
       projectStore.addOrUpdateFile(fileName, content)
-      console.log(`[AssetLibrary] Added mesh: ${fileName}${asset.localPath ? ' (local)' : ' (remote)'}`)
       return true
     }
 
@@ -3141,7 +3136,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
 
     try {
       await navigator.clipboard.writeText(asset.content)
-      console.log(`[AssetLibrary] Copied snippet to clipboard: ${asset.name}`)
       return true
     } catch (e) {
       console.warn('[AssetLibrary] Failed to copy to clipboard:', e)
@@ -3336,7 +3330,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       isFavorite: false
     })
 
-    console.log(`[AssetLibrary] Loaded file: ${file.name} -> ${typeInfo.category}/${typeInfo.subcategory}`)
     return asset
   }
 
@@ -3484,7 +3477,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     activeLoads.value.set(assetId, controller)
 
     try {
-      console.log(`[AssetLibrary] Loading: ${asset.name} from ${url}`)
 
       const response = await fetch(url, { signal: controller.signal })
       if (!response.ok) {
@@ -3528,7 +3520,7 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       if (asset.type === 'texture' || asset.type === 'environment') {
         // Create blob URL for images
         const blob = new Blob([buffer])
-        asset.loadedData = URL.createObjectURL(blob) as any
+        asset.loadedData = URL.createObjectURL(blob)
       } else {
         asset.loadedData = buffer.buffer
       }
@@ -3537,17 +3529,16 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       asset.loadProgress = 100
       asset.fileSizeBytes = loadedBytes
 
-      console.log(`[AssetLibrary] Loaded: ${asset.name} (${formatFileSize(loadedBytes)})`)
       return true
 
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log(`[AssetLibrary] Cancelled: ${asset.name}`)
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      if (err.name === 'AbortError') {
         asset.loadingState = 'idle'
       } else {
         console.error(`[AssetLibrary] Failed to load ${asset.name}:`, error)
         asset.loadingState = 'error'
-        asset.loadError = error.message || 'Unknown error'
+        asset.loadError = err.message || 'Unknown error'
       }
       return false
 
@@ -3582,7 +3573,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       tagList.some(tag => a.tags.includes(tag))
     )
     const ids = matchingAssets.map(a => a.id)
-    console.log(`[AssetLibrary] Loading ${ids.length} assets with tags: ${tagList.join(', ')}`)
     return loadAssets(ids)
   }
 
@@ -3591,7 +3581,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
    */
   async function loadAssetsByCategory(category: AssetCategory): Promise<Map<string, boolean>> {
     const ids = assets.value.filter(a => a.category === category).map(a => a.id)
-    console.log(`[AssetLibrary] Loading ${ids.length} assets in category: ${category}`)
     return loadAssets(ids)
   }
 
@@ -3601,7 +3590,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
    */
   async function preloadAssets(): Promise<void> {
     isPreloading.value = true
-    console.log('[AssetLibrary] Starting preload phase...')
 
     // Sort by priority: critical > high > normal > low
     const priorityOrder: AssetPriority[] = ['critical', 'high', 'normal', 'low']
@@ -3614,29 +3602,24 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
       })
 
     if (preloadable.length === 0) {
-      console.log('[AssetLibrary] No assets marked for preload')
       isPreloading.value = false
       return
     }
 
-    console.log(`[AssetLibrary] Preloading ${preloadable.length} assets...`)
 
     // Load critical assets first (blocking)
     const critical = preloadable.filter(a => a.priority === 'critical')
     if (critical.length > 0) {
-      console.log(`[AssetLibrary] Loading ${critical.length} critical assets...`)
       await loadAssets(critical.map(a => a.id))
     }
 
     // Load remaining preload assets in background
     const remaining = preloadable.filter(a => a.priority !== 'critical')
     if (remaining.length > 0) {
-      console.log(`[AssetLibrary] Loading ${remaining.length} high/normal priority assets...`)
       await loadAssets(remaining.map(a => a.id))
     }
 
     isPreloading.value = false
-    console.log(`[AssetLibrary] Preload complete. Total loaded: ${formatFileSize(totalBytesLoaded.value)}`)
   }
 
   /**
@@ -3676,7 +3659,6 @@ export const useAssetLibraryStore = defineStore('assetLibrary', () => {
     asset.loadedData = undefined
     asset.loadingState = 'idle'
     asset.loadProgress = 0
-    console.log(`[AssetLibrary] Unloaded: ${asset.name}`)
   }
 
   /**

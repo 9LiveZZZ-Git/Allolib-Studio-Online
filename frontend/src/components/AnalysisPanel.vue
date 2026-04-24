@@ -10,7 +10,6 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { parameterSystem, ParameterType, type Parameter, type ParameterGroup } from '@/utils/parameter-system'
 import { useProjectStore } from '@/stores/project'
-import { useSequencerStore } from '@/stores/sequencer'
 import TimelinePanel from './timeline/TimelinePanel.vue'
 
 const props = defineProps<{
@@ -595,7 +594,7 @@ function drawSpectrum() {
   // dB range
   const dbRange = settings.maxDb - settings.minDb
 
-  // Helper functions
+  // ─── Coordinate transforms ───────────────────────────────────────────────
   const freqToX = (freq: number): number => {
     if (settings.logScale) {
       const logMin = Math.log10(minFreq)
@@ -1089,7 +1088,6 @@ function savePreset() {
 
   if (result.success) {
     projectStore.saveProject()
-    console.log(`[Preset] Saved: ${presetPath}`)
   }
 
   newPresetName.value = ''
@@ -1170,23 +1168,19 @@ function quickSavePreset() {
   const presetNum = findNextPresetNumber(synthName)
   const presetPath = `${dataFolder}/${presetNum}.preset`
 
-  console.log(`[Preset] Quick save: synthName=${synthName}, path=${presetPath}`)
 
   // Create the bin folder if needed
   if (!projectStore.folders.some(f => f.path === 'bin')) {
     const binResult = projectStore.createFolder('bin')
-    console.log(`[Preset] Created bin folder:`, binResult)
   }
 
   // Create the data folder if needed
   if (!projectStore.folders.some(f => f.path === dataFolder)) {
     const dataResult = projectStore.createFolder(`${synthName}-data`, 'bin')
-    console.log(`[Preset] Created data folder:`, dataResult)
   }
 
   // Generate preset content
   const content = generatePresetContent(presetNum)
-  console.log(`[Preset] Generated content:`, content)
 
   // Create the preset file using the store's data file function
   const result = projectStore.createDataFile(presetPath, content)
@@ -1194,7 +1188,6 @@ function quickSavePreset() {
   if (result.success) {
     // Save project to localStorage
     projectStore.saveProject()
-    console.log(`[Preset] Saved preset to ${presetPath}`)
   } else {
     console.error(`[Preset] Failed to save: ${result.error}`)
   }
@@ -1224,7 +1217,6 @@ function loadPreset(name: string) {
     }
   }
 
-  console.log(`[Preset] Loaded preset: ${name}`)
   showPresetMenu.value = false
 }
 
@@ -1239,7 +1231,6 @@ function deletePreset(name: string, event: Event) {
     if (result.success) {
       projectStore.saveProject()
       updatePresetList()
-      console.log(`[Preset] Deleted: ${presetPath}`)
     } else {
       console.error(`[Preset] Failed to delete: ${result.error}`)
     }

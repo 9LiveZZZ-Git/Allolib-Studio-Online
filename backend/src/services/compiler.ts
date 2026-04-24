@@ -78,19 +78,17 @@ async function compileAsync(job: CompilationJob): Promise<void> {
   const startTime = Date.now()
   job.status = 'compiling'
 
-  // Source files go to shared source volume, output to compiled volume
+  // Both dirs are Docker-mounted volumes so the compiler container can read source and write output.
   const sourceJobDir = join(SOURCE_DIR, job.id)
   const outputDir = join(COMPILE_DIR, job.id)
 
   try {
-    // Create job directories
     await mkdir(sourceJobDir, { recursive: true })
     await mkdir(outputDir, { recursive: true })
 
-    // Write all source files to shared volume
     for (const file of job.files) {
       const filePath = join(sourceJobDir, file.name)
-      // Create subdirectories if file is in a folder (e.g., "src/synth.hpp")
+      // Multi-file projects may include paths like "src/synth.hpp"; create parent dirs.
       if (file.name.includes('/')) {
         const fileDir = filePath.substring(0, filePath.lastIndexOf('/'))
         await mkdir(fileDir, { recursive: true })
@@ -162,13 +160,10 @@ async function compileWithDocker(
       job.backend,  // Pass backend as 4th argument
     ])
 
-    let stdout = ''
     let stderr = ''
 
     dockerProcess.stdout.on('data', (data) => {
       const text = data.toString()
-      stdout += text
-      // Broadcast each line to connected WebSocket clients
       for (const line of text.split('\n').filter((l: string) => l.trim())) {
         logger.info(`[${job.id}] ${line.trim()}`)
         broadcast('compile:output', { jobId: job.id, stream: 'stdout', line: line.trim() })
@@ -233,7 +228,10 @@ export async function getCompiledFile(jobId: string, filename: string): Promise<
   const filePath = join(COMPILE_DIR, jobId, filename)
   try {
     return await readFile(filePath)
-  } catch {
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      logger.warn(`Failed to read compiled file ${filePath}:`, error)
+    }
     return null
   }
 }

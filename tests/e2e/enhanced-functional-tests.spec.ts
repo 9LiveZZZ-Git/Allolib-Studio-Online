@@ -22,15 +22,13 @@ import {
 import {
   BaselineManager,
   captureCanvas,
-  captureMultipleFrames,
   analyzeImage,
   compareImages,
   performVisualAnalysis,
   VisualAnalysisResult,
   BaselineCompareResult,
 } from './visual-verification'
-import { getExpectation, VISUAL_EXPECTATIONS } from './visual-expectations'
-import { PNG } from 'pngjs'
+import { getExpectation } from './visual-expectations'
 import * as fs from 'fs'
 import * as path from 'path'
 

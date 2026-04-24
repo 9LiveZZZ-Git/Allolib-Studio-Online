@@ -11,164 +11,69 @@ import {
 import { detectSynthClasses, type DetectedSynth, type SynthParamDef } from '@/utils/synth-detector'
 import { useProjectStore } from '@/stores/project'
 import { parameterSystem, ParameterType } from '@/utils/parameter-system'
+// import type only — breaks the runtime cycle: runtime → objectManager → timeline → sequencer → (type-only) runtime
 import type { AllolibRuntime } from '@/services/runtime'
 import type { LatticeNode } from '@/utils/tone-lattice'
 
 // ── Types ───────────────────────────────────────────────────────────
+// All types are defined in ./sequencer/types and re-exported here
+// so that both @/stores/sequencer and @/stores/sequencer/index paths
+// expose the same canonical definitions.
 
-export interface SequencerNote {
-  id: string
-  startTime: number       // relative to clip start (seconds)
-  duration: number
-  synthName: string
-  frequency: number
-  amplitude: number
-  params: number[]
-  paramNames: string[]
-  selected: boolean
-  muted: boolean
-}
+export type {
+  SequencerNote,
+  SequencerEvent,
+  SequencerClip,
+  ClipInstance,
+  ArrangementTrack,
+  SequencerTrack,
+  LatticeInteractionMode,
+  LatticePath,
+  LatticeChord,
+  PendingChord,
+  LatticeContextMenu,
+  ParameterLaneConfig,
+  AutomationPoint,
+  ClipAutomation,
+  TransportState,
+  EditMode,
+  ViewMode,
+  SnapMode,
+  TimeDisplay,
+  Viewport,
+} from './sequencer/types'
 
-export interface SequencerClip {
-  id: string
-  name: string
-  duration: number         // clip length in seconds
-  color: string
-  notes: SequencerNote[]
-  synthName: string        // primary synth for this clip
-  paramNames: string[]     // synth-specific parameter names (from .synthSequence header)
-  filePath: string | null  // path to .synthSequence file in project
-  isDirty: boolean         // whether in-memory clip differs from file
-  automation: ClipAutomation[]  // per-parameter automation envelopes
-}
+import {
+  type SequencerNote,
+  type SequencerClip,
+  type ClipInstance,
+  type ArrangementTrack,
+  type SequencerTrack,
+  type LatticeInteractionMode,
+  type LatticePath,
+  type LatticeChord,
+  type PendingChord,
+  type LatticeContextMenu,
+  type ParameterLaneConfig,
+  type AutomationPoint,
+  type ClipAutomation,
+  type TransportState,
+  type EditMode,
+  type ViewMode,
+  type SnapMode,
+  type TimeDisplay,
+  type Viewport,
+  TRACK_COLORS,
+  CLIP_COLORS,
+  PARAM_DEFAULTS,
+  generateId,
+} from './sequencer/types'
 
-export interface ClipInstance {
-  id: string
-  clipId: string           // reference to SequencerClip
-  trackIndex: number       // which arrangement track lane
-  startTime: number        // absolute position on the arrangement timeline
-}
-
-export interface ArrangementTrack {
-  id: string
-  name: string
-  color: string
-  muted: boolean
-  solo: boolean
-  synthName: string        // locked to a specific synth class
-  expanded: boolean        // whether automation lanes are shown
-  automationLanes: ParameterLaneConfig[]  // per-track automation lane configs
-}
-
-// ── Lattice interaction types ─────────────────────────────────────
-
-export type LatticeInteractionMode = 'note' | 'path' | 'chord'
-
-export interface LatticePath {
-  id: string
-  noteIds: string[]        // ordered sequence of note IDs in the active clip
-  timeOffset: number       // seconds between successive notes
-}
-
-export interface LatticeChord {
-  id: string
-  noteIds: string[]        // notes sounding simultaneously
-  duration: number         // chord duration
-  repeats: number          // how many times to repeat within duration
-}
-
-export interface PendingChord {
-  frequencies: number[]    // frequencies being collected before finalization
-  nodeKeys: string[]       // "i,j,k" keys for highlighting
-}
-
-export interface LatticeContextMenu {
-  type: 'note' | 'path'
-  x: number               // screen pixel X
-  y: number               // screen pixel Y
-  noteId?: string          // for note context menu
-  pathId?: string          // for path context menu
-}
-
-// ── Parameter lane types ─────────────────────────────────────────
-
-export interface ParameterLaneConfig {
-  paramIndex: number       // index into note.params[]
-  paramName: string        // display name (e.g., "attackTime")
-  collapsed: boolean       // whether this lane is hidden
-  min: number              // display range minimum
-  max: number              // display range maximum
-}
-
-export interface AutomationPoint {
-  id: string          // for hit-testing and selection
-  time: number        // relative to clip start, 0..clip.duration
-  value: number       // parameter value within [lane.min, lane.max]
-}
-
-export interface ClipAutomation {
-  paramName: string               // matches ParameterLaneConfig.paramName
-  points: AutomationPoint[]       // always sorted ascending by time
-}
-
-const PARAM_DEFAULTS: Record<string, { min: number; max: number }> = {
-  amplitude: { min: 0, max: 1 },
-  frequency: { min: 20, max: 20000 },
-  attackTime: { min: 0, max: 5 },
-  releaseTime: { min: 0, max: 5 },
-  pan: { min: -1, max: 1 },
-  sustain: { min: 0, max: 1 },
-}
-
-// Legacy compat alias
-export type SequencerEvent = SequencerNote
-
-export interface SequencerTrack {
-  id: string
-  name: string
-  synthName: string
-  events: SequencerNote[]
-  muted: boolean
-  solo: boolean
-  color: string
-}
-
-export type TransportState = 'stopped' | 'playing' | 'paused'
-export type EditMode = 'select' | 'draw' | 'erase'
-export type ViewMode = 'clipTimeline' | 'frequencyRoll' | 'toneLattice'
-export type SnapMode = 'none' | 'beat' | 'half' | 'quarter' | 'eighth' | 'sixteenth'
-export type TimeDisplay = 'seconds' | 'beats'
-
-export interface Viewport {
-  scrollX: number     // time offset in seconds
-  scrollY: number     // frequency scroll (log-space offset)
-  zoomX: number       // pixels per second
-  zoomY: number       // pixels per octave
-  minFreq: number     // Hz
-  maxFreq: number     // Hz
-}
-
+// UndoEntry is internal to this store only
 interface UndoEntry {
   clips: string
   clipInstances: string
   arrangementTracks: string
-}
-
-// ── Constants ───────────────────────────────────────────────────────
-
-const TRACK_COLORS = [
-  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
-  '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
-]
-
-const CLIP_COLORS = [
-  '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899',
-  '#06b6d4', '#ef4444', '#f97316', '#14b8a6', '#6366f1',
-]
-
-let _nextId = 1
-function generateId(): string {
-  return `seq_${Date.now().toString(36)}_${(_nextId++).toString(36)}`
 }
 
 // ── Store ───────────────────────────────────────────────────────────
@@ -183,7 +88,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
   const activeClipId = ref<string | null>(null)
   const selectedClipInstanceIds = ref<Set<string>>(new Set())
 
-  // Legacy tracks (computed from clips for backward compat)
+  // Tracks are derived from clips; kept as a ref for watchers that expect a SequencerTrack[].
   const tracks = ref<SequencerTrack[]>([])
 
   const transport = ref<TransportState>('stopped')
@@ -301,7 +206,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     return result
   })
 
-  // Legacy: allEvents returns active clip notes for backward compat with timeline/lattice
+  // allEvents is an alias for activeClipNotes; the timeline and lattice views consume it under this name.
   const allEvents = computed(() => {
     return activeClipNotes.value
   })
@@ -772,9 +677,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     }
   }
 
-  // ── Legacy compat aliases ─────────────────────────────────────────
-
-  // These delegate to the note-based methods for backward compat
+  // ── Stable public API aliases (old "event" naming → note-based methods) ──────
   function addEvent(
     synthName: string,
     startTime: number,
@@ -837,7 +740,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     selectNotesInRect(timeStart, timeEnd, freqLow, freqHigh, additive)
   }
 
-  // Legacy: getOrCreateTrack (no longer primary, but kept for compat)
+  // Used by the .synthsequence file loader and SynthDetector; not part of the clip/arrangement API.
   function getOrCreateTrack(synthName: string): SequencerTrack {
     let track = tracks.value.find(t => t.synthName === synthName)
     if (!track) {
@@ -1470,7 +1373,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     }
   }
 
-  // ── File I/O (Legacy) ──────────────────────────────────────────
+  // ── File I/O ─────────────────────────────────────────────────────
 
   function loadFromSynthSequence(content: string, filePath?: string) {
     pushUndo()
@@ -2278,7 +2181,7 @@ export const useSequencerStore = defineStore('sequencer', () => {
     deselectAllNotes,
     selectNotesInRect,
 
-    // Legacy compat
+    // Stable aliases for external consumers (terminal scripts, older components)
     getOrCreateTrack,
     addEvent,
     removeEvent,

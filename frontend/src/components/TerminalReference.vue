@@ -51,13 +51,17 @@ function loadUserCommands() {
     if (saved) {
       userCommands.value = JSON.parse(saved)
     }
-  } catch { /* ignore */ }
+  } catch (e) {
+    console.warn('[TerminalReference] Failed to load user commands from localStorage:', e)
+  }
 }
 
 function saveUserCommands() {
   try {
     localStorage.setItem('alloterm-reference-custom', JSON.stringify(userCommands.value))
-  } catch { /* ignore */ }
+  } catch (e) {
+    console.warn('[TerminalReference] Failed to save user commands to localStorage:', e)
+  }
 }
 
 onMounted(() => {

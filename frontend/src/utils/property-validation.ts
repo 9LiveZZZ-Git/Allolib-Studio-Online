@@ -31,7 +31,7 @@ export interface PropertyDefinition {
   type: PropertyType
 
   /** Default value */
-  default: any
+  default: number | number[] | boolean | string
 
   /** Human-readable label */
   label?: string
@@ -68,7 +68,7 @@ export interface PropertyDefinition {
 
 export interface ValidationResult {
   valid: boolean
-  value: any       // Corrected/clamped value
+  value: number | number[] | boolean | string  // Corrected/clamped value
   error?: string   // Error message if invalid
   warning?: string // Warning if value was adjusted
 }
@@ -319,7 +319,7 @@ export const ALL_PROPERTIES: Record<string, PropertyDefinition> = {
  */
 export function validatePropertyValue(
   definition: PropertyDefinition,
-  value: any
+  value: unknown
 ): ValidationResult {
   switch (definition.type) {
     case 'number':
@@ -351,7 +351,7 @@ export function validatePropertyValue(
   }
 }
 
-function validateNumber(def: PropertyDefinition, value: any): ValidationResult {
+function validateNumber(def: PropertyDefinition, value: unknown): ValidationResult {
   const num = Number(value)
 
   if (isNaN(num)) {
@@ -391,7 +391,7 @@ function validateNumber(def: PropertyDefinition, value: any): ValidationResult {
 
 function validateVector(
   def: PropertyDefinition,
-  value: any,
+  value: unknown,
   length: number
 ): ValidationResult {
   if (!Array.isArray(value)) {
@@ -447,7 +447,7 @@ function validateVector(
   }
 }
 
-function validateBoolean(value: any): ValidationResult {
+function validateBoolean(value: unknown): ValidationResult {
   if (typeof value === 'boolean') {
     return { valid: true, value }
   }
@@ -467,7 +467,7 @@ function validateBoolean(value: any): ValidationResult {
   }
 }
 
-function validateString(value: any): ValidationResult {
+function validateString(value: unknown): ValidationResult {
   if (typeof value === 'string') {
     return { valid: true, value }
   }
@@ -479,9 +479,9 @@ function validateString(value: any): ValidationResult {
   }
 }
 
-function validateEnum(def: PropertyDefinition, value: any): ValidationResult {
+function validateEnum(def: PropertyDefinition, value: unknown): ValidationResult {
   if (!def.options) {
-    return { valid: true, value }
+    return { valid: true, value: String(value) }
   }
 
   if (def.options.includes(String(value))) {
@@ -545,7 +545,7 @@ export function isAnimatable(propertyName: string): boolean {
 /**
  * Get default value for a property
  */
-export function getDefaultValue(propertyName: string): any {
+export function getDefaultValue(propertyName: string): number | number[] | boolean | string | undefined {
   return ALL_PROPERTIES[propertyName]?.default
 }
 
@@ -553,11 +553,11 @@ export function getDefaultValue(propertyName: string): any {
  * Validate and coerce a value for a property
  * Returns the validated/clamped value, or throws on error
  */
-export function coercePropertyValue(propertyName: string, value: any): any {
+export function coercePropertyValue(propertyName: string, value: unknown): number | number[] | boolean | string {
   const def = ALL_PROPERTIES[propertyName]
   if (!def) {
     console.warn(`[Validation] Unknown property: ${propertyName}`)
-    return value
+    return value as number | number[] | boolean | string
   }
 
   const result = validatePropertyValue(def, value)

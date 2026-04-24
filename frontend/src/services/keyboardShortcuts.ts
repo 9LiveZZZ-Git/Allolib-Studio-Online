@@ -5,7 +5,7 @@
  * Shortcuts are context-aware based on active panel/focus.
  */
 
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useTimelineStore } from '@/stores/timeline'
 import { useSequencerStore } from '@/stores/sequencer'
 import { useObjectsStore } from '@/stores/objects'
@@ -78,7 +78,6 @@ function registerDefaultShortcuts() {
     description: 'Save project',
     action: () => {
       saveUnifiedProject()
-      console.log('[Shortcuts] Project saved')
     },
   })
 
@@ -451,7 +450,6 @@ function handleKeyDown(event: KeyboardEvent) {
 export function initKeyboardShortcuts() {
   registerDefaultShortcuts()
   window.addEventListener('keydown', handleKeyDown)
-  console.log('[Shortcuts] Initialized with', shortcuts.length, 'shortcuts')
 }
 
 /**

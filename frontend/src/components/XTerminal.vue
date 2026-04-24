@@ -74,8 +74,9 @@ onMounted(() => {
     requestAnimationFrame(() => {
       try {
         fitAddon?.fit()
-      } catch {
-        // Ignore fit errors during rapid resizing
+      } catch (e) {
+        // fit() can throw during rapid resizing or after component unmounts (RAF still pending)
+        console.debug('[XTerminal] fitAddon.fit() error during resize (likely unmounted):', e)
       }
     })
   })
@@ -94,8 +95,9 @@ function fit() {
   requestAnimationFrame(() => {
     try {
       fitAddon?.fit()
-    } catch {
-      // Ignore
+    } catch (e) {
+      // fit() can throw after unmount if the RAF fires after the component is disposed
+      console.debug('[XTerminal] fitAddon.fit() error on manual fit (likely unmounted):', e)
     }
   })
 }

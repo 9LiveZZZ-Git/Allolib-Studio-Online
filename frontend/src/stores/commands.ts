@@ -18,6 +18,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed, shallowRef } from 'vue'
+import type { SceneObject } from './objects'
 
 // ─── Command Interface ───────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ export interface Command {
   timestamp?: number
 
   /** Optional metadata */
-  meta?: Record<string, any>
+  meta?: Record<string, string | number | boolean>
 }
 
 // ─── Batch Command ───────────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ export function createValueCommand<T>(
     },
     merge(prev: Command): Command {
       // Keep the oldest oldValue, use newest newValue
-      const mergedOldValue = (prev as any)._oldValue ?? oldValue
+      const mergedOldValue = (prev as Command & { _oldValue: T })._oldValue ?? oldValue
       return {
         ...this,
         id: prev.id,  // Keep original ID
@@ -148,9 +149,9 @@ export function createValueCommand<T>(
 export function createPropertyCommand(
   objectId: string,
   property: string,
-  oldValue: any,
-  newValue: any,
-  setter: (id: string, prop: string, value: any) => void
+  oldValue: number | number[],
+  newValue: number | number[],
+  setter: (id: string, prop: string, value: number | number[]) => void
 ): Command {
   return {
     id: `prop-${objectId}-${property}-${Date.now()}`,
@@ -173,7 +174,7 @@ export function createPropertyCommand(
         this.timestamp - prev.timestamp < 500
     },
     merge(prev: Command): Command {
-      const mergedOldValue = (prev as any)._oldValue
+      const mergedOldValue = (prev as Command & { _oldValue: number | number[] })._oldValue
       return {
         ...this,
         id: prev.id,
@@ -188,7 +189,7 @@ export function createPropertyCommand(
       } as Command
     },
     _oldValue: oldValue,
-  } as Command & { _oldValue: any }
+  } as Command & { _oldValue: number | number[] }
 }
 
 /**
@@ -199,9 +200,9 @@ export function createKeyframeCommand(
   objectId: string,
   property: string,
   time: number,
-  value: any,
+  value: number | number[],
   easing: string,
-  addFn: (id: string, prop: string, time: number, value: any, easing: string) => void,
+  addFn: (id: string, prop: string, time: number, value: number | number[], easing: string) => void,
   removeFn: (id: string, prop: string, time: number) => void
 ): Command {
   return {
@@ -235,9 +236,9 @@ export function createMoveKeyframeCommand(
   property: string,
   oldTime: number,
   newTime: number,
-  value: any,
+  value: number | number[],
   easing: string,
-  addFn: (id: string, prop: string, time: number, value: any, easing: string) => void,
+  addFn: (id: string, prop: string, time: number, value: number | number[], easing: string) => void,
   removeFn: (id: string, prop: string, time: number) => void
 ): Command {
   return {
@@ -262,8 +263,8 @@ export function createMoveKeyframeCommand(
  */
 export function createObjectCommand(
   action: 'create' | 'delete',
-  objectData: any,
-  createFn: (data: any) => any,
+  objectData: SceneObject,
+  createFn: (data: SceneObject) => SceneObject,
   deleteFn: (id: string) => void
 ): Command {
   return {
@@ -341,7 +342,6 @@ export const useCommandsStore = defineStore('commands', () => {
         undoStack.value = undoStack.value.slice(-maxHistory.value)
       }
 
-      console.log(`[Commands] Executed: ${command.description}`)
     } finally {
       isExecuting.value = false
     }
@@ -365,7 +365,6 @@ export const useCommandsStore = defineStore('commands', () => {
    */
   function undo(): boolean {
     if (undoStack.value.length === 0) {
-      console.log('[Commands] Nothing to undo')
       return false
     }
 
@@ -379,7 +378,6 @@ export const useCommandsStore = defineStore('commands', () => {
       undoStack.value = undoStack.value.slice(0, -1)
       redoStack.value = [...redoStack.value, command]
 
-      console.log(`[Commands] Undone: ${command.description}`)
       return true
     } finally {
       isExecuting.value = false
@@ -391,7 +389,6 @@ export const useCommandsStore = defineStore('commands', () => {
    */
   function redo(): boolean {
     if (redoStack.value.length === 0) {
-      console.log('[Commands] Nothing to redo')
       return false
     }
 
@@ -405,7 +402,6 @@ export const useCommandsStore = defineStore('commands', () => {
       redoStack.value = redoStack.value.slice(0, -1)
       undoStack.value = [...undoStack.value, command]
 
-      console.log(`[Commands] Redone: ${command.description}`)
       return true
     } finally {
       isExecuting.value = false
@@ -418,7 +414,6 @@ export const useCommandsStore = defineStore('commands', () => {
   function clear(): void {
     undoStack.value = []
     redoStack.value = []
-    console.log('[Commands] History cleared')
   }
 
   /**

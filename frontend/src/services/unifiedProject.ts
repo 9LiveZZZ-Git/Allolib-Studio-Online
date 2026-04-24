@@ -20,10 +20,10 @@ interface UnifiedProjectData {
   version: number
   timestamp: number
   name: string
-  project: any
-  objects: any
-  environment: any
-  timeline: any
+  project: unknown
+  objects: unknown
+  environment: unknown
+  timeline: unknown
 }
 
 /**
@@ -33,52 +33,54 @@ export function loadUnifiedProject(): boolean {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (!stored) {
-      console.log('[UnifiedProject] No saved project found')
       return false
     }
 
     const data: UnifiedProjectData = JSON.parse(stored)
-    console.log(`[UnifiedProject] Loading project: ${data.name}`)
 
     const projectStore = useProjectStore()
     const objectsStore = useObjectsStore()
     const environmentStore = useEnvironmentStore()
     const timelineStore = useTimelineStore()
 
+    type ObjSnap = Parameters<ReturnType<typeof useObjectsStore>['fromJSON']>[0]
+    type EnvSnap = Parameters<ReturnType<typeof useEnvironmentStore>['fromJSON']>[0]
+
     // Restore project files
     if (data.project) {
-      if (data.project.files) {
-        projectStore.project.files = data.project.files
+      const p = data.project as Partial<{ files: unknown; folders: unknown; name: string; activeFile: string }>
+      if (p.files) {
+        projectStore.project.files = p.files as typeof projectStore.project.files
       }
-      if (data.project.folders) {
-        projectStore.project.folders = data.project.folders
+      if (p.folders) {
+        projectStore.project.folders = p.folders as typeof projectStore.project.folders
       }
-      if (data.project.name) {
-        projectStore.project.name = data.project.name
+      if (p.name) {
+        projectStore.project.name = p.name
       }
-      if (data.project.activeFile) {
-        projectStore.project.activeFile = data.project.activeFile
+      if (p.activeFile) {
+        projectStore.project.activeFile = p.activeFile
       }
     }
 
     // Restore objects
     if (data.objects && objectsStore.fromJSON) {
-      objectsStore.fromJSON(data.objects)
+      objectsStore.fromJSON(data.objects as ObjSnap)
     }
 
     // Restore environment
     if (data.environment && environmentStore.fromJSON) {
-      environmentStore.fromJSON(data.environment)
+      environmentStore.fromJSON(data.environment as EnvSnap)
     }
 
     // Restore timeline state
     if (data.timeline) {
-      if (data.timeline.duration !== undefined) {
-        timelineStore.duration = data.timeline.duration
+      const tl = data.timeline as Partial<{ duration: number }>
+      if (tl.duration !== undefined) {
+        timelineStore.duration = tl.duration
       }
     }
 
-    console.log(`[UnifiedProject] Loaded project: ${data.name}`)
     return true
   } catch (error) {
     console.error('[UnifiedProject] Failed to load project:', error)
@@ -117,7 +119,6 @@ export function saveUnifiedProject(): void {
     }
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    console.log(`[UnifiedProject] Saved project: ${data.name}`)
   } catch (error) {
     console.error('[UnifiedProject] Failed to save project:', error)
   }
@@ -198,7 +199,6 @@ export async function downloadProject(): Promise<void> {
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
 
-    console.log(`[UnifiedProject] Downloaded project: ${link.download}`)
   } catch (error) {
     console.error('[UnifiedProject] Failed to download project:', error)
     throw error
@@ -221,7 +221,6 @@ export async function importProjectFile(file: File): Promise<void> {
     const projectJsonText = await projectJsonFile.async('text')
     const data: UnifiedProjectData = JSON.parse(projectJsonText)
 
-    console.log(`[UnifiedProject] Importing project: ${data.name}`)
 
     const projectStore = useProjectStore()
     const objectsStore = useObjectsStore()
@@ -285,7 +284,6 @@ export async function importProjectFile(file: File): Promise<void> {
     // Save to localStorage
     saveUnifiedProject()
 
-    console.log(`[UnifiedProject] Imported project: ${data.name}`)
   } catch (error) {
     console.error('[UnifiedProject] Failed to import project:', error)
     throw error
@@ -314,5 +312,4 @@ export function newProject(): void {
   // Clear localStorage
   localStorage.removeItem(STORAGE_KEY)
 
-  console.log('[UnifiedProject] Created new project')
 }

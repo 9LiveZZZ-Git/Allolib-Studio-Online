@@ -4,6 +4,7 @@ import type { Terminal } from 'xterm'
 import { useProjectStore } from './project'
 import { useAppStore } from './app'
 import { useSequencerStore } from './sequencer'
+import type { Asset } from './assetLibrary'
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────
 const C = {
@@ -105,7 +106,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       const saved = localStorage.getItem('alloterm-scripts')
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, UserScript>
-        // Ensure all scripts have a type (for backwards compatibility)
+        // Scripts saved before the `type` field was added default to 'shell'.
         for (const script of Object.values(parsed)) {
           if (!script.type) {
             script.type = 'shell'
@@ -113,14 +114,18 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
         userScripts.value = parsed
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('[Terminal] Failed to load user scripts from localStorage:', e)
+    }
   }
 
   // Save user scripts to localStorage
   function saveUserScripts() {
     try {
       localStorage.setItem('alloterm-scripts', JSON.stringify(userScripts.value))
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('[Terminal] Failed to save user scripts to localStorage:', e)
+    }
   }
 
   // Initialize scripts on store creation
@@ -990,9 +995,9 @@ export const useTerminalStore = defineStore('terminal', () => {
         get clips() { return sequencer.clips },
         get synths() { return sequencer.availableSynths },
         get viewMode() { return sequencer.viewMode },
-        set viewMode(v: string) { sequencer.viewMode = v as any },
+        set viewMode(v: string) { sequencer.viewMode = v as import('./sequencer/types').ViewMode },
         get editMode() { return sequencer.editMode },
-        set editMode(v: string) { sequencer.editMode = v as any },
+        set editMode(v: string) { sequencer.editMode = v as import('./sequencer/types').EditMode },
         addNote: (clipId: string, freq: number, time: number, dur: number, amp = 0.5) => {
           const clip = sequencer.clips.find(c => c.id === clipId)
           if (clip) {
@@ -1007,7 +1012,7 @@ export const useTerminalStore = defineStore('terminal', () => {
           }
         },
       },
-      // seq is alias for tl (backwards compatibility)
+      // `seq` is kept so existing user scripts written before the `tl` rename still work.
       get seq() { return this.tl },
 
       // Environment
@@ -1498,7 +1503,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         if (!trimmed || trimmed.startsWith('#')) continue
 
         // Expand script arguments
-        const expanded = expandScriptArgs(trimmed, args)
+        const expanded = expandScriptArgs(trimmed, args, script.name)
 
         // Execute the command (but don't write another prompt)
         executeScriptLine(expanded)
@@ -1515,10 +1520,13 @@ export const useTerminalStore = defineStore('terminal', () => {
    * $@ = all args space-separated
    * $* = all args space-separated
    * $# = number of args
-   * $0 = script name (not implemented, use $SCRIPT_NAME env if needed)
+   * $0 = script name
    */
-  function expandScriptArgs(line: string, args: string[]): string {
+  function expandScriptArgs(line: string, args: string[], scriptName: string = ''): string {
     let result = line
+
+    // Replace $0 with script name
+    result = result.replace(/\$0/g, scriptName)
 
     // Replace $# with arg count
     result = result.replace(/\$#/g, String(args.length))
@@ -1577,9 +1585,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       const userScript = userScripts.value[cmd]
 
       if (handler) {
-        try { handler(ctx) } catch { /* ignore in scripts */ }
+        try { handler(ctx) } catch (e) { console.error(`[Terminal] Command '${cmd}' threw an error:`, e) }
       } else if (userScript) {
-        try { executeUserScript(userScript, ctx.args) } catch { /* ignore */ }
+        try { executeUserScript(userScript, ctx.args) } catch (e) { console.error(`[Terminal] User script '${cmd}' threw an error:`, e) }
       } else {
         writeError(`${cmd}: command not found`)
       }
@@ -3080,7 +3088,7 @@ ${s.body.join('\n')}
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed || trimmed.startsWith('#')) continue
-          const expanded = expandScriptArgs(trimmed, args)
+          const expanded = expandScriptArgs(trimmed, args, file.path)
           executeScriptLine(expanded)
         }
       } finally {
@@ -3809,7 +3817,7 @@ ${s.body.join('\n')}
         }
 
         case 'textures': {
-          const textures = assetStore.assets.filter((a: any) => a.type === 'texture')
+          const textures = (assetStore.assets as Asset[]).filter(a => a.type === 'texture')
           writeln(`${C.bold}Textures${C.reset} (${textures.length})`)
           for (const t of textures) {
             const state = t.loadingState || 'idle'
@@ -3819,7 +3827,7 @@ ${s.body.join('\n')}
         }
 
         case 'meshes': {
-          const meshes = assetStore.assets.filter((a: any) => a.type === 'mesh')
+          const meshes = (assetStore.assets as Asset[]).filter(a => a.type === 'mesh')
           writeln(`${C.bold}Meshes${C.reset} (${meshes.length})`)
           for (const m of meshes) {
             writeln(`  ${C.cyan}${m.name}${C.reset} ${C.dim}${m.fileSize || ''}${C.reset}`)
@@ -3828,7 +3836,7 @@ ${s.body.join('\n')}
         }
 
         case 'environments': {
-          const envs = assetStore.assets.filter((a: any) => a.type === 'environment')
+          const envs = (assetStore.assets as Asset[]).filter(a => a.type === 'environment')
           writeln(`${C.bold}Environments${C.reset} (${envs.length})`)
           for (const e of envs) {
             writeln(`  ${C.cyan}${e.name}${C.reset} ${C.dim}${e.fileSize || ''}${C.reset}`)
@@ -3893,7 +3901,7 @@ ${s.body.join('\n')}
             writeError('assets info: missing asset ID')
             return
           }
-          const asset = assetStore.assets.find((a: any) => a.id === id)
+          const asset = (assetStore.assets as Asset[]).find(a => a.id === id)
           if (!asset) {
             writeError(`Asset not found: ${id}`)
             return
@@ -3971,7 +3979,7 @@ ${s.body.join('\n')}
             writeError(`Invalid preset: ${preset}`)
             return
           }
-          settings.applyQualityPreset(preset as any)
+          settings.applyQualityPreset(preset as import('./settings').QualityPreset)
           writeln(`${C.green}✓${C.reset} Applied ${C.cyan}${preset}${C.reset} preset`)
           break
         }

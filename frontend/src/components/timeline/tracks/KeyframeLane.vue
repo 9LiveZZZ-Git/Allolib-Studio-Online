@@ -95,20 +95,12 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useTimelineStore } from '@/stores/timeline'
 import { useSequencerStore } from '@/stores/sequencer'
+import { type EasingType, type BezierPoints } from '@/composables/useKeyframes'
 
-export type EasingType =
-  | 'linear'
-  | 'easeIn'
-  | 'easeOut'
-  | 'easeInOut'
-  | 'easeOutBack'
-  | 'bounce'
-  | 'elastic'
-  | 'step'
-  | 'bezier'
+export type { EasingType, BezierPoints }
 
-export type BezierPoints = [number, number, number, number]
-
+// Keyframe is defined locally because its `value` field accepts `number | number[]`,
+// which is broader than the generic Keyframe<T> from useKeyframes (which defaults to number).
 export interface Keyframe {
   time: number
   value: number | number[]

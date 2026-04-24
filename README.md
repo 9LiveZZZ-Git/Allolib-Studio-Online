@@ -4,7 +4,7 @@
 
 AlloLib Studio Online is a browser-based creative coding environment for building interactive audio-visual applications using the [AlloLib](https://github.com/AlloSphere-Research-Group/allolib) C++ framework. No local installation required.
 
-![Status](https://img.shields.io/badge/status-Phase%207%20Complete-brightgreen)
+![Status](https://img.shields.io/badge/status-All%20Phases%20Complete-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -31,7 +31,7 @@ AlloLib Studio Online is a browser-based creative coding environment for buildin
 - **Preset System** - Save/load presets as allolib-compatible `.preset` files
 - **Multi-File Projects** - Create headers, organize with folders, export as ZIP
 - **Polyphonic Synths** - SynthGUIManager, PolySynth, keyboard-triggered voices
-- **40+ Examples** - Ready-to-run demos organized by AlloLib and Playground categories
+- **155 Examples** - Ready-to-run demos organized by AlloLib and Playground categories
 - **Multi-File Examples** - Examples with multiple source files and headers
 - **Example Dialog** - Choose to add examples to project or start fresh
 - **Glossary** - 330+ searchable terms covering AlloLib and Gamma DSP APIs
@@ -287,7 +287,7 @@ Browser                                Server
 |-------|-------------|
 | **Frontend** | Vue 3, TypeScript, Monaco Editor, Tailwind CSS, Pinia |
 | **Backend** | Node.js, Express, Redis, BullMQ |
-| **Compiler** | Emscripten 3.1.50, Docker |
+| **Compiler** | Emscripten 3.1.73, Docker |
 | **Graphics** | WebGL2 (default), WebGPU (experimental) |
 | **Audio** | Web Audio API, AudioWorklet |
 
@@ -442,8 +442,8 @@ configureBackend(BackendType::WebGPU);  // or BackendType::WebGL2 (default)
 ```
 
 **Current Limitations:**
-- Custom GLSL shaders must be rewritten in WGSL
-- Some advanced features (FBO, cubemaps, PBR) are still being ported
+- Custom GLSL shaders must be rewritten in WGSL (no auto-transpilation)
+- 3D textures and HDR float textures not yet ported to WebGPU
 
 </details>
 

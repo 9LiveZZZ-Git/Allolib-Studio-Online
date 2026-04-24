@@ -154,7 +154,6 @@ export const useSettingsStore = defineStore('settings', () => {
     shaderComplexity: 'standard',
   })
 
-  // Load settings from localStorage
   function loadSettings() {
     try {
       const saved = localStorage.getItem('allolib-settings')
@@ -171,7 +170,6 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // Save settings to localStorage
   function saveSettings() {
     try {
       localStorage.setItem('allolib-settings', JSON.stringify({
@@ -186,7 +184,6 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // Reset to defaults
   function resetEditor() {
     editor.value = {
       fontSize: 14,
@@ -274,7 +271,6 @@ export const useSettingsStore = defineStore('settings', () => {
     saveSettings()
   }
 
-  // Apply quality preset
   function applyQualityPreset(preset: QualityPreset) {
     graphics.value.qualityPreset = preset
 
@@ -407,7 +403,7 @@ export const useSettingsStore = defineStore('settings', () => {
     saveSettings()
   }
 
-  // Send quality settings to WASM module
+  // Pushes current graphics settings into window.allolib.* callbacks for the running WASM module.
   function notifyQualityChange() {
     const w = window as any
 
@@ -456,7 +452,6 @@ export const useSettingsStore = defineStore('settings', () => {
       }
       w.allolib.autoLOD.setMode(modes[graphics.value.qualityPreset] || 1)
 
-      console.log(
         '[Settings] LOD settings applied: enabled=' +
           graphics.value.lodEnabled +
           ', bias=' +
@@ -481,7 +476,6 @@ export const useSettingsStore = defineStore('settings', () => {
       w.allolib.textureLOD.setMaxResolution(graphics.value.maxTextureSize)
       w.allolib.textureLOD.setReferenceDistance(graphics.value.textureReferenceDistance)
 
-      console.log(
         '[Settings] Texture LOD settings applied: enabled=' +
           graphics.value.textureLODEnabled +
           ', bias=' +
@@ -496,14 +490,12 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // Send display settings to WASM module
   function notifyDisplayChange() {
     const w = window as any
 
     // Send point size to graphics system
     if (w.allolib?.graphics?.setPointSize) {
       w.allolib.graphics.setPointSize(display.value.defaultPointSize)
-      console.log('[Settings] Point size set to:', display.value.defaultPointSize)
     }
   }
 
@@ -515,15 +507,13 @@ export const useSettingsStore = defineStore('settings', () => {
     resetGraphics()
   }
 
-  // Watch for changes and auto-save
   watch([editor, audio, compiler, display, graphics], saveSettings, { deep: true })
 
-  // Watch display settings and notify WASM
+  // Point size needs an immediate WASM notification on change (not just a save).
   watch(() => display.value.defaultPointSize, () => {
     notifyDisplayChange()
   })
 
-  // Load on init
   loadSettings()
 
   return {

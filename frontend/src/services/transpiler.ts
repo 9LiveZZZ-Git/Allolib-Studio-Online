@@ -590,11 +590,11 @@ export function transpileToWeb(code: string): TranspileResult {
   }
 
   // Apply transformations
-  for (const { pattern, replacement, description } of nativeToWebPatterns) {
+  for (const { pattern, replacement } of nativeToWebPatterns) {
     const matches = result.match(pattern)
     if (matches) {
       if (typeof replacement === 'function') {
-        result = result.replace(pattern, replacement as any)
+        result = result.replace(pattern, replacement as (match: string, ...groups: string[]) => string)
       } else {
         result = result.replace(pattern, replacement)
       }
@@ -658,11 +658,11 @@ export function transpileToNative(code: string): TranspileResult {
   }
 
   // Apply transformations
-  for (const { pattern, replacement, description } of webToNativePatterns) {
+  for (const { pattern, replacement } of webToNativePatterns) {
     const matches = result.match(pattern)
     if (matches) {
       if (typeof replacement === 'function') {
-        result = result.replace(pattern, replacement as any)
+        result = result.replace(pattern, replacement as (match: string, ...groups: string[]) => string)
       } else {
         result = result.replace(pattern, replacement)
       }

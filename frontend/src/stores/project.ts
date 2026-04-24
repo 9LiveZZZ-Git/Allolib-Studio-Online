@@ -102,14 +102,13 @@ function migrateFromLegacy(): Project | null {
   return null
 }
 
-// Migrate old projects without path/folders
+// Upgrades projects saved before the multi-file/folder schema was introduced.
+// Adds the `path` field to files and the `folders` array if they are absent.
 function migrateProjectStructure(project: Project): Project {
-  // Add path to files if missing
   project.files = project.files.map(f => ({
     ...f,
     path: f.path || f.name,
   }))
-  // Add folders array if missing
   if (!project.folders) {
     project.folders = []
   }
@@ -124,8 +123,8 @@ function loadProject(): Project {
       const project = JSON.parse(stored) as Project
       // Migrate structure if needed (add path/folders)
       return migrateProjectStructure(project)
-    } catch {
-      // Invalid JSON, continue to legacy check
+    } catch (e) {
+      console.warn('[Project] Stored project data is invalid JSON, falling back to legacy check:', e)
     }
   }
 

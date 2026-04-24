@@ -141,7 +141,6 @@ async function handleFileSelect(event: Event) {
 
     // Show feedback
     if (results.length > 0) {
-      console.log(`[AssetLibrary] Imported ${results.length} file(s)`)
       // Brief flash message
       setTimeout(() => {
         importedCount.value = 0

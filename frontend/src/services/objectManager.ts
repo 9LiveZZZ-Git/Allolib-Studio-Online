@@ -8,6 +8,7 @@
 import { watch } from 'vue'
 import { useObjectsStore, type SceneObject } from '@/stores/objects'
 import { useTimelineStore } from '@/stores/timeline'
+import type { WasmModule } from '@/services/runtime'
 
 // ─── WASM Function Types ─────────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ class ObjectManagerBridge {
   /**
    * Check if WASM module has object manager functions
    */
-  private hasObjectManagerFunctions(wasm: any): boolean {
+  private hasObjectManagerFunctions(wasm: WasmModule): boolean {
     return typeof wasm._al_obj_create === 'function' &&
            typeof wasm._al_obj_clear === 'function'
   }
@@ -87,7 +88,7 @@ class ObjectManagerBridge {
   /**
    * Connect to WASM module and stores
    */
-  connect(wasmModule: any): void {
+  connect(wasmModule: WasmModule): void {
     this.objectsStore = useObjectsStore()
     this.timelineStore = useTimelineStore()
 
@@ -100,12 +101,10 @@ class ObjectManagerBridge {
 
     // Check if full object manager functions are available
     if (!this.hasObjectManagerFunctions(wasmModule)) {
-      console.log('[ObjectManagerBridge] Full WASM object manager not available, but pending objects processed')
       return
     }
 
     this.wasmModule = wasmModule as ObjectManagerWasm
-    console.log('[ObjectManagerBridge] Connected to WASM with full ObjectManager support')
 
     // Also sync any objects FROM WASM to the store (C++ created objects)
     // This populates the timeline with objects created in C++ code
@@ -138,11 +137,9 @@ class ObjectManagerBridge {
     }> | undefined
 
     if (!pending || pending.length === 0) {
-      console.log('[ObjectManagerBridge] No pending objects to process')
       return
     }
 
-    console.log(`[ObjectManagerBridge] Processing ${pending.length} pending objects from onCreate()`)
 
     for (const info of pending) {
       this.addObjectToStore(info)
@@ -167,7 +164,6 @@ class ObjectManagerBridge {
 
     // Check if object already exists in store
     if (this.objectsStore.objects.has(info.id)) {
-      console.log(`[ObjectManagerBridge] Object already in store: ${info.id}`)
       return
     }
 
@@ -183,7 +179,8 @@ class ObjectManagerBridge {
         scale: info.scale,
       },
       mesh: {
-        primitive: info.primitive as any || 'sphere',
+        type: 'primitive',
+        primitive: (info.primitive || 'sphere') as SceneObject['mesh']['primitive'],
       },
       material: {
         type: 'basic',
@@ -196,7 +193,6 @@ class ObjectManagerBridge {
     this.objectsStore.objects.set(info.id, sceneObject)
     this.syncedObjects.add(info.id)
 
-    console.log(`[ObjectManagerBridge] Added to timeline: ${info.name} (${info.id})`)
   }
 
   /**
@@ -217,7 +213,6 @@ class ObjectManagerBridge {
         scale: [number, number, number]
         color: [number, number, number, number]
       }) => {
-        console.log(`[ObjectManagerBridge] C++ registered object (post-init): ${info.name} (${info.id})`)
         this.addObjectToStore(info)
       }
     }
@@ -256,7 +251,6 @@ class ObjectManagerBridge {
       this.objectsStore.objects.clear()
       this.objectsStore.keyframeCurves.clear()
       this.objectsStore.selectObject(null)
-      console.log('[ObjectManagerBridge] Cleared objects store for new project')
     }
 
     this.wasmModule = null
@@ -264,7 +258,6 @@ class ObjectManagerBridge {
     this.timelineStore = null
     this.syncedObjects.clear()
 
-    console.log('[ObjectManagerBridge] Disconnected')
   }
 
   /**
@@ -276,14 +269,12 @@ class ObjectManagerBridge {
 
     // Check if enumeration functions are available
     if (!this.wasmModule._al_obj_get_id_by_index) {
-      console.log('[ObjectManagerBridge] Object enumeration not available')
       return
     }
 
     const count = this.wasmModule._al_obj_count()
     if (count === 0) return
 
-    console.log(`[ObjectManagerBridge] Found ${count} C++ objects to sync to timeline`)
 
     for (let i = 0; i < count; i++) {
       const idPtr = this.wasmModule._al_obj_get_id_by_index(i)
@@ -348,10 +339,11 @@ class ObjectManagerBridge {
           scale: [scaleX, scaleY, scaleZ],
         },
         mesh: {
-          primitive: primitive as any || 'cube',
+          type: 'primitive',
+          primitive: (primitive || 'cube') as SceneObject['mesh']['primitive'],
         },
         material: {
-          type: materialType as any || 'basic',
+          type: (materialType || 'basic') as SceneObject['material']['type'],
           color: [colorR, colorG, colorB, colorA],
           metallic,
           roughness,
@@ -364,7 +356,6 @@ class ObjectManagerBridge {
       this.objectsStore.objects.set(id, sceneObject)
       this.syncedObjects.add(id)
 
-      console.log(`[ObjectManagerBridge] Synced C++ object to timeline: ${name} (${id})`)
     }
   }
 
@@ -381,7 +372,6 @@ class ObjectManagerBridge {
       }
     }
 
-    console.log(`[ObjectManagerBridge] Total synced objects: ${this.syncedObjects.size}`)
   }
 
   /**
@@ -644,7 +634,7 @@ class ObjectManagerBridge {
           } else if (index < 0) {
             const current = obj.material[target as keyof typeof obj.material]
             if (current !== value) {
-              (obj.material as any)[target] = value
+              (obj.material as Record<string, unknown>)[target] = value
               materialChanged = true
             }
           }

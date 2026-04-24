@@ -107,7 +107,6 @@ export function useTimelineShortcuts(options: ShortcutOptions = {}) {
       action: () => {
         // Select all in the currently focused category
         // For now, just log - full implementation needs UI context
-        console.log('[Shortcuts] Select All - needs category context')
       },
       description: 'Select all keyframes',
       category: 'selection',

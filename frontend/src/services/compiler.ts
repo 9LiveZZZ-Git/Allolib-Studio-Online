@@ -1,4 +1,5 @@
-const API_BASE = '/api/compile'
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
+const API_BASE = `${BACKEND_URL}/api/compile`
 
 export type BackendType = 'webgl2' | 'webgpu'
 
@@ -60,7 +61,7 @@ export async function submitCompilation(request: CompilationRequest): Promise<Co
 }
 
 /**
- * Legacy single-file compilation (for backward compatibility)
+ * Single-file compilation shorthand; wraps submitCompilation with a single main.cpp entry.
  */
 export async function submitSingleFileCompilation(source: string): Promise<CompilationResponse> {
   return submitCompilation({

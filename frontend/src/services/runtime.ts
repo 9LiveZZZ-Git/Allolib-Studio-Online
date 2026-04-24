@@ -21,10 +21,11 @@ export interface WasmModule {
   _main?: () => number
   _malloc?: (size: number) => number
   _free?: (ptr: number) => void
-  cwrap?: (name: string, returnType: string, argTypes: string[]) => Function
-  ccall?: (name: string, returnType: string, argTypes: string[], args: any[]) => any
+  cwrap?: (name: string, returnType: string, argTypes: string[]) => (...args: unknown[]) => unknown
+  ccall?: (name: string, returnType: string, argTypes: string[], args: unknown[]) => unknown
   UTF8ToString?: (ptr: number) => string
   HEAPF32?: Float32Array
+  HEAPU8?: Uint8Array
   canvas?: HTMLCanvasElement
   GL?: WebGLRenderingContext
 
@@ -54,11 +55,16 @@ export interface WasmModule {
   _al_seq_trigger_off?: (id: number) => void
   _al_seq_set_param?: (voiceId: number, paramIndex: number, value: number) => void
   _al_seq_get_voice_count?: () => number
+
+  // WebGPU context references (set by JS before module renders)
+  _webgpuCanvasContext?: GPUCanvasContext
+  _webgpuDevice?: GPUDevice
+  _webgpuFormat?: GPUTextureFormat
 }
 
 declare global {
   interface Window {
-    Module: WasmModule
+    Module: WasmModule | null
     alloAudioContext: AudioContext | null
     alloWorkletNode: AudioWorkletNode | null
     alloSoftClipper: WaveShaperNode | null
@@ -67,19 +73,14 @@ declare global {
   }
 }
 
-// Generate a soft clipping curve using tanh-based saturation
+// Generates a tanh-shaped soft clipping lookup table for WaveShaperNode.
+// tanh approaches ±1 asymptotically, providing smooth saturation without hard clipping.
 function createSoftClipCurve(drive: number = 1.5, samples: number = 8192): Float32Array {
   const curve = new Float32Array(samples)
-  const deg = Math.PI / 180
 
   for (let i = 0; i < samples; i++) {
-    // Map to -1 to 1 range
     const x = (i * 2) / samples - 1
-
-    // Apply drive and soft clipping using tanh
-    // tanh provides smooth saturation that approaches ±1 asymptotically
-    const driven = x * drive
-    curve[i] = Math.tanh(driven)
+    curve[i] = Math.tanh(x * drive)
   }
 
   return curve
@@ -130,10 +131,6 @@ export class AllolibRuntime {
       const backendType = settings.graphics.backendType || 'webgl2'
 
       // Clear debug output for backend selection
-      console.log('%c╔══════════════════════════════════════════╗', 'color: #00ff00; font-weight: bold')
-      console.log('%c║     GRAPHICS BACKEND SELECTION           ║', 'color: #00ff00; font-weight: bold')
-      console.log('%c╠══════════════════════════════════════════╣', 'color: #00ff00; font-weight: bold')
-      console.log(`%c║  Requested: ${backendType.padEnd(28)}║`, 'color: #00ff00; font-weight: bold')
       this.onPrint(`[Backend] Requested backend: ${backendType}`)
 
       // Determine which backend to use
@@ -142,7 +139,6 @@ export class AllolibRuntime {
 
       if (backendType === 'webgpu' || backendType === 'auto') {
         // Try to initialize WebGPU
-        console.log('%c║  Checking WebGPU support...              ║', 'color: #ffff00; font-weight: bold')
         if (navigator.gpu) {
           try {
             this.onPrint('[Backend] navigator.gpu exists, requesting adapter...')
@@ -151,18 +147,14 @@ export class AllolibRuntime {
               this.onPrint('[Backend] Adapter acquired, requesting device...')
               webgpuDevice = await adapter.requestDevice()
               useWebGPU = true
-              console.log('%c║  ✓ WebGPU device acquired!               ║', 'color: #00ff00; font-weight: bold')
               this.onPrint('[Backend] WebGPU device acquired successfully!')
             } else {
-              console.log('%c║  ✗ WebGPU adapter not available          ║', 'color: #ff0000; font-weight: bold')
               this.onPrint('[Backend] WebGPU adapter not available')
             }
           } catch (e) {
-            console.log('%c║  ✗ WebGPU init failed                    ║', 'color: #ff0000; font-weight: bold')
             this.onPrint(`[Backend] WebGPU initialization failed: ${e}`)
           }
         } else {
-          console.log('%c║  ✗ navigator.gpu not found               ║', 'color: #ff0000; font-weight: bold')
           this.onPrint('[Backend] WebGPU not supported (no navigator.gpu)')
         }
 
@@ -170,7 +162,6 @@ export class AllolibRuntime {
           this.onError('[Backend] ERROR: WebGPU was requested but is not available!')
         }
       } else {
-        console.log('%c║  WebGL2 selected (skipping WebGPU)       ║', 'color: #00ffff; font-weight: bold')
       }
 
       // Create WebGL2 context only if NOT using WebGPU
@@ -256,7 +247,16 @@ export class AllolibRuntime {
       }
 
       // Module configuration for Emscripten
-      const moduleConfig: Record<string, any> = {
+      const moduleConfig: {
+        canvas: HTMLCanvasElement
+        print: (text: string) => void
+        printErr: (text: string) => void
+        onExit: (code: number) => void
+        locateFile: (path: string) => string
+        postMainLoop?: () => void
+        preinitializedWebGLContext?: WebGL2RenderingContext | null
+        preinitializedWebGPUDevice?: GPUDevice
+      } = {
         canvas: this.canvas,
         print: (text: string) => this.onPrint(text),
         printErr: (text: string) => this.onError(text),
@@ -276,12 +276,10 @@ export class AllolibRuntime {
       if (useWebGPU && webgpuDevice) {
         // For WebGPU, pass the pre-initialized device
         moduleConfig.preinitializedWebGPUDevice = webgpuDevice
-        console.log('%c║  → Configuring WebGPU module             ║', 'color: #ff00ff; font-weight: bold')
         this.onPrint('[Backend] Passing WebGPU device to WASM module')
       } else {
         // For WebGL2, pass pre-created context so Emscripten reuses it
         moduleConfig.preinitializedWebGLContext = gl
-        console.log('%c║  → Configuring WebGL2 module             ║', 'color: #00ffff; font-weight: bold')
         this.onPrint('[Backend] Passing WebGL2 context to WASM module')
       }
 
@@ -296,9 +294,6 @@ export class AllolibRuntime {
       ;(window as any).alloBackendType = activeBackend
 
       // Final debug output
-      console.log(`%c║  Active:    ${activeBackend.padEnd(28)}║`, useWebGPU ? 'color: #ff00ff; font-weight: bold' : 'color: #00ff00; font-weight: bold')
-      console.log(`%c║  Compute:   ${(useWebGPU ? 'YES' : 'NO').padEnd(28)}║`, 'color: #00ff00; font-weight: bold')
-      console.log('%c╚══════════════════════════════════════════╝', 'color: #00ff00; font-weight: bold')
       this.onPrint(`[Backend] Active backend: ${activeBackend}`)
       this.onPrint(`[Backend] Compute shaders: ${useWebGPU ? 'ENABLED' : 'DISABLED'}`)
 
@@ -362,7 +357,6 @@ export class AllolibRuntime {
       scale: [number, number, number]
       color: [number, number, number, number]
     }) => {
-      console.log(`[Runtime] C++ registered timeline object: ${info.name} (${info.id})`)
       pendingObjects.push(info)
     }
 
@@ -378,7 +372,7 @@ export class AllolibRuntime {
           sampleRate: 44100,
           latencyHint: 'interactive',
         })
-        // Log actual sample rate - browser may use different rate
+            // Browser may negotiate a different sample rate than requested; log the actual value.
         this.onPrint(`[INFO] Audio context created (state: ${window.alloAudioContext.state}, sampleRate: ${window.alloAudioContext.sampleRate})`)
       }
 
@@ -451,10 +445,10 @@ export class AllolibRuntime {
     // Create limiter (DynamicsCompressorNode with brick-wall settings)
     window.alloLimiter = ctx.createDynamicsCompressor()
     window.alloLimiter.threshold.setValueAtTime(this.limiterSettings.threshold, ctx.currentTime)
-    window.alloLimiter.knee.setValueAtTime(0, ctx.currentTime) // Hard knee for brick-wall limiting
-    window.alloLimiter.ratio.setValueAtTime(20, ctx.currentTime) // High ratio = limiting
-    window.alloLimiter.attack.setValueAtTime(0.001, ctx.currentTime) // 1ms attack - fast to catch transients
-    window.alloLimiter.release.setValueAtTime(0.05, ctx.currentTime) // 50ms release - smooth recovery
+    window.alloLimiter.knee.setValueAtTime(0, ctx.currentTime) // 0 dB knee = hard/brick-wall limiting
+    window.alloLimiter.ratio.setValueAtTime(20, ctx.currentTime) // 20:1 approximates brick-wall
+    window.alloLimiter.attack.setValueAtTime(0.001, ctx.currentTime) // 1 ms — fast enough to catch transients
+    window.alloLimiter.release.setValueAtTime(0.05, ctx.currentTime) // 50 ms — avoids pumping
 
     // Create a gain node for monitoring (placed after limiter)
     window.alloLimiterGain = ctx.createGain()
@@ -522,10 +516,8 @@ export class AllolibRuntime {
     if (!this.module || !window.alloWorkletNode) return
 
     try {
-      // Log only first request for debugging (logging causes latency)
+      // Log only the first request; repeated logging from the audio thread adds measurable latency.
       if (this.audioRequestCount === 0) {
-        console.log(`[Audio] First request: ${frames} frames, ${channels} channels`)
-        console.log(`[Audio] WASM functions available: HEAPF32=${!!this.module.HEAPF32}, _malloc=${!!this.module._malloc}, _allolib_process_audio=${!!this.module._allolib_process_audio}`)
       }
       this.audioRequestCount++
 
@@ -546,18 +538,11 @@ export class AllolibRuntime {
       // Call WASM to fill the buffer
       this.module._allolib_process_audio(bufferPtr, frames, channels)
 
-      // Copy data from WASM memory to JavaScript
-      // HEAPF32 is a Float32Array view, so bufferPtr is an element offset (not byte offset)
-      const elementOffset = bufferPtr / 4  // Convert byte offset to float32 element offset
+      // HEAPF32 is indexed by float32 elements, but _malloc returns a byte pointer.
+      const elementOffset = bufferPtr / 4  // Convert byte offset to Float32Array element index
       const audioData = this.module.HEAPF32!.subarray(elementOffset, elementOffset + frames * channels)
 
-      // Logging disabled to reduce latency - uncomment for debugging
-      // if (this.audioRequestCount <= 5) {
-      //   const maxSample = Math.max(...Array.from(audioData).map(Math.abs))
-      //   console.log(`[Audio] Max: ${maxSample.toFixed(3)}`)
-      // }
-
-      // Send to worklet (make a copy since we'll free the memory)
+      // Send to worklet (make a copy before freeing the WASM allocation)
       const bufferCopy = audioData.slice()
       window.alloWorkletNode.port.postMessage({
         type: 'audioBuffer',
@@ -571,11 +556,11 @@ export class AllolibRuntime {
     }
   }
 
-  private async importModule(url: string): Promise<(config: any) => Promise<WasmModule>> {
-    // Use dynamic import to load the ES6 module
-    // We need to handle CORS and module loading properly
+  private async importModule(url: string): Promise<(config: Record<string, unknown>) => Promise<WasmModule>> {
+    // Fetch the compiled JS as text and re-import via a blob URL.
+    // Direct dynamic import() of a same-origin path would also work, but the blob
+    // approach avoids any CORS restriction when the file server lacks CORS headers.
     try {
-      // For cross-origin modules, we may need to fetch and create a blob URL
       const response = await fetch(url)
       if (!response.ok) {
         throw new Error(`Failed to fetch module: ${response.status} ${response.statusText}`)
@@ -588,15 +573,13 @@ export class AllolibRuntime {
       const blobUrl = URL.createObjectURL(blob)
 
       try {
-        // Import the module from the blob URL
         const module = await import(/* @vite-ignore */ blobUrl)
         return module.default
       } finally {
-        // Clean up blob URL
         URL.revokeObjectURL(blobUrl)
       }
     } catch (error) {
-      // Fallback: try direct import (may work if same-origin)
+      // Fallback for same-origin where blob creation may fail (rare)
       const module = await import(/* @vite-ignore */ url)
       return module.default
     }
@@ -629,8 +612,8 @@ export class AllolibRuntime {
       const format = navigator.gpu.getPreferredCanvasFormat()
       this.onPrint(`[WebGPU] Using format: ${format}`)
 
-      // Configure the context with explicit usage flags
-      // This helps work around Chrome/Dawn SharedTextureMemory issues on Windows
+      // COPY_SRC is required so toDataURL() works on the WebGPU canvas (Chrome/Dawn
+      // SharedTextureMemory on Windows rejects screenshots without it).
       context.configure({
         device: device,
         format: format,
@@ -638,12 +621,11 @@ export class AllolibRuntime {
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       })
 
-      // Store the context in Module for the WASM WebGPU backend to use
-      // The backend's beginFrame() calls Module._webgpuCanvasContext.getCurrentTexture()
+      // The WASM WebGPU backend's beginFrame() reads these from Module directly.
       if (this.module) {
-        ;(this.module as any)._webgpuCanvasContext = context
-        ;(this.module as any)._webgpuDevice = device
-        ;(this.module as any)._webgpuFormat = format
+        this.module._webgpuCanvasContext = context
+        this.module._webgpuDevice = device
+        this.module._webgpuFormat = format
       }
 
       // Also store globally for debugging
@@ -651,7 +633,6 @@ export class AllolibRuntime {
       ;(window as any).__webgpuDevice = device
 
       this.onPrint('[WebGPU] Canvas context configured successfully!')
-      console.log('[WebGPU] Context stored in Module._webgpuCanvasContext')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.onError(`[WebGPU] Failed to configure canvas: ${message}`)
@@ -673,14 +654,13 @@ export class AllolibRuntime {
     this.onPrint('[INFO] Starting AlloLib application...')
 
     try {
-      // With MODULARIZE=1 + EXPORT_ES6=1, main() runs automatically during module init
-      // The ALLOLIB_WEB_MAIN macro's main() calls allolib_create() but NOT allolib_start()
-      // We need to configure the backend and then start manually
+      // With MODULARIZE=1 + EXPORT_ES6=1, main() runs automatically on module init.
+      // ALLOLIB_WEB_MAIN calls allolib_create() but NOT allolib_start(), so we
+      // configure the backend then start manually here.
 
-      // Configure backend based on detected WebGPU availability
       const activeBackend = (window as any).alloBackendType || 'webgl2'
       if (this.module._allolib_configure_backend) {
-        // BackendType enum: WebGL2 = 0, WebGPU = 1, Auto = 2
+        // BackendType enum: WebGL2 = 0, WebGPU = 1
         const backendTypeNum = activeBackend === 'webgpu' ? 1 : 0
         this.onPrint(`[Runtime] Configuring backend: ${activeBackend} (${backendTypeNum})`)
         this.module._allolib_configure_backend(backendTypeNum)
@@ -697,17 +677,13 @@ export class AllolibRuntime {
       // Resume audio context (must be after user interaction)
       this.resumeAudio()
 
-      // Connect the parameter system to the WASM module
-      // This enables the Vue ParameterPanel to show and control parameters
       if (this.module) {
         parameterSystem.connectWasm(this.module)
-
-        // Connect the object manager bridge for timeline object sync
         objectManagerBridge.connect(this.module)
       }
 
-      // Apply initial settings from the settings store
-      // This ensures point size and other settings are applied when the app starts
+      // Push initial display/quality settings into WASM immediately after start
+      // so the app sees correct values on its first frame.
       try {
         const settings = useSettingsStore()
         settings.notifyDisplayChange()
@@ -742,11 +718,9 @@ export class AllolibRuntime {
 
     this.isRunning = false
 
-    // Disconnect parameter system and object manager
     parameterSystem.disconnectWasm()
     objectManagerBridge.disconnect()
 
-    // Stop the AlloLib app
     if (this.module?._allolib_stop) {
       try {
         this.module._allolib_stop()
@@ -755,12 +729,11 @@ export class AllolibRuntime {
       }
     }
 
-    // Suspend audio
     if (window.alloAudioContext) {
       window.alloAudioContext.suspend()
     }
 
-    // Disconnect audio chain (in reverse order)
+    // Disconnect audio chain in reverse order (output → input)
     if (window.alloLimiterGain) {
       window.alloLimiterGain.disconnect()
       window.alloLimiterGain = null
@@ -781,8 +754,8 @@ export class AllolibRuntime {
       window.alloWorkletNode = null
     }
 
-    // Clear the canvas (only for WebGL2 mode)
-    // Don't try to get WebGL2 context on a WebGPU canvas
+    // Calling getContext('webgl2') on a WebGPU canvas throws; guard with the flag
+    // set in load() when the backend was chosen.
     const isWebGPU = !!(this.canvas as any).__isWebGPU
     if (!isWebGPU && (this.canvas as any).__hasGLContext) {
       const gl = this.canvas.getContext('webgl2')
@@ -796,7 +769,6 @@ export class AllolibRuntime {
   }
 
   private cleanup(): void {
-    // Destroy previous module
     if (this.module?._allolib_destroy) {
       try {
         this.module._allolib_destroy()
@@ -806,7 +778,7 @@ export class AllolibRuntime {
     }
 
     this.module = null
-    window.Module = null as any
+    window.Module = null
   }
 
   resize(): void {
@@ -818,9 +790,8 @@ export class AllolibRuntime {
       this.canvas.width = width
       this.canvas.height = height
 
-      // Only update GL viewport if we're running and NOT in WebGPU mode
-      // IMPORTANT: Don't call getContext() before load() - it would create a
-      // WebGL context and prevent WebGPU from working on this canvas
+      // Calling getContext('webgl2') before load() would claim the canvas and
+      // prevent WebGPU from working; skip resize until we're actually running.
       if (this.isRunning) {
         const isWebGPU = !!(this.canvas as any).__isWebGPU
         if (!isWebGPU && (this.canvas as any).__hasGLContext) {
@@ -902,18 +873,15 @@ export class AllolibRuntime {
   }
 
   destroy(): void {
-    // Save module reference before nulling
     const moduleRef = this.module
 
-    // Call stop first while module is still valid
     this.stop()
 
-    // Now null out window.Module to stop Emscripten event handlers
-    // from calling into WASM (they typically check Module before proceeding)
+    // Null window.Module before calling _allolib_destroy so that any Emscripten
+    // event handlers that fire during teardown see an empty Module and bail early.
     this.module = null
-    window.Module = null as any
+    window.Module = null
 
-    // Call destroy on the saved module reference
     if (moduleRef?._allolib_destroy) {
       try {
         moduleRef._allolib_destroy()
@@ -936,48 +904,3 @@ export class AllolibRuntime {
   }
 }
 
-// Audio runtime using Web Audio API
-export class AudioRuntime {
-  private audioContext: AudioContext | null = null
-  private workletNode: AudioWorkletNode | null = null
-  private isRunning = false
-
-  async init(): Promise<void> {
-    this.audioContext = new AudioContext({
-      sampleRate: 44100,
-      latencyHint: 'interactive',
-    })
-  }
-
-  async start(): Promise<void> {
-    if (!this.audioContext) {
-      await this.init()
-    }
-
-    if (this.audioContext?.state === 'suspended') {
-      await this.audioContext.resume()
-    }
-
-    this.isRunning = true
-  }
-
-  stop(): void {
-    if (this.audioContext) {
-      this.audioContext.suspend()
-    }
-    this.isRunning = false
-  }
-
-  destroy(): void {
-    this.stop()
-    if (this.audioContext) {
-      this.audioContext.close()
-      this.audioContext = null
-    }
-    this.workletNode = null
-  }
-
-  get running(): boolean {
-    return this.isRunning
-  }
-}

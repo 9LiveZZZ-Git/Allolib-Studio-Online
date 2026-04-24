@@ -9,7 +9,7 @@
  * - Specific pixel checks
  */
 
-import { VisualExpectation, RGB } from './visual-verification'
+import { VisualExpectation } from './visual-verification'
 
 // ─── Color Constants ──────────────────────────────────────────────────────────
 

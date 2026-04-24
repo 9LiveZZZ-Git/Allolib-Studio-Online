@@ -46,7 +46,6 @@ export interface ExampleCategory {
   subcategories?: { id: string; title: string }[]
 }
 
-// Helper to check if an example is multi-file
 export function isMultiFileExample(example: AnyExample): example is MultiFileExample {
   return 'files' in example
 }
@@ -184,7 +183,7 @@ const gpuCategories: ExampleCategory[] = [
   },
 ]
 
-// Flat list of all categories for backwards compatibility
+// Flat list used by components that don't enumerate categoryGroups directly.
 export const categories: ExampleCategory[] = [
   ...categoryGroups[0].categories,
   ...playgroundCategories,
@@ -13238,12 +13237,10 @@ public:
 // Combined list of all examples (single and multi-file)
 export const allExamples: AnyExample[] = [...examples, ...multiFileExamples, ...studioMultiFileExamples]
 
-// Helper function to get examples by category
 export function getExamplesByCategory(categoryId: string): AnyExample[] {
   return allExamples.filter((e) => e.category === categoryId)
 }
 
-// Helper function to get examples by subcategory
 export function getExamplesBySubcategory(
   categoryId: string,
   subcategoryId: string

@@ -3862,12 +3862,10 @@ if (getBackendType() == BackendType::WebGPU) {
   },
 ]
 
-// Helper function to get entries by category
 export function getEntriesByCategory(categoryId: string): GlossaryEntry[] {
   return glossary.filter(entry => entry.category === categoryId)
 }
 
-// Helper function to search glossary
 export function searchGlossary(query: string): GlossaryEntry[] {
   const lowerQuery = query.toLowerCase()
   return glossary.filter(entry =>
@@ -3877,7 +3875,6 @@ export function searchGlossary(query: string): GlossaryEntry[] {
   )
 }
 
-// Helper function to get related entries
 export function getRelatedEntries(term: string): GlossaryEntry[] {
   const entry = glossary.find(e => e.term === term)
   if (!entry?.relatedTerms) return []

@@ -22,7 +22,7 @@ export interface SequencerNote {
   muted: boolean
 }
 
-// Legacy compat alias
+// SequencerEvent is the old name for SequencerNote; kept so older imports don't break.
 export type SequencerEvent = SequencerNote
 
 // ─── Clip Types ──────────────────────────────────────────────────────────────

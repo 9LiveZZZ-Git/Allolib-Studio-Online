@@ -8,6 +8,23 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // GitHub Pages SPA redirect: decode the path that 404.html encoded as ?p=
+      (function () {
+        var redirect = sessionStorage.redirect;
+        delete sessionStorage.redirect;
+        if (redirect && redirect !== location.href) {
+          history.replaceState(null, null, redirect);
+          return;
+        }
+        // Also handle the ?p= query param set by 404.html
+        var search = location.search;
+        if (search && search.indexOf('?p=') === 0) {
+          var decoded = decodeURIComponent(search.slice(3));
+          history.replaceState(null, null, '/' + decoded);
+        }
+      })();
+    </script>
   </head>
   <body class="bg-editor-bg text-white overflow-hidden">
     <div id="app"></div>

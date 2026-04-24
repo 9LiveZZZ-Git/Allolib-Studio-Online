@@ -62,7 +62,6 @@ function preprocessForWasm(content: string): string {
       result = result.replace(pattern, replacement)
     }
     if (before !== result) {
-      console.log('[Auto-LOD] Transformed g.draw() calls to drawLOD()')
     }
   }
 
@@ -119,11 +118,11 @@ export const useAppStore = defineStore('app', () => {
 
     status.value = 'compiling'
     errorMessage.value = null
-    diagnostics.value = [] // Clear previous diagnostics
+    diagnostics.value = []
     log(`[INFO] Starting compilation... (${files.length} file${files.length > 1 ? 's' : ''})`)
 
     try {
-      // Preprocess files to ensure WebApp classes use WEBAPP_CREATE_APP
+      // Preprocess each .cpp/.hpp file: inject ALLOLIB_WEB_MAIN and apply Auto-LOD transforms.
       const preprocessedFiles = files.map(file => ({
         name: file.name,
         content: file.name.endsWith('.cpp') || file.name.endsWith('.hpp')

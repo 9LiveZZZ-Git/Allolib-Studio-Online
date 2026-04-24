@@ -31,7 +31,7 @@ const MultiFileRequestSchema = z.object({
   backend: BackendSchema,
 })
 
-// Legacy single-file request schema (for backward compatibility)
+// Single-file request schema retained to support older clients and the CLI tool.
 const LegacyRequestSchema = z.object({
   source: z.string().min(1).max(100000),
   filename: z.string().default('main.cpp'),
@@ -54,7 +54,6 @@ compileRouter.post('/', async (req: Request, res: Response) => {
       backend = parsed.backend as BackendType
       logger.info(`Multi-file compilation requested: ${files.length} files, main: ${mainFile}, backend: ${backend}`)
     } else {
-      // Legacy single-file request
       const parsed = LegacyRequestSchema.parse(req.body)
       files = [{ name: parsed.filename, content: parsed.source }]
       mainFile = parsed.filename

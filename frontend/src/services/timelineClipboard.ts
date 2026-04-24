@@ -7,7 +7,7 @@
  * - Audio notes/clips
  */
 
-import { useObjectsStore } from '@/stores/objects'
+import { useObjectsStore, type EasingType } from '@/stores/objects'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useEventsStore, type TimelineEvent, type CameraKeyframe } from '@/stores/events'
 import { useSequencerStore, type SequencerNote, type ClipInstance } from '@/stores/sequencer'
@@ -19,8 +19,8 @@ export type ClipboardDataType = 'keyframes' | 'events' | 'notes' | 'clips'
 
 export interface ClipboardKeyframe {
   time: number
-  value: any
-  easing: string
+  value: number | number[]
+  easing: EasingType
   bezierPoints?: [number, number, number, number]
 }
 
@@ -37,7 +37,7 @@ export interface ClipboardEvent {
   type: TimelineEvent['type']
   time: number
   duration?: number
-  data: any
+  data: unknown
 }
 
 export interface ClipboardEventSet {
@@ -116,7 +116,6 @@ export function copyObjectKeyframes(objectId: string, property: string, times: n
     referenceTime,
   }
 
-  console.log(`[Clipboard] Copied ${selectedKeyframes.length} object keyframes`)
 }
 
 /**
@@ -146,7 +145,6 @@ export function copyEnvironmentKeyframes(property: string, times: number[]): voi
     referenceTime,
   }
 
-  console.log(`[Clipboard] Copied ${selectedKeyframes.length} environment keyframes`)
 }
 
 /**
@@ -169,7 +167,6 @@ export function copyEvents(trackType: 'camera' | 'marker' | 'script', events: Ti
     referenceTime,
   }
 
-  console.log(`[Clipboard] Copied ${events.length} events`)
 }
 
 /**
@@ -194,7 +191,6 @@ export function copyNotes(notes: SequencerNote[]): void {
     referenceTime,
   }
 
-  console.log(`[Clipboard] Copied ${notes.length} notes`)
 }
 
 /**
@@ -215,7 +211,6 @@ export function copyClipInstances(instances: ClipInstance[]): void {
     referenceTime,
   }
 
-  console.log(`[Clipboard] Copied ${instances.length} clip instances`)
 }
 
 // ─── Paste Functions ──────────────────────────────────────────────────────────
@@ -225,7 +220,6 @@ export function copyClipInstances(instances: ClipInstance[]): void {
  */
 export function paste(pasteTime?: number): boolean {
   if (!clipboard) {
-    console.log('[Clipboard] Nothing to paste')
     return false
   }
 
@@ -260,12 +254,11 @@ function pasteKeyframes(data: ClipboardKeyframeSet, targetTime: number): boolean
         data.property,
         targetTime + kf.time,
         kf.value,
-        kf.easing as any,
+        kf.easing,
         kf.bezierPoints
       )
     }
 
-    console.log(`[Clipboard] Pasted ${data.keyframes.length} keyframes to object ${data.objectId}`)
     return true
   } else if (data.source === 'environment') {
     const environmentStore = useEnvironmentStore()
@@ -275,12 +268,11 @@ function pasteKeyframes(data: ClipboardKeyframeSet, targetTime: number): boolean
         data.property,
         targetTime + kf.time,
         kf.value,
-        kf.easing as any,
+        kf.easing,
         kf.bezierPoints
       )
     }
 
-    console.log(`[Clipboard] Pasted ${data.keyframes.length} keyframes to environment`)
     return true
   }
 
@@ -312,7 +304,6 @@ function pasteEvents(data: ClipboardEventSet, targetTime: number): boolean {
     }
   }
 
-  console.log(`[Clipboard] Pasted ${data.events.length} events`)
   return true
 }
 
@@ -320,7 +311,6 @@ function pasteNotes(data: ClipboardNoteSet, targetTime: number): boolean {
   const sequencer = useSequencerStore()
 
   if (!sequencer.activeClipId) {
-    console.log('[Clipboard] No active clip to paste into')
     return false
   }
 
@@ -342,7 +332,6 @@ function pasteNotes(data: ClipboardNoteSet, targetTime: number): boolean {
     }
   }
 
-  console.log(`[Clipboard] Pasted ${data.notes.length} notes`)
   return true
 }
 
@@ -361,7 +350,6 @@ function pasteClipInstances(data: ClipboardClipSet, targetTime: number): boolean
     sequencer.selectClipInstance(inst.id, true)
   }
 
-  console.log(`[Clipboard] Pasted ${data.clips.length} clip instances`)
   return true
 }
 

@@ -17,13 +17,11 @@ import { defaultCode } from '@/utils/monaco-config'
 import { isMultiFileExample, type AnyExample } from '@/data/examples'
 import { wsService } from '@/services/websocket'
 import type { AllolibRuntime } from '@/services/runtime'
-import { parameterSystem } from '@/utils/parameter-system'
 import {
   transpileToWeb,
   transpileToNative,
   formatForExport,
   detectCodeType,
-  getTranspileSummary,
   type TranspileResult
 } from '@/services/transpiler'
 import JSZip from 'jszip'
@@ -408,7 +406,6 @@ onMounted(() => {
   // Load unified project (includes timeline, objects, environment, events)
   if (hasUnifiedProject()) {
     loadUnifiedProject()
-    console.log('[App] Loaded unified project from localStorage')
   } else {
     // Initialize default event tracks
     eventsStore.initDefaults()

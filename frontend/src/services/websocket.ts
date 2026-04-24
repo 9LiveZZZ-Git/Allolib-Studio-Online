@@ -25,8 +25,19 @@ export class WebSocketService {
     if (this.ws?.readyState === WebSocket.OPEN) return
 
     this.intentionallyClosed = false
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws`
+
+    // In production the frontend is on GitHub Pages and backend is on Railway,
+    // so we cannot derive the WS host from window.location.  Use the env var
+    // (VITE_BACKEND_URL = "https://…") and swap the protocol to wss:/ws.
+    const backendUrl = import.meta.env.VITE_BACKEND_URL as string | undefined
+    let url: string
+    if (backendUrl) {
+      const wsBase = backendUrl.replace(/^http/, 'ws')
+      url = `${wsBase}/ws`
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      url = `${protocol}//${window.location.host}/ws`
+    }
 
     try {
       this.ws = new WebSocket(url)
@@ -41,7 +52,8 @@ export class WebSocketService {
           const msg: WsMessage = JSON.parse(event.data)
           this.dispatch(msg.type, msg.payload)
         } catch {
-          // Non-JSON message, ignore
+          // Non-JSON messages are not expected; log at debug level
+          console.debug('[WS] Received non-JSON message, ignoring:', event.data)
         }
       }
 
@@ -55,7 +67,8 @@ export class WebSocketService {
       this.ws.onerror = () => {
         // onclose will fire after onerror, which handles reconnection
       }
-    } catch {
+    } catch (e) {
+      console.error('[WS] Failed to create WebSocket connection:', e)
       this.scheduleReconnect()
     }
   }

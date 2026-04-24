@@ -20,7 +20,7 @@ export interface HistoryEntry {
   timestamp: number
   source: HistorySource
   description: string
-  snapshot: any
+  snapshot: unknown
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -80,40 +80,59 @@ function captureAllSnapshot() {
   }
 }
 
-function applyObjectsSnapshot(snapshot: any) {
+type ObjectsSnapshot = Parameters<ReturnType<typeof useObjectsStore>['fromJSON']>[0]
+type EnvironmentSnapshot = Parameters<ReturnType<typeof useEnvironmentStore>['fromJSON']>[0]
+type EventsSnapshot = Parameters<ReturnType<typeof useEventsStore>['fromJSON']>[0]
+
+function applyObjectsSnapshot(snapshot: unknown) {
   const objectsStore = useObjectsStore()
-  objectsStore.fromJSON(snapshot)
+  objectsStore.fromJSON(snapshot as ObjectsSnapshot)
 }
 
-function applyEnvironmentSnapshot(snapshot: any) {
+function applyEnvironmentSnapshot(snapshot: unknown) {
   const environmentStore = useEnvironmentStore()
-  environmentStore.fromJSON(snapshot)
+  environmentStore.fromJSON(snapshot as EnvironmentSnapshot)
 }
 
-function applyEventsSnapshot(snapshot: any) {
+function applyEventsSnapshot(snapshot: unknown) {
   const eventsStore = useEventsStore()
-  eventsStore.fromJSON(snapshot)
+  eventsStore.fromJSON(snapshot as EventsSnapshot)
 }
 
-function applySequencerSnapshot(snapshot: any) {
+interface SequencerSnapshot {
+  clips?: unknown
+  clipInstances?: unknown
+  arrangementTracks?: unknown
+}
+
+function applySequencerSnapshot(snapshot: unknown) {
   const sequencerStore = useSequencerStore()
+  const s = snapshot as SequencerSnapshot
   // The sequencer store doesn't have direct setters, so we need to do this carefully
-  if (snapshot.clips) {
-    ;(sequencerStore as any).clips = snapshot.clips
+  if (s.clips) {
+    ;(sequencerStore as Record<string, unknown>).clips = s.clips
   }
-  if (snapshot.clipInstances) {
-    ;(sequencerStore as any).clipInstances = snapshot.clipInstances
+  if (s.clipInstances) {
+    ;(sequencerStore as Record<string, unknown>).clipInstances = s.clipInstances
   }
-  if (snapshot.arrangementTracks) {
-    ;(sequencerStore as any).arrangementTracks = snapshot.arrangementTracks
+  if (s.arrangementTracks) {
+    ;(sequencerStore as Record<string, unknown>).arrangementTracks = s.arrangementTracks
   }
 }
 
-function applyAllSnapshot(snapshot: any) {
-  if (snapshot.objects) applyObjectsSnapshot(snapshot.objects)
-  if (snapshot.environment) applyEnvironmentSnapshot(snapshot.environment)
-  if (snapshot.events) applyEventsSnapshot(snapshot.events)
-  if (snapshot.sequencer) applySequencerSnapshot(snapshot.sequencer)
+interface AllSnapshot {
+  objects?: unknown
+  environment?: unknown
+  events?: unknown
+  sequencer?: unknown
+}
+
+function applyAllSnapshot(snapshot: unknown) {
+  const s = snapshot as AllSnapshot
+  if (s.objects) applyObjectsSnapshot(s.objects)
+  if (s.environment) applyEnvironmentSnapshot(s.environment)
+  if (s.events) applyEventsSnapshot(s.events)
+  if (s.sequencer) applySequencerSnapshot(s.sequencer)
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -124,7 +143,7 @@ function applyAllSnapshot(snapshot: any) {
 export function pushUndo(source: HistorySource, description: string): void {
   if (isPerformingUndoRedo.value) return
 
-  let snapshot: any
+  let snapshot: unknown
   switch (source) {
     case 'objects':
       snapshot = captureObjectsSnapshot()
@@ -161,7 +180,6 @@ export function pushUndo(source: HistorySource, description: string): void {
   // Clear redo stack on new action
   redoStack.value = []
 
-  console.log(`[History] Pushed: ${description} (${source})`)
 }
 
 /**
@@ -176,7 +194,7 @@ export function undo(): boolean {
     const entry = undoStack.value.pop()!
 
     // Capture current state for redo
-    let currentSnapshot: any
+    let currentSnapshot: unknown
     switch (entry.source) {
       case 'objects':
         currentSnapshot = captureObjectsSnapshot()
@@ -220,7 +238,6 @@ export function undo(): boolean {
         break
     }
 
-    console.log(`[History] Undo: ${entry.description}`)
     return true
   } finally {
     isPerformingUndoRedo.value = false
@@ -239,7 +256,7 @@ export function redo(): boolean {
     const entry = redoStack.value.pop()!
 
     // Capture current state for undo
-    let currentSnapshot: any
+    let currentSnapshot: unknown
     switch (entry.source) {
       case 'objects':
         currentSnapshot = captureObjectsSnapshot()
@@ -283,7 +300,6 @@ export function redo(): boolean {
         break
     }
 
-    console.log(`[History] Redo: ${entry.description}`)
     return true
   } finally {
     isPerformingUndoRedo.value = false
@@ -296,7 +312,6 @@ export function redo(): boolean {
 export function clearHistory(): void {
   undoStack.value = []
   redoStack.value = []
-  console.log('[History] Cleared')
 }
 
 /**

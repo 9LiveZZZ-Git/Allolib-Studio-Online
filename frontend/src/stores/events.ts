@@ -12,6 +12,10 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { type EasingType, applyEasing } from '@/composables/useKeyframes'
+
+// Re-export so consumers that import EasingType from this module continue to work
+export type { EasingType }
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
 
@@ -60,7 +64,7 @@ export interface SpawnEvent extends BaseEvent {
   objectId: string
   objectType: string
   position?: [number, number, number]
-  properties?: Record<string, any>
+  properties?: Record<string, number | number[] | boolean | string>
 }
 
 export interface DestroyEvent extends BaseEvent {
@@ -73,19 +77,19 @@ export interface SetEvent extends BaseEvent {
   target: 'object' | 'environment' | 'audio'
   targetId?: string
   property: string
-  value: any
+  value: number | number[] | boolean | string
 }
 
 export interface EmitEvent extends BaseEvent {
   type: 'emit'
   eventName: string
-  data?: any
+  data?: unknown
 }
 
 export interface ScriptEvent extends BaseEvent {
   type: 'script'
   code: string
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 }
 
 export type TimelineEvent = CameraEvent | MarkerEvent | SpawnEvent | DestroyEvent | SetEvent | EmitEvent | ScriptEvent
@@ -103,12 +107,6 @@ export interface EventTrack {
   locked: boolean
   events: TimelineEvent[]
 }
-
-// ─── Easing Types ────────────────────────────────────────────────────────────
-
-export type EasingType =
-  | 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
-  | 'easeOutBack' | 'bounce' | 'elastic' | 'step' | 'bezier'
 
 // ─── Store Definition ────────────────────────────────────────────────────────
 
@@ -128,7 +126,7 @@ export const useEventsStore = defineStore('events', () => {
   })
 
   // Custom event listeners (for non-linear events)
-  const listeners = ref<Map<string, Array<(data: any) => void>>>(new Map())
+  const listeners = ref<Map<string, Array<(data: unknown) => void>>>(new Map())
 
   // ─── Computed ──────────────────────────────────────────────────────────────
 
@@ -389,14 +387,14 @@ export const useEventsStore = defineStore('events', () => {
 
   // ─── Custom Event System ───────────────────────────────────────────────────
 
-  function on(eventName: string, callback: (data: any) => void): void {
+  function on(eventName: string, callback: (data: unknown) => void): void {
     if (!listeners.value.has(eventName)) {
       listeners.value.set(eventName, [])
     }
     listeners.value.get(eventName)!.push(callback)
   }
 
-  function off(eventName: string, callback: (data: any) => void): void {
+  function off(eventName: string, callback: (data: unknown) => void): void {
     const list = listeners.value.get(eventName)
     if (list) {
       const index = list.indexOf(callback)
@@ -406,7 +404,7 @@ export const useEventsStore = defineStore('events', () => {
     }
   }
 
-  function emit(eventName: string, data?: any): void {
+  function emit(eventName: string, data?: unknown): void {
     const list = listeners.value.get(eventName)
     if (list) {
       for (const callback of list) {
@@ -534,61 +532,7 @@ function lerpOptional(a: number | undefined, b: number | undefined, t: number): 
   return lerp(a, b, t)
 }
 
-function applyEasing(t: number, easing: EasingType, bezierPoints?: [number, number, number, number]): number {
-  switch (easing) {
-    case 'linear': return t
-    case 'easeIn': return t * t
-    case 'easeOut': return 1 - (1 - t) * (1 - t)
-    case 'easeInOut': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-    case 'easeOutBack': {
-      const c1 = 1.70158
-      const c3 = c1 + 1
-      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
-    }
-    case 'bounce': {
-      const n1 = 7.5625, d1 = 2.75
-      if (t < 1 / d1) return n1 * t * t
-      if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75
-      if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375
-      return n1 * (t -= 2.625 / d1) * t + 0.984375
-    }
-    case 'elastic': {
-      const c4 = (2 * Math.PI) / 3
-      return t === 0 ? 0 : t === 1 ? 1
-        : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1
-    }
-    case 'step': return t < 1 ? 0 : 1
-    case 'bezier': {
-      if (bezierPoints) {
-        return bezierEase(t, bezierPoints)
-      }
-      return t
-    }
-    default: return t
-  }
-}
-
-function bezierEase(t: number, points: [number, number, number, number]): number {
-  const [x1, y1, x2, y2] = points
-  let guessT = t
-  for (let i = 0; i < 8; i++) {
-    const currentX = cubicBezier(guessT, 0, x1, x2, 1)
-    const slope = cubicBezierDerivative(guessT, 0, x1, x2, 1)
-    if (Math.abs(slope) < 1e-6) break
-    guessT -= (currentX - t) / slope
-  }
-  return cubicBezier(guessT, 0, y1, y2, 1)
-}
-
-function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
-  const mt = 1 - t
-  return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3
-}
-
-function cubicBezierDerivative(t: number, p0: number, p1: number, p2: number, p3: number): number {
-  const mt = 1 - t
-  return 3 * mt * mt * (p1 - p0) + 6 * mt * t * (p2 - p1) + 3 * t * t * (p3 - p2)
-}
+// applyEasing is imported from @/composables/useKeyframes
 
 // Register on window for terminal access
 if (typeof window !== 'undefined') {

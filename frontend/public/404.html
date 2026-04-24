@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AlloLib Studio Online</title>
+    <script>
+      // GitHub Pages SPA redirect trick.
+      // When GitHub Pages serves a 404 for any sub-path, this page captures
+      // the full URL, encodes the path + query + hash as a query parameter,
+      // and immediately redirects to the repo root so index.html can decode it.
+      var l = window.location;
+      l.replace(
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        l.pathname.split('/').slice(0, 2).join('/') +
+        '/?p=' + encodeURIComponent(
+          l.pathname.slice(1) + (l.search ? '&' + l.search.slice(1) : '') + l.hash
+        )
+      );
+    </script>
+  </head>
+  <body>Redirecting&hellip;</body>
+</html>

@@ -217,7 +217,6 @@ function handleAddKeyframe(param: Parameter) {
       if (objectsStore && param.sourceId) {
         objectsStore.addKeyframe(param.sourceId, param.name, currentTime.value, value)
         param.hasKeyframes = true
-        console.log(`[ParameterPanel] Added keyframe: ${param.sourceId}.${param.name} @ ${currentTime.value}s`)
       }
       break
 
@@ -226,7 +225,6 @@ function handleAddKeyframe(param: Parameter) {
       if (envStore) {
         envStore.addKeyframe(param.name, currentTime.value, value)
         param.hasKeyframes = true
-        console.log(`[ParameterPanel] Added keyframe: env.${param.name} @ ${currentTime.value}s`)
       }
       break
 
@@ -236,13 +234,11 @@ function handleAddKeyframe(param: Parameter) {
       if (envStore2) {
         envStore2.addKeyframe(`camera.${param.name}`, currentTime.value, value)
         param.hasKeyframes = true
-        console.log(`[ParameterPanel] Added keyframe: camera.${param.name} @ ${currentTime.value}s`)
       }
       break
 
     case 'synth':
       // Synth params don't support keyframes (they use .synthSequence)
-      console.log(`[ParameterPanel] Synth params use .synthSequence for automation`)
       break
   }
 

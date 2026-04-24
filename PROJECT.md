@@ -572,12 +572,12 @@ _al_obj_delete(const char* id)
 | 4 | Cubemaps/Skybox | ~350 | 8 | ✅ COMPLETE |
 | 5 | WebPBR | ~300 | 12 | ✅ COMPLETE |
 | 6 | WebEnvironment/HDRI | ~400 | 6 | ✅ COMPLETE |
-| 7 | ProceduralTexture | ~100 | 4 | Pending |
-| 8 | LOD System | ~50 | 4 | Pending |
+| 7 | ProceduralTexture | ~100 | 4 | ✅ COMPLETE (via Phase 1 bridge) |
+| 8 | LOD System | ~50 | 4 | ✅ COMPLETE (backend-agnostic) |
 
 ---
 
-## Layer 5: Examples Catalog (107)
+## Layer 5: Examples Catalog (155)
 
 ### AlloLib Core Examples
 - **Basics (9)**: Hello Sphere, Hello Audio, Hello Audio-Visual, Shape Gallery, Custom Mesh, HSV Colors, Vertex Colors
@@ -622,9 +622,11 @@ _al_obj_delete(const char* id)
 - Custom shaders must be rewritten per backend
 - No SharedArrayBuffer by default (requires COOP/COEP headers)
 - Max 8 lights in WebGPU lighting shader
-- EasyFBO not yet ported to WebGPU
 - WASM memory cannot shrink, only grow
 - Audio requires user gesture to start (browser policy)
+- Events track keyframes not yet wired to EventsStore (addKeyframe/removeKeyframe not exposed)
+- WebGPU mipmap generation via compute not yet implemented (uses single-level mipmaps)
+- 3D textures and HDR textures not yet ported to WebGPU
 
 ### Gotchas
 - `TRIANGLE_FAN`/`LINE_LOOP` converted to triangles/lines for WebGPU
@@ -720,10 +722,13 @@ _al_obj_delete(const char* id)
 |------|---------|
 | `e2e/rendering-tests.spec.ts` | WebGL2/WebGPU rendering verification |
 | `e2e/visual-regression.spec.ts` | Screenshot comparison tests |
-| `e2e/webgpu-features.spec.ts` | WebGPU Phase 1-2 feature tests (18 tests) |
-| `e2e/example-compatibility.spec.ts` | Tests all 107 examples compile |
+| `e2e/webgpu-features.spec.ts` | WebGPU Phase 1-8 feature tests |
+| `e2e/comprehensive-functional-tests.spec.ts` | All 155 examples × 2 backends (100% pass) |
+| `e2e/true-functional-tests.spec.ts` | 13 focused interaction/animation tests |
+| `e2e/enhanced-functional-tests.spec.ts` | Visual expectation verification with baselines |
+| `e2e/visual-verification.ts` | Baseline management, color analysis utilities |
+| `e2e/visual-expectations.ts` | Per-example visual expectation definitions |
 | `scripts/test-compilation.ts` | Headless compilation test suite |
-| `scripts/test-all-examples.ts` | Batch example compilation verification |
 | `playwright.config.ts` | Playwright test configuration |
 
 ---
@@ -847,157 +852,6 @@ WebGPU requires the **DirectX Shader Compiler (DXC)** for device creation:
 
 ---
 
-## Layer 10: Recent Session Work Log
-
-### Session: 2026-02-02 - Test Infrastructure Fixes
-
-**Goal:** Fix E2E tests that weren't working and configure parallel execution.
-
-#### Problems Found & Fixed
-
-1. **Button selector matching 11 elements**
-   - **Cause:** Collapsible sections used "▶" text, matching generic button selector
-   - **Fix:** Added `data-testid="run-button"` to Toolbar.vue, updated tests to use `.first()`
-
-2. **Code not being set in Monaco editor**
-   - **Cause:** Pinia stores loading old project from localStorage
-   - **Fix:** Tests now clear localStorage before setting code:
-     ```typescript
-     await page.evaluate(() => {
-       localStorage.removeItem('allolib-project')
-       localStorage.removeItem('allolib-code')
-       localStorage.removeItem('unified-project')
-     })
-     ```
-
-3. **Test C++ code had wrong API**
-   - **Cause:** Tests used `addSphere(mesh, radius)` but WebApp API is `addSphere(mesh, radius, slices, stacks)`
-   - **Fix:** Updated all test code to use correct signature
-
-4. **WASM function signature mismatch runtime error**
-   - **Cause:** `_allolib_configure_backend` missing from EXPORTED_FUNCTIONS in compile.sh
-   - **Fix:** Added to compile.sh:
-     ```bash
-     -sEXPORTED_FUNCTIONS="[...'_allolib_configure_backend',...
-       '_al_seq_trigger_on','_al_seq_trigger_off','_al_seq_set_param','_al_seq_get_voice_count']"
-     ```
-
-5. **WebGPU device creation failed (Windows)**
-   - **Cause:** Missing dxil.dll required by Chrome/Edge for WebGPU
-   - **Fix:** Downloaded DXC, added to `C:\Allolib Studio Online\bin\`, added to PATH
-
-#### Files Modified
-
-| File | Changes |
-|------|---------|
-| `tests/playwright.config.ts` | Enabled parallel (3 workers), increased timeout |
-| `tests/e2e/rendering-tests.spec.ts` | Fixed selectors, localStorage clearing, partial success handling |
-| `tests/e2e/visual-regression.spec.ts` | Fixed button selector |
-| `tests/e2e/example-compatibility.spec.ts` | Fixed selectors |
-| `frontend/src/components/Toolbar.vue` | Added `data-testid="run-button"` |
-| `frontend/src/components/ViewerPane.vue` | Added `data-testid="canvas"` |
-| `frontend/src/components/Console.vue` | Added `data-testid="console-output"` |
-| `backend/docker/compile.sh` | Added missing WASM exports |
-
-#### Current Test Status (2026-02-03)
-
-| Test Suite | Status |
-|------------|--------|
-| Example Compatibility | ✅ 100% pass (WebGL2) |
-| WebGL2 Rendering | ✅ 17/17 passing |
-| WebGPU Rendering | ✅ Tests properly skip in headless (requires headed mode with GPU) |
-| Visual Regression | ✅ All 5 baselines generated and passing |
-| Performance Benchmarks | ✅ Compile time ~8.8s avg, 60 FPS |
-
-### Session: 2026-02-03 - WebGL2 Rendering Fix & Test Infrastructure
-
-**Goal:** Fix WebGL2 rendering tests that were only showing background color (no geometry).
-
-#### Root Cause Found & Fixed
-
-1. **"function signature mismatch" WASM exception**
-   - **Root cause:** GLAD's `glClearDepthf` function pointer was NULL in Emscripten
-   - **Why:** `eglGetProcAddress` doesn't properly load WebGL2 functions in WASM
-   - **Fix:** Bypass GLAD and use Emscripten's direct GL functions:
-     ```cpp
-     // In al_OpenGL_Web.cpp
-     extern "C" {
-         void emscripten_glClearDepthf(float d);
-         void emscripten_glClearColor(float r, float g, float b, float a);
-         void emscripten_glClear(unsigned int mask);
-     }
-
-     void clearDepth(float d) {
-       #ifdef __EMSCRIPTEN__
-         emscripten_glClearDepthf(d);
-         emscripten_glClear(GL_DEPTH_BUFFER_BIT);
-       #else
-         glClearDepthf(d);
-         glClear(GL_DEPTH_BUFFER_BIT);
-       #endif
-     }
-     ```
-
-2. **WebGPU tests failing in headless mode**
-   - **Cause:** WebGPU requires headed mode with real GPU access
-   - **Fix:** Added `headless: false` to chromium-webgpu project, proper skip conditions
-
-3. **Visual regression tests capturing corrupted images**
-   - **Cause:** Playwright's `element.screenshot()` doesn't capture WebGL canvas properly
-   - **Fix:** Use `canvas.toDataURL()` for proper WebGL content capture
-
-4. **Visual regression test code not compiling**
-   - **Cause:** Tests used `int main() { MyApp().start(); }` instead of `ALLOLIB_WEB_MAIN(MyApp)`
-   - **Fix:** Updated all test cases to use correct macro
-
-#### Files Modified
-
-| File | Changes |
-|------|---------|
-| `allolib-wasm/src/al_OpenGL_Web.cpp` | Bypass GLAD for Emscripten GL calls |
-| `tests/e2e/rendering-tests.spec.ts` | WebGPU skip conditions, timeout fixes |
-| `tests/e2e/visual-regression.spec.ts` | toDataURL capture, ALLOLIB_WEB_MAIN macro |
-| `tests/playwright.config.ts` | DXC path, headless:false for WebGPU |
-| `webgpu-full-compatibility-plan.md` | Marked lighting as needs redo |
-
-#### Next Steps
-
-1. **Implement EasyFBO** - Phase 3 of WebGPU compatibility
-2. **Add more visual regression test cases**
-
-### Session: 2026-02-03 - WebGPU Phase 2 Lighting Tests Fixed
-
-**Goal:** Fix failing WebGPU lighting tests (5/5 failing).
-
-#### Root Cause Found & Fixed
-
-1. **Test canvas capture not working for WebGPU**
-   - **Root cause:** `canvas.toDataURL()` returns empty for WebGPU canvases (WebGPU doesn't have `preserveDrawingBuffer` like WebGL)
-   - **Symptom:** Tests reported `hasContent: false` even though screenshots showed correct rendering
-   - **Fix:** Changed `analyzeCanvas()` to use Playwright's native `locator.screenshot()` which captures actual rendered pixels
-   - Added `pngjs` dependency for PNG parsing in tests
-
-2. **Comparison test threshold too strict**
-   - **Cause:** WebGL2 vs WebGPU color ratio threshold was 50%, but backends produce slightly different shading
-   - **Fix:** Relaxed threshold to 30% minimum (both backends rendering correctly, just with natural differences)
-
-#### Files Modified
-
-| File | Changes |
-|------|---------|
-| `tests/e2e/webgpu-features.spec.ts` | New analyzeCanvas using Playwright screenshot + pngjs |
-| `tests/package.json` | Added pngjs dependency |
-
-#### Test Results After Fix
-
-| Test Suite | Status |
-|------------|--------|
-| WebGPU Feature Tests (Phase 1 + 2) | ✅ 18/18 passing |
-| WebGL2 Rendering Tests | ✅ 10/10 passing |
-| Visual Regression Tests | ✅ 6/6 passing |
-
----
-
 ## Verification Notes
 
 - **Checked**: All paths exist in `git ls-files` output
@@ -1007,5 +861,6 @@ WebGPU requires the **DirectX Shader Compiler (DXC)** for device creation:
 - **Components**: 46 Vue components
 - **Services**: 11+ frontend services
 - **WASM headers**: 43 header patches
-- **Examples**: 107 examples in catalog
-- **Last updated**: 2026-02-03 (WebGPU Phase 2 lighting tests complete)
+- **Examples**: 155 examples in catalog (WebGL2 + WebGPU backends tested)
+- **Test coverage**: 155 examples × 2 backends = 310 tests, 100% compile + render pass rate
+- **Last updated**: 2026-04-23

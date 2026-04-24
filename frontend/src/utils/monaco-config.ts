@@ -7,7 +7,7 @@ import {
   getSignatureHelp,
 } from './allolib-types'
 
-// AlloLib-specific C++ snippets
+// AlloLib-specific C++ snippets — range is set by the provider at registration time
 export const allolibSnippets: monaco.languages.CompletionItem[] = [
   {
     label: 'allolib-app',
@@ -36,7 +36,7 @@ public:
 ALLOLIB_WEB_MAIN(MyApp)`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Basic AlloLib Web application template',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'mesh-sphere',
@@ -46,7 +46,7 @@ al::addSphere(mesh, \${1:1.0}, \${2:32}, \${3:32});
 mesh.generateNormals();`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create a sphere mesh',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'mesh-cube',
@@ -56,7 +56,7 @@ al::addCube(mesh, \${1:1.0});
 mesh.generateNormals();`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create a cube mesh',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'sine-osc',
@@ -64,7 +64,7 @@ mesh.generateNormals();`,
     insertText: `gam::Sine<> osc{\${1:440.0}};`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create a sine oscillator',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'adsr-env',
@@ -77,7 +77,7 @@ mesh.generateNormals();`,
 };`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create an ADSR envelope',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'nav3d',
@@ -86,7 +86,7 @@ mesh.generateNormals();`,
 nav().faceToward(Vec3f(\${4:0}, \${5:0}, \${6:0}));`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Set up 3D navigation/camera',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'color-hsv',
@@ -94,7 +94,7 @@ nav().faceToward(Vec3f(\${4:0}, \${5:0}, \${6:0}));`,
     insertText: `Color color = HSV(\${1:0.5}, \${2:1.0}, \${3:1.0});`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Create color from HSV values',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'shader-basic',
@@ -116,7 +116,7 @@ shader.compile(R"(
 )");`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Basic shader program',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   // Scene System Snippets
   {
@@ -144,7 +144,7 @@ struct \${1:SineVoice} : SynthVoice {
 };`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'SynthVoice template for polyphonic synthesis',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'polysynth',
@@ -166,7 +166,7 @@ voice->setFreq(440.0f);
 synth.triggerOn(voice);`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'PolySynth setup for polyphonic voice management',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
   {
     label: 'stereopanner',
@@ -179,7 +179,7 @@ io.out(0) += sample * leftGain;
 io.out(1) += sample * rightGain;`,
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     documentation: 'Simple stereo panning (equal power)',
-    range: undefined as any,
+    range: undefined as unknown as monaco.IRange,
   },
 ]
 

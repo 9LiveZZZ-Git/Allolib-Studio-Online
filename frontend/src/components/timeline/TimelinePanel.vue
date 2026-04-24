@@ -421,7 +421,6 @@ watch(() => objectsStore.selectedObjectId, (objectId) => {
     }
     // Notify parameter system that an object is selected
     parameterSystem.setSelectedObject(objectId)
-    console.log(`[Timeline] Object selected: ${objectId}`)
   } else {
     parameterSystem.setSelectedObject(null)
   }
@@ -479,7 +478,6 @@ function handleDeleteObject(objectId: string) {
   parameterSystem.unregisterObject(objectId)
   // Remove from objects store
   objectsStore.deleteObject(objectId)
-  console.log(`[Timeline] Deleted object: ${objectId}`)
 }
 
 function handleAddEvent(trackId: string, time: number) {
@@ -507,7 +505,6 @@ function handleAddEvent(trackId: string, time: number) {
 function onObjectCreated(object: SceneObject) {
   // Select the newly created object
   objectsStore.selectObject(object.id)
-  console.log(`[Timeline] Created object: ${object.name}`)
 }
 
 function openEnvironmentCurveEditor(property: string, time: number) {
@@ -822,21 +819,6 @@ function saveEnvironmentCurve(bezierPoints: [number, number, number, number]) {
   color: #9F7AEA;
 }
 
-.snap-select {
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.snap-select:focus {
-  outline: none;
-  border-color: rgba(159, 122, 234, 0.5);
-}
-
 .lattice-popup-content {
   flex: 1;
   overflow: hidden;
@@ -894,7 +876,4 @@ function saveEnvironmentCurve(bezierPoints: [number, number, number, number]) {
   accent-color: #9F7AEA;
 }
 
-.flex-1 {
-  flex: 1;
-}
 </style>

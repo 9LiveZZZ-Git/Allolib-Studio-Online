@@ -11,26 +11,36 @@ import { initWsManager } from './services/ws-manager.js'
 const app = express()
 const PORT = process.env.PORT || 4000
 
-// Middleware
 app.use(helmet())
-app.use(cors())
+
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://9livezzz-git.github.io',
+]
+
+if (process.env.CORS_ORIGIN) {
+  allowedOrigins.push(process.env.CORS_ORIGIN)
+}
+
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? allowedOrigins
+    : true, // allow all origins in development
+  credentials: true,
+}))
+
 app.use(express.json({ limit: '1mb' }))
 
-// Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-// API routes
 app.use('/api/compile', compileRouter)
 
-// Create HTTP server
 const server = createServer(app)
 
-// WebSocket server for real-time compilation updates
+// WebSocket at /ws streams compile output lines to the frontend in real time.
 const wss = new WebSocketServer({ server, path: '/ws' })
-
-// Initialize WebSocket manager for broadcast support
 initWsManager(wss)
 
 wss.on('connection', (ws) => {

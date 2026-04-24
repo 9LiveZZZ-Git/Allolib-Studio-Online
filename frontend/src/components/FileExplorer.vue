@@ -182,7 +182,6 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
     targetPath = folderPath ? `${folderPath}/${fileName}` : fileName
     projectStore.addOrUpdateFile(targetPath, asset.content)
     projectStore.setActiveFile(targetPath)
-    console.log(`[FileExplorer] Added file from asset: ${targetPath}`)
   }
   else if (asset.type === 'object' && asset.objectDefinition) {
     // Objects go to 'objects/' folder
@@ -193,7 +192,6 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
     const fileName = `${asset.id}.object.json`
     targetPath = `${objFolder}/${fileName}`
     projectStore.addOrUpdateFile(targetPath, JSON.stringify(asset.objectDefinition, null, 2))
-    console.log(`[FileExplorer] Added object from asset: ${targetPath}`)
   }
   else if (asset.type === 'shader' && asset.content) {
     // Shaders go to 'shaders/' folder
@@ -204,7 +202,6 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
     const fileName = asset.name.replace(/\s+/g, '_').toLowerCase() + '.glsl'
     targetPath = `${shaderFolder}/${fileName}`
     projectStore.addOrUpdateFile(targetPath, asset.content)
-    console.log(`[FileExplorer] Added shader from asset: ${targetPath}`)
   }
   else if (asset.type === 'snippet' && asset.content) {
     // For snippets dropped on a file, create a new file with the snippet
@@ -214,7 +211,6 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
     const content = `// ${asset.name}\n// ${asset.description}\n\n${asset.content}\n`
     projectStore.addOrUpdateFile(targetPath, content)
     projectStore.setActiveFile(targetPath)
-    console.log(`[FileExplorer] Added snippet as file: ${targetPath}`)
   }
 }
 </script>

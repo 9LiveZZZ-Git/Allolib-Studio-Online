@@ -115,7 +115,6 @@ watch(() => props.jsUrl, async (newUrl) => {
     try {
       // Cleanup previous runtime
       if (runtime) {
-        console.log('[ViewerPane] Destroying previous runtime')
         runtime.destroy()
         runtime = null
         runtimeRef.value = null
@@ -148,7 +147,6 @@ watch(() => props.jsUrl, async (newUrl) => {
       // Update canvas ref in case it was replaced (WebGPU mode)
       const currentCanvas = runtime.getCanvas()
       if (currentCanvas !== canvasRef.value) {
-        console.log('[ViewerPane] Canvas was replaced, updating ref')
         canvasRef.value = currentCanvas
       }
 
@@ -160,25 +158,22 @@ watch(() => props.jsUrl, async (newUrl) => {
   }
 })
 
-// Helper to destroy runtime safely (prevents double-destroy)
+// Guards against double-destroy (runtime is nulled immediately so a second call is a no-op)
 function destroyRuntime(reason: string) {
   if (runtime) {
-    console.log(`[ViewerPane] ${reason}, destroying runtime`)
     runtime.destroy()
     runtime = null
     runtimeRef.value = null
   }
 }
 
-// Watch for stop - trigger on status change to idle OR jsUrl becoming null
-// Use destroy() for full runtime termination (stops WASM rendering loop completely)
+// destroy() (not stop()) terminates the Emscripten render loop and closes the audio context.
 watch(() => props.status, (newStatus, oldStatus) => {
   if (newStatus === 'idle' && oldStatus === 'running') {
     destroyRuntime('Status changed from running to idle')
   }
 })
 
-// Also watch jsUrl - when it becomes null, stop the runtime
 watch(() => props.jsUrl, (newUrl, oldUrl) => {
   if (newUrl === null && oldUrl !== null) {
     destroyRuntime('jsUrl cleared')

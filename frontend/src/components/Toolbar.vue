@@ -6,11 +6,7 @@ import {
   categoryGroups,
   allExamples,
   getExamplesBySubcategory,
-  isMultiFileExample,
   type AnyExample,
-  type ExampleCategory,
-  type MultiFileExample,
-  type Example
 } from '@/data/examples'
 import {
   glossary,
@@ -20,7 +16,7 @@ import {
   type GlossaryEntry
 } from '@/data/glossary'
 import ExampleDialog from './ExampleDialog.vue'
-import { downloadProject, importProjectFile, newProject } from '@/services/unifiedProject'
+import { downloadProject, importProjectFile } from '@/services/unifiedProject'
 
 const props = defineProps<{
   status: AppStatus
@@ -174,7 +170,6 @@ checkWebGPUAvailability()
 
 function handleBackendChange() {
   const backend = settings.graphics.backendType
-  console.log('[Settings] Backend changed to:', backend)
 
   // Track if backend was changed from initial value
   backendChanged.value = backend !== initialBackendType.value
@@ -189,7 +184,6 @@ function handleBackendChange() {
     w.allolib.setBackendType(backend)
   } else {
     // Show a notification that reload is required
-    console.log('[Settings] Backend change will take effect on next compile/run')
   }
 }
 

@@ -10,7 +10,6 @@ import { ConsoleMessage } from '@playwright/test'
 
 // Test configuration
 const BASE_URL = process.env.TEST_URL || 'http://localhost:3000'
-const BACKEND_API = process.env.BACKEND_URL || 'http://localhost:4000'
 const COMPILE_TIMEOUT = 60000 // 60s for compilation
 const RENDER_TIMEOUT = 10000  // 10s for rendering to stabilize
 
