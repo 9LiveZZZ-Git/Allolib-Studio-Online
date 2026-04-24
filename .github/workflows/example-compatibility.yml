@@ -70,9 +70,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            tests/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Count Examples
         id: count
@@ -109,34 +107,28 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
-            tests/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install Dependencies
+      - name: Install Dependencies (root workspaces + tests)
         run: |
-          cd frontend && npm ci
-          cd ../backend && npm ci
-          cd ../tests && npm ci
+          npm ci
+          cd tests && npm ci
 
       - name: Install Playwright
         working-directory: tests
         run: npx playwright install chromium --with-deps
 
       - name: Start Backend
-        working-directory: backend
         run: |
-          npm run dev &
+          npm run dev:backend &
           sleep 10
         env:
           REDIS_URL: redis://localhost:6379
           PORT: 4000
 
       - name: Start Frontend
-        working-directory: frontend
         run: |
-          npm run dev &
+          npm run dev:frontend &
           sleep 10
 
       - name: Wait for Services
@@ -192,12 +184,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
-      - name: Install Dependencies
+      - name: Install Dependencies (root workspaces + tests)
         run: |
-          cd frontend && npm ci
-          cd ../backend && npm ci
-          cd ../tests && npm ci
+          npm ci
+          cd tests && npm ci
 
       - name: Install Playwright
         working-directory: tests
@@ -205,8 +198,8 @@ jobs:
 
       - name: Start Services
         run: |
-          cd backend && npm run dev &
-          cd frontend && npm run dev &
+          npm run dev:backend &
+          npm run dev:frontend &
           sleep 15
         env:
           REDIS_URL: redis://localhost:6379

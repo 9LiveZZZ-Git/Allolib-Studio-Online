@@ -62,22 +62,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install Frontend Dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Install Backend Dependencies
-        working-directory: backend
+      - name: Install Dependencies (workspaces)
         run: npm ci
 
       - name: Build Frontend
         id: build
-        working-directory: frontend
-        run: npm run build
+        run: npm run build:frontend
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
@@ -117,10 +109,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
-            tests/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
@@ -128,29 +117,26 @@ jobs:
           name: frontend-build
           path: frontend/dist
 
-      - name: Install Dependencies
+      - name: Install Dependencies (root workspaces + tests)
         run: |
-          cd frontend && npm ci
-          cd ../backend && npm ci
-          cd ../tests && npm ci
+          npm ci
+          cd tests && npm ci
 
       - name: Install Playwright Browsers
         working-directory: tests
         run: npx playwright install chromium firefox --with-deps
 
       - name: Start Backend
-        working-directory: backend
         run: |
-          npm run dev &
+          npm run dev:backend &
           sleep 5
         env:
           REDIS_URL: redis://localhost:6379
           PORT: 4000
 
       - name: Start Frontend (Preview)
-        working-directory: frontend
         run: |
-          npm run preview &
+          npm run preview:frontend &
           sleep 5
 
       - name: Run WebGL2 Tests
@@ -206,7 +192,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: tests/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
@@ -214,11 +200,10 @@ jobs:
           name: frontend-build
           path: frontend/dist
 
-      - name: Install Dependencies
+      - name: Install Dependencies (root workspaces + tests)
         run: |
-          cd frontend && npm ci
-          cd ../backend && npm ci
-          cd ../tests && npm ci
+          npm ci
+          cd tests && npm ci
 
       - name: Install Playwright (Chromium with WebGPU)
         working-directory: tests
@@ -226,8 +211,8 @@ jobs:
 
       - name: Start Services
         run: |
-          cd backend && npm run dev &
-          cd frontend && npm run preview &
+          npm run dev:backend &
+          npm run preview:frontend &
           sleep 10
         env:
           REDIS_URL: redis://localhost:6379
@@ -281,16 +266,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
-      - name: Install Backend
-        working-directory: backend
-        run: npm ci
+      - name: Install Dependencies (root workspaces + tests)
+        run: |
+          npm ci
+          cd tests && npm ci
 
       - name: Run Compilation Tests
         working-directory: tests
-        run: |
-          npm ci
-          npm run test:compilation
+        run: npm run test:compilation
         env:
           REDIS_URL: redis://localhost:6379
 
