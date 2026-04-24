@@ -788,10 +788,29 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeyDown)
 })
 
-// Redraw when store data changes
-watch(() => [sequencer.allEvents, sequencer.editMode, sequencer.viewMode, sequencer.activeClip], () => {
-  requestDraw()
-}, { deep: true })
+// Redraw when store data changes.
+// Canvas renders each event using id + startTime + duration + frequency +
+// muted + selected (event loop on line 204 and hit-test on line 88-98). It
+// reads activeClip.color (line 203) and activeClip.duration (line 379) but
+// nothing else from the clip. A deep watcher on allEvents previously fired
+// for every nested mutation (amplitude edits, synth rename, params changes)
+// none of which affect this view. The mapped signature below captures only
+// the fields this draw() actually reads.
+watch(
+  () => [
+    sequencer.allEvents
+      .map(e =>
+        `${e.id}:${e.startTime}:${e.duration}:${e.frequency}:${e.muted ? 1 : 0}:${e.selected ? 1 : 0}`
+      )
+      .join('|'),
+    sequencer.editMode,
+    sequencer.viewMode,
+    sequencer.activeClip?.id ?? '',
+    sequencer.activeClip?.color ?? '',
+    sequencer.activeClip?.duration ?? 0,
+  ],
+  () => requestDraw(),
+)
 
 // Right-click context menu
 function handleContextMenu(e: MouseEvent) {

@@ -905,8 +905,23 @@ watch(
   ],
   () => requestDraw(),
 )
-watch(() => sequencer.allEvents, () => requestDraw(), { deep: true })
-watch(() => sequencer.latticePaths, () => requestDraw(), { deep: true })
+// Canvas renders events by id + frequency (activeFrequencies on line 34-36 maps
+// ev.frequency; drawPath looks up notes by id in activeClipNotes and reads
+// note.frequency). A deep watch on allEvents fired on every nested change
+// (amplitude, duration edits in other components, selection flips) which are
+// not visible here. This mapped signature triggers only when add/remove or
+// frequency changes occur — the only event mutations the lattice cares about.
+watch(
+  () => sequencer.allEvents.map(e => `${e.id}:${e.frequency}`).join('|'),
+  () => requestDraw(),
+)
+// Canvas renders each path by id + ordered noteIds (drawPath on line 268
+// iterates path.noteIds; findPathLineAtPoint uses path.id). timeOffset is only
+// read in the context menu, not the draw path, so we intentionally skip it.
+watch(
+  () => sequencer.latticePaths.map(p => `${p.id}:${p.noteIds.join(',')}`).join('|'),
+  () => requestDraw(),
+)
 
 // Finalize active path when switching interaction mode
 watch(() => sequencer.latticeInteractionMode, () => {

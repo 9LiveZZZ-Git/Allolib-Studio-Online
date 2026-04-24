@@ -1336,9 +1336,43 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeyDown)
 })
 
-watch(() => [sequencer.clipInstances, sequencer.clips, sequencer.arrangementTracks, sequencer.editMode], () => {
-  requestDraw()
-}, { deep: true })
+// Canvas renders depend on:
+//   clipInstances: id, clipId, trackIndex, startTime (line 346 loop, 285 filter)
+//   clips:         id, name, color, duration, notes[]:{startTime,duration,
+//                  frequency,muted,params} — preview on line 381, param bars
+//                  on line 693
+//   arrangementTracks: name, muted, solo, expanded, automationLanes[]:
+//                  {collapsed,min,max,paramIndex} — lane rendering line 232+
+//   editMode:      affects hit-test visuals
+// A deep watcher fired on ANY nested change (note.selected flips during
+// arrangement interaction, transient hover, etc.). The mapped signature below
+// captures exactly the fields the draw function reads — changes to ignored
+// fields (note.amplitude, note.synthName, etc.) no longer trigger a redraw.
+watch(
+  () => [
+    sequencer.clipInstances
+      .map(ci => `${ci.id}:${ci.clipId}:${ci.trackIndex}:${ci.startTime}`)
+      .join('|'),
+    sequencer.clips
+      .map(c =>
+        `${c.id}:${c.name}:${c.color}:${c.duration}:` +
+        c.notes
+          .map(n => `${n.id}:${n.startTime}:${n.duration}:${n.frequency}:${n.muted ? 1 : 0}:${n.params.join(',')}`)
+          .join(';')
+      )
+      .join('|'),
+    sequencer.arrangementTracks
+      .map(t =>
+        `${t.name}:${t.muted ? 1 : 0}:${t.solo ? 1 : 0}:${t.expanded ? 1 : 0}:` +
+        t.automationLanes
+          .map(l => `${l.paramIndex}:${l.collapsed ? 1 : 0}:${l.min}:${l.max}`)
+          .join(';')
+      )
+      .join('|'),
+    sequencer.editMode,
+  ],
+  () => requestDraw(),
+)
 </script>
 
 <template>
