@@ -42,7 +42,6 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          NODE_ENV: production
           VITE_BACKEND_URL: https://eloquent-miracle-production-b369.up.railway.app
         run: npm run build
 

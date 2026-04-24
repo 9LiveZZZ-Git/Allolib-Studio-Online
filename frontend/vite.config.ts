@@ -2,8 +2,8 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
-export default defineConfig({
-  base: process.env.NODE_ENV === 'production' ? '/Allolib-Studio-Online/' : '/',
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/Allolib-Studio-Online/' : '/',
   plugins: [vue()],
   resolve: {
     alias: {
@@ -40,4 +40,4 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
-})
+}))
