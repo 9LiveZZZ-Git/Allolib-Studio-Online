@@ -67,9 +67,12 @@ inline void gammaSetSampleRate(int sr) {
 // ============================================================================
 
 #ifdef __EMSCRIPTEN__
-// WASM builds: Include web-based parameter GUI and sequencer bridge
+// WASM builds: Include web-based parameter GUI, sequencer bridge, and MIDI
+#include <emscripten.h>
 #include "al_WebControlGUI.hpp"
 #include "al_WebSequencerBridge.hpp"
+#include "al_WebMIDI.hpp"
+#include "al_WebFile.hpp"
 #else
 // Native builds: Include real ImGui-based classes from allolib
 // These are the actual implementations that use Dear ImGui
@@ -142,32 +145,79 @@ namespace al {
 
 class PresetHandler {
 public:
-    PresetHandler(std::string = "presets", bool = false) {}
-    PresetHandler(TimeMasterMode, std::string = "presets", bool = false) {}
+    PresetHandler(std::string name = "presets", bool = false) : mName(name) {}
+    PresetHandler(TimeMasterMode, std::string name = "presets", bool = false) : mName(name) {}
     ~PresetHandler() = default;
 
-    // Store presets - no-op for now
-    void storePreset(std::string) {}
-    void storePreset(int, std::string = "", bool = true) {}
-
-    // Recall presets - no-op for now
-    void recallPreset(std::string) {}
-    void recallPreset(int) {}
-    void recallPresetSynchronous(std::string) {}
-    void recallPresetSynchronous(int) {}
-
-    // Morphing
-    void setMorphTime(float) {}
-    float getMorphTime() const { return 0.0f; }
-    void morphTo(std::string, float) {}
-    void morphTo(int, float) {}
-    void stopMorph() {}
-
     // Registration
-    PresetHandler& registerParameter(ParameterMeta&) { return *this; }
-    PresetHandler& operator<<(ParameterMeta&) { return *this; }
-    PresetHandler& registerParameterBundle(ParameterBundle&) { return *this; }
-    PresetHandler& operator<<(ParameterBundle&) { return *this; }
+    PresetHandler& registerParameter(ParameterMeta& p) {
+        mParams.push_back(&p);
+        return *this;
+    }
+    PresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
+    PresetHandler& registerParameterBundle(ParameterBundle&) { return *this; }  // bundles not fully supported yet
+    PresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
+
+    // Store presets - serialize registered params to JSON in localStorage
+    void storePreset(std::string name) {
+        std::string json = "{";
+        for (size_t i = 0; i < mParams.size(); ++i) {
+            if (i > 0) json += ",";
+            json += "\"" + mParams[i]->getName() + "\":";
+            // Best-effort: use toFloat() for numeric params
+            json += std::to_string(mParams[i]->toFloat());
+        }
+        json += "}";
+        EM_ASM({
+            try {
+                localStorage.setItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1), UTF8ToString($2));
+            } catch(e) { console.warn('[PresetHandler] localStorage full', e); }
+        }, mName.c_str(), name.c_str(), json.c_str());
+        mCurrentPreset = name;
+    }
+    void storePreset(int index, std::string name = "", bool = true) {
+        if (name.empty()) name = std::to_string(index);
+        storePreset(name);
+    }
+
+    // Recall presets - read JSON from localStorage and fromFloat() each value
+    void recallPreset(std::string name) {
+        char* jsonPtr = (char*)EM_ASM_PTR({
+            var v = localStorage.getItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1));
+            if (!v) return 0;
+            var lengthBytes = lengthBytesUTF8(v) + 1;
+            var ptr = _malloc(lengthBytes);
+            stringToUTF8(v, ptr, lengthBytes);
+            return ptr;
+        }, mName.c_str(), name.c_str());
+        if (jsonPtr == nullptr) return;
+        std::string json(jsonPtr);
+        free(jsonPtr);
+        // Naive JSON parse: find "name":value pairs
+        for (auto* p : mParams) {
+            std::string key = "\"" + p->getName() + "\":";
+            size_t pos = json.find(key);
+            if (pos != std::string::npos) {
+                size_t valStart = pos + key.length();
+                size_t valEnd = json.find_first_of(",}", valStart);
+                try {
+                    float val = std::stof(json.substr(valStart, valEnd - valStart));
+                    p->fromFloat(val);
+                } catch(...) {}
+            }
+        }
+        mCurrentPreset = name;
+    }
+    void recallPreset(int index) { recallPreset(std::to_string(index)); }
+    void recallPresetSynchronous(std::string name) { recallPreset(name); }
+    void recallPresetSynchronous(int index) { recallPreset(index); }
+
+    // Morphing - no interpolation yet, just direct recall
+    void setMorphTime(float t) { mMorphTime = t; }
+    float getMorphTime() const { return mMorphTime; }
+    void morphTo(std::string name, float) { recallPreset(name); }
+    void morphTo(int i, float) { recallPreset(i); }
+    void stopMorph() {}
 
     // Paths
     void setRootPath(std::string) {}
@@ -176,11 +226,38 @@ public:
     std::string getSubDirectory() const { return ""; }
     std::string getCurrentPath() const { return ""; }
 
-    // Preset listing
-    std::vector<std::string> availablePresets() const { return {}; }
+    // Preset listing - iterate localStorage keys matching prefix
+    std::vector<std::string> availablePresets() const {
+        std::vector<std::string> result;
+        char* listPtr = (char*)EM_ASM_PTR({
+            var prefix = 'allolib_preset_' + UTF8ToString($0) + '_';
+            var keys = [];
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (k && k.indexOf(prefix) === 0) keys.push(k.substring(prefix.length));
+            }
+            var s = keys.join(',');
+            var lengthBytes = lengthBytesUTF8(s) + 1;
+            var ptr = _malloc(lengthBytes);
+            stringToUTF8(s, ptr, lengthBytes);
+            return ptr;
+        }, mName.c_str());
+        if (listPtr) {
+            std::string list(listPtr);
+            free(listPtr);
+            size_t start = 0;
+            while (start < list.size()) {
+                size_t end = list.find(',', start);
+                if (end == std::string::npos) end = list.size();
+                if (end > start) result.push_back(list.substr(start, end - start));
+                start = end + 1;
+            }
+        }
+        return result;
+    }
     std::vector<std::string> availablePresetMaps() const { return {}; }
     int getCurrentPresetIndex() const { return 0; }
-    std::string getCurrentPresetName() const { return ""; }
+    std::string getCurrentPresetName() const { return mCurrentPreset; }
 
     // Callbacks
     void registerPresetCallback(std::function<void(int, void*)>, void* = nullptr) {}
@@ -188,13 +265,18 @@ public:
 
     // Verbose
     void verbose(bool) {}
+
+private:
+    std::string mName;
+    std::string mCurrentPreset;
+    std::vector<ParameterMeta*> mParams;
+    float mMorphTime = 0.0f;
 };
 
 } // namespace al
 
 // ============================================================================
-// ParameterMIDI Stub (uses RtMidi - not available in WASM)
-// Future: Could use Web MIDI API
+// ParameterMIDI - bridged to WebMIDI for CC / note control in the browser
 // ============================================================================
 
 namespace al {
@@ -202,23 +284,81 @@ namespace al {
 class ParameterMIDI {
 public:
     ParameterMIDI() = default;
-    ParameterMIDI(unsigned int, bool = false) {}
+    ParameterMIDI(unsigned int port, bool = false) { open(port); }
 
-    void open(unsigned int = 0) {}
-    void open(int, bool) {}
-    void init(int = 0, bool = false) {}
-    void close() {}
+    void open(unsigned int = 0) {
+        if (!mMidi) mMidi = std::make_unique<WebMIDI>();
+        mMidi->open();
+        mMidi->setCCCallback([this](int channel, int cc, int value) {
+            handleCC(channel, cc, value);
+        });
+        mMidi->setNoteOnCallback([this](int channel, int note, int velocity) {
+            handleNote(channel, note, velocity, true);
+        });
+        mMidi->setNoteOffCallback([this](int channel, int note, int velocity) {
+            handleNote(channel, note, velocity, false);
+        });
+    }
+    void open(int port, bool) { open((unsigned int)port); }
+    void init(int port = 0, bool = false) { open((unsigned int)port); }
+    void close() { if (mMidi) mMidi->close(); }
 
-    void connectControl(Parameter&, int, int) {}
-    void connectControl(Parameter&, int, int, float, float) {}
+    void connectControl(Parameter& p, int cc, int channel) {
+        mCCBindings.push_back({&p, cc, channel, p.min(), p.max()});
+    }
+    void connectControl(Parameter& p, int cc, int channel, float min, float max) {
+        mCCBindings.push_back({&p, cc, channel, min, max});
+    }
     void connectControls(ParameterMeta&, std::vector<int>, int = 1,
-                        std::vector<float> = {}, std::vector<float> = {}) {}
+                         std::vector<float> = {}, std::vector<float> = {}) {}
 
-    void connectNoteToValue(Parameter&, int, float, int, float = -1, int = -1) {}
+    void connectNoteToValue(Parameter& p, int channel, float value, int note, float = -1, int = -1) {
+        mNoteBindings.push_back({&p, note, channel, value, false});
+    }
     void connectNoteToToggle(ParameterBool&, int, int) {}
-    void connectNoteToIncrement(Parameter&, int, int, float) {}
+    void connectNoteToIncrement(Parameter& p, int channel, int note, float increment) {
+        mNoteBindings.push_back({&p, note, channel, increment, true});
+    }
 
-    bool isOpen() { return false; }
+    bool isOpen() { return mMidi && mMidi->isOpen(); }
+
+private:
+    struct CCBinding {
+        Parameter* param;
+        int cc;
+        int channel;   // 0 = all, 1-16 specific
+        float min, max;
+    };
+    struct NoteBinding {
+        Parameter* param;
+        int note;
+        int channel;
+        float value;
+        bool increment;
+    };
+
+    void handleCC(int channel, int cc, int value) {
+        for (auto& b : mCCBindings) {
+            if ((b.channel == 0 || b.channel == channel) && b.cc == cc) {
+                float normalized = value / 127.0f;
+                float scaled = b.min + normalized * (b.max - b.min);
+                b.param->set(scaled);
+            }
+        }
+    }
+    void handleNote(int channel, int note, int /*vel*/, bool on) {
+        if (!on) return;
+        for (auto& b : mNoteBindings) {
+            if ((b.channel == 0 || b.channel == channel) && b.note == note) {
+                if (b.increment) b.param->set(b.param->get() + b.value);
+                else b.param->set(b.value);
+            }
+        }
+    }
+
+    std::unique_ptr<WebMIDI> mMidi;
+    std::vector<CCBinding> mCCBindings;
+    std::vector<NoteBinding> mNoteBindings;
 };
 
 } // namespace al
@@ -230,15 +370,23 @@ namespace al {
 class BundleGUIManager {
 public:
     BundleGUIManager(const std::string& name = "") : mName(name) {}
-    BundleGUIManager& operator<<(ParameterBundle& b) { return *this; }
-    void registerParameterBundle(ParameterBundle& b) {}
-    int currentBundle() const { return 0; }
-    void setCurrentBundle(int) {}
-    void drawBundleGUI() {}
+    BundleGUIManager& operator<<(ParameterBundle& b) {
+        mBundles.push_back(&b);
+        return *this;
+    }
+    void registerParameterBundle(ParameterBundle& b) {
+        mBundles.push_back(&b);
+    }
+    int currentBundle() const { return mCurrent; }
+    void setCurrentBundle(int i) { if (i >= 0 && (size_t)i < mBundles.size()) mCurrent = i; }
+    void drawBundleGUI() {}  // no-op: Vue handles UI
     void drawBundleGlobal() {}
     const std::string& name() const { return mName; }
+    size_t bundleCount() const { return mBundles.size(); }
 private:
     std::string mName;
+    std::vector<ParameterBundle*> mBundles;
+    int mCurrent = 0;
 };
 } // namespace al
 
@@ -276,12 +424,50 @@ class CSVReader {
 public:
     enum class DataType { STRING, INT64, REAL, BOOLEAN, IGNORE_COLUMN };
     CSVReader() = default;
-    bool readFile(const std::string& fileName, bool hasColumnNames = true) { return false; }
-    void addType(DataType) {}
-    void clearTypes() {}
-    std::vector<std::string> getColumnNames() const { return {}; }
-    int size() const { return 0; }
+    // Synchronous file reading is not supported in WASM.
+    // Use WebFile::loadFromURL() + parse the result manually, or pass a
+    // pre-fetched CSV string to readString() below.
+    bool readFile(const std::string& fileName, bool = true) {
+        printf("[WASM] CSVReader: synchronous file reading unavailable. "
+               "Use WebFile::loadFromURL('%s') and parse the returned bytes.\n", fileName.c_str());
+        return false;
+    }
+    void addType(DataType t) { mTypes.push_back(t); }
+    void clearTypes() { mTypes.clear(); }
+    std::vector<std::string> getColumnNames() const { return mColumnNames; }
+    int size() const { return (int)mRows.size(); }
     void setBasePath(const std::string&) {}
+
+    // Manually load from a string (for programmatic use after fetching bytes)
+    bool readString(const std::string& csv, bool hasColumnNames = true) {
+        mRows.clear();
+        mColumnNames.clear();
+        size_t pos = 0;
+        bool first = true;
+        while (pos < csv.size()) {
+            size_t eol = csv.find('\n', pos);
+            if (eol == std::string::npos) eol = csv.size();
+            std::string line = csv.substr(pos, eol - pos);
+            std::vector<std::string> row;
+            size_t cp = 0;
+            while (cp <= line.size()) {
+                size_t comma = line.find(',', cp);
+                if (comma == std::string::npos) comma = line.size();
+                row.push_back(line.substr(cp, comma - cp));
+                cp = comma + 1;
+                if (comma == line.size()) break;
+            }
+            if (first && hasColumnNames) mColumnNames = row;
+            else mRows.push_back(row);
+            first = false;
+            pos = eol + 1;
+        }
+        return true;
+    }
+private:
+    std::vector<DataType> mTypes;
+    std::vector<std::string> mColumnNames;
+    std::vector<std::vector<std::string>> mRows;
 };
 } // namespace al
 
@@ -311,42 +497,78 @@ public:
 } // namespace al
 
 // ============================================================================
-// SynthRecorder WASM stub (replaces native fstream-based recorder)
-// The native al::SynthRecorder writes .synthSequence files to disk via
-// fstream — that path does not compile cleanly in Emscripten. This stub
-// provides the same public API so user code compiles without changes.
-// To actually record a session use the Studio recording panel in the UI.
+// SynthRecorder WASM (in-memory .synthSequence buffer + browser download)
+// The native al::SynthRecorder writes to disk via fstream — not available in
+// Emscripten. This version records events to an in-memory buffer and, on
+// stopRecord(), triggers a browser download of the resulting text file.
 // ============================================================================
 
 namespace al {
 
 class SynthRecorder {
 public:
-    enum TextFormat { SEQUENCER_EVENT, SEQUENCER_TRIGGERS, CPP_FORMAT, NONE };
+    enum TextFormat { SEQUENCER_EVENT, SEQUENCER_TRIGGERS, CPP_FORMAT };
 
-    explicit SynthRecorder(TextFormat /*format*/ = SEQUENCER_EVENT) {}
+    SynthRecorder() = default;
 
-    // Register a PolySynth to record from (matches native operator<<)
-    SynthRecorder& operator<<(PolySynth& /*synth*/) { return *this; }
-    void registerPolySynth(PolySynth& /*synth*/) {}
-
-    // Start/stop recording — no-ops on WASM (use Studio panel)
-    void startRecord(std::string /*name*/ = "", bool /*overwrite*/ = false,
-                     bool /*startOnEvent*/ = true) {
-        printf("[WASM] SynthRecorder::startRecord: use the Studio recording panel.\n");
+    void startRecord(std::string fileName = "", bool = false, bool = false) {
+        mFilename = fileName.empty() ? "recording.synthSequence" : fileName;
+        mEvents.clear();
+        mRecording = true;
+        mStartTime = emscripten_get_now() * 0.001;
+        printf("[WASM] SynthRecorder: recording started -> %s\n", mFilename.c_str());
     }
-    void stopRecord() {}
+    void stopRecord() {
+        if (!mRecording) return;
+        mRecording = false;
+        // Build a .synthSequence text file from events
+        std::string content;
+        for (auto& e : mEvents) {
+            content += "+" + std::to_string(e.time) + " " + e.voice + " " + std::to_string(e.id) + "\n";
+        }
+        // Trigger browser download
+        EM_ASM({
+            var blob = new Blob([UTF8ToString($0)], { type: 'text/plain' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = UTF8ToString($1);
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+        }, content.c_str(), mFilename.c_str());
+        printf("[WASM] SynthRecorder: saved %zu events to %s\n", mEvents.size(), mFilename.c_str());
+    }
+    bool isRecording() const { return mRecording; }
 
-    // Time / path configuration
-    void setMaxRecordTime(double /*maxTime*/) {}
-    void setDirectory(std::string /*path*/) {}
-    void verbose(bool /*v*/) {}
-    bool verbose() const { return false; }
+    // When a voice is triggered, the real SynthRecorder would capture it.
+    // We expose manual logging:
+    void logTrigger(const std::string& voiceName, int id) {
+        if (!mRecording) return;
+        double t = emscripten_get_now() * 0.001 - mStartTime;
+        mEvents.push_back({t, voiceName, id});
+    }
 
-    // Trigger callbacks — required by PolySynth registration internally
-    static void onTriggerOn(SynthVoice* /*voice*/, int /*offsetFrames*/,
-                            int /*id*/, void* /*userData*/) {}
-    static void onTriggerOff(int /*id*/, void* /*userData*/) {}
+    SynthRecorder& operator<<(PolySynth&) { return *this; }
+    SynthRecorder& operator<<(SynthSequencer&) { return *this; }
+    void registerPolySynth(PolySynth&) {}
+    void setDirectory(const std::string&) {}
+    void setMaxRecordTime(double) {}
+    void verbose(bool) {}
+    void onTriggerOn(SynthVoice*, int = 0) {}
+    void onTriggerOff(SynthVoice*, int = 0) {}
+
+private:
+    struct Event {
+        double time;
+        std::string voice;
+        int id;
+    };
+    std::string mFilename;
+    std::vector<Event> mEvents;
+    bool mRecording = false;
+    double mStartTime = 0;
 };
 
 } // namespace al
@@ -361,11 +583,34 @@ public:
 
 namespace al {
 
-inline void playSynthSequenceFromURL(SynthSequencer& /*seq*/,
-                                     const std::string& /*url*/,
-                                     float /*startTime*/ = 0.0f) {
-    printf("[WASM] playSynthSequenceFromURL: not implemented. "
-           "Use the sequencer panel in the Studio UI instead.\n");
+// Parse .synthSequence text format and schedule events on a SynthSequencer.
+// Format per line: "@<time> <voice> <id> <params>" or "+<time> ..." / "-<time> ..."
+// Actual parsing matching the native SynthSequencer file format requires access
+// to internal scheduling APIs; for now this logs the receipt and leaves the
+// SynthSequencer untouched. Users should use WebSequencerBridge or the Studio
+// sequencer panel for full functionality.
+inline void playSynthSequenceFromText(SynthSequencer& seq, const std::string& content, float startTime = 0.0f) {
+    printf("[WASM] playSynthSequenceFromText: %zu bytes received at t=%.2f\n", content.size(), startTime);
+    // TODO: implement actual parsing matching the native SynthSequencer file format.
+    (void)seq;
+    (void)startTime;
+}
+
+// Fetch a .synthSequence file from URL and play it.
+// The fetch is async; the text body is logged for debugging. Full plumbing into
+// playSynthSequenceFromText requires a ccall round-trip from JS back into C++.
+inline void playSynthSequenceFromURL(SynthSequencer& seq, const std::string& url, float startTime = 0.0f) {
+    EM_ASM({
+        var url = UTF8ToString($0);
+        fetch(url).then(function(r) { return r.text(); }).then(function(text) {
+            console.log('[WASM] Fetched synthSequence:', text.length, 'bytes');
+            // Dispatch to C++ parser (would need ccall here)
+        }).catch(function(e) {
+            console.error('[WASM] playSynthSequenceFromURL failed:', e);
+        });
+    }, url.c_str());
+    (void)seq;
+    (void)startTime;
 }
 
 } // namespace al
@@ -586,18 +831,33 @@ public:
 } // namespace al
 
 // ============================================================================
-// Clock Stub
+// Clock (WASM) - backed by emscripten_get_now() so dt()/fps()/frame() work
 // ============================================================================
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 namespace al {
 class Clock {
 public:
-    void update() {}
-    double now() const { return 0.0; }
-    double dt() const { return 0.0; }
-    double fps() const { return 60.0; }
-    int frame() const { return 0; }
+    void update() {
+        double now = emscripten_get_now() * 0.001;  // ms -> seconds
+        if (mPrevTime > 0) mDt = now - mPrevTime;
+        mPrevTime = now;
+        mFrameCount++;
+    }
+    double now() const { return emscripten_get_now() * 0.001; }
+    double dt() const { return mDt; }
+    double fps() const { return mDt > 0 ? 1.0 / mDt : 60.0; }
+    int frame() const { return mFrameCount; }
+    void useRT() {}
+    void useNRT(double) {}
+    double rt() const { return now(); }
+private:
+    double mPrevTime = 0.0;
+    double mDt = 0.0;
+    int mFrameCount = 0;
 };
 } // namespace al
+#endif
 
 // ============================================================================
 // AppRecorder Stub
