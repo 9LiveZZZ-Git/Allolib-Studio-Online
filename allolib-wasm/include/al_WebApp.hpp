@@ -240,6 +240,94 @@ public:
     /// Set listener pose for spatial audio
     void setListenerPose(const Pose& pose);
 
+    // =========================================================================
+    // Window control (al::App compatibility)
+    // =========================================================================
+
+    /// Quit the application (alias for stop())
+    void quit() { stop(); }
+
+    /// Set/get the window title
+    void title(const std::string& t) {
+        mTitle = t;
+        EM_ASM({ document.title = UTF8ToString($0); }, t.c_str());
+    }
+    const std::string& title() const { return mTitle; }
+
+    /// Set/get fullscreen mode
+    void fullScreen(bool on) {
+        mFullScreen = on;
+        if (on) {
+            EM_ASM({ Module.canvas.requestFullscreen(); });
+        } else {
+            EM_ASM({ if (document.exitFullscreen) document.exitFullscreen(); });
+        }
+    }
+    bool fullScreen() const { return mFullScreen; }
+    void fullScreenToggle() { fullScreen(!mFullScreen); }
+
+    /// vsync - always true in browser (requestAnimationFrame is inherently vsync)
+    bool vsync() const { return true; }
+    void vsync(bool) {}  // no-op
+
+    /// Target FPS (informational; rAF drives the actual rate)
+    void fps(double f) { mTargetFPS = f; }
+    double fps() const { return mTargetFPS; }
+
+    /// Hide/show the mouse cursor over the canvas
+    void cursorHide(bool v) {
+        mCursorHidden = v;
+        EM_ASM({
+            Module.canvas.style.cursor = $0 ? 'none' : 'default';
+        }, v ? 1 : 0);
+    }
+    bool cursorHide() const { return mCursorHidden; }
+    void cursorHideToggle() { cursorHide(!mCursorHidden); }
+
+    /// Window decoration - no-op (browser controls window chrome)
+    void decorated(bool) {}
+    bool decorated() const { return true; }
+
+    /// Window visibility - no-op (canvas is always visible)
+    void visible(bool) {}
+    bool visible() const { return true; }
+
+    /// Iconify - no-op in browser
+    void iconify() {}
+
+    // =========================================================================
+    // Framebuffer / HiDPI (al::App compatibility)
+    // =========================================================================
+
+    /// Returns the device pixel ratio (>1 on HiDPI/Retina displays)
+    double highresFactor() const {
+        return EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
+    }
+
+    /// Framebuffer width (physical pixels, accounting for HiDPI)
+    int fbWidth()  const { return (int)(mWidth  * highresFactor()); }
+
+    /// Framebuffer height (physical pixels, accounting for HiDPI)
+    int fbHeight() const { return (int)(mHeight * highresFactor()); }
+
+    // =========================================================================
+    // Input accessors (al::App compatibility)
+    // =========================================================================
+
+    /// Get the current keyboard state
+    const Keyboard& keyboard() const { return mKeyboard; }
+
+    /// Get the current mouse state
+    const Mouse&    mouse()    const { return mMouse; }
+
+    // =========================================================================
+    // Navigation control (al::App compatibility)
+    // =========================================================================
+
+    /// Get the navigation input controller
+    NavInputControl& navControl() { return mNavControl; }
+    const NavInputControl& navControl() const { return mNavControl; }
+
 protected:
     /// Main loop tick (called every frame)
     void tick(double dt);
@@ -278,6 +366,17 @@ private:
     // Navigation and view
     Nav mNav;
     Viewpoint mViewpoint;
+    NavInputControl mNavControl{mNav};
+
+    // Input state
+    Keyboard mKeyboard;
+    Mouse mMouse;
+
+    // Window state
+    std::string mTitle     = "AlloLib Studio";
+    bool mFullScreen       = false;
+    bool mCursorHidden     = false;
+    double mTargetFPS      = 60.0;
 
     // Automatic LOD
     AutoLODManager mAutoLOD;
