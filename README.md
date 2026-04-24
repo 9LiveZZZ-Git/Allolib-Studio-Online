@@ -7,7 +7,7 @@
 Write C++, compile server-side via Emscripten, run as WebAssembly with WebGL2/WebGPU rendering and Web Audio — all in the browser.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
 [![WebGL2](https://img.shields.io/badge/WebGL2-supported-success.svg)]()
 [![WebGPU](https://img.shields.io/badge/WebGPU-supported-success.svg)]()
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)
