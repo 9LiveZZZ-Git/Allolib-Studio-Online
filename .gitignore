@@ -6,6 +6,9 @@ node_modules/
 allolib/
 al_ext/
 
+# AlloLib docs (local reference copy, not pushed)
+allolib-docs/
+
 # Build outputs
 dist/
 build/
