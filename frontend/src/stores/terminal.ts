@@ -773,7 +773,9 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   function formatColumns(items: string[]): string {
     if (items.length === 0) return ''
-    // Simple column layout
+    // Simple column layout. Strip ANSI escape sequences (ESC = \x1b) so column
+    // widths are measured by visible characters, not control sequences.
+    // eslint-disable-next-line no-control-regex
     const clean = items.map(i => i.replace(/\x1b\[[^m]*m/g, ''))
     const maxLen = Math.max(...clean.map(s => s.length))
     const colWidth = maxLen + 2

@@ -294,13 +294,14 @@ function pasteEvents(data: ClipboardEventSet, targetTime: number): boolean {
       case 'marker':
         eventsStore.addMarker(time, event.data.label || 'Marker')
         break
-      case 'script':
+      case 'script': {
         // Find the script track
         const scriptTrack = eventsStore.tracks.find(t => t.type === 'script')
         if (scriptTrack) {
           eventsStore.addScriptEvent(scriptTrack.id, time, event.data.code || '')
         }
         break
+      }
     }
   }
 

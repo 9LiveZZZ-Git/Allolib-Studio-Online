@@ -503,7 +503,7 @@ export function runTransaction<T>(
 // ─── Window Registration ─────────────────────────────────────────────────────
 
 if (typeof window !== 'undefined') {
-  ;(window as any).__commandsStore = null
+  (window as any).__commandsStore = null
 }
 
 export function registerCommandsStoreForTerminal(): void {

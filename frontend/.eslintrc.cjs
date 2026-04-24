@@ -1,6 +1,10 @@
 module.exports = {
   root: true,
   env: { browser: true, es2022: true, node: true },
+  globals: {
+    // Compile-time constants injected by Vite's `define` config
+    __APP_VERSION__: 'readonly',
+  },
   parser: 'vue-eslint-parser',
   parserOptions: {
     parser: '@typescript-eslint/parser',

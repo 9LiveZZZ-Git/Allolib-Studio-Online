@@ -146,7 +146,7 @@ class ObjectManagerBridge {
     }
 
     // Clear the pending list
-    ;(window as any).__pendingTimelineObjects = []
+    (window as any).__pendingTimelineObjects = []
   }
 
   /**
@@ -744,5 +744,5 @@ export const objectManagerBridge = new ObjectManagerBridge()
 
 // Register on window for debugging
 if (typeof window !== 'undefined') {
-  ;(window as any).__objectManagerBridge = objectManagerBridge
+  (window as any).__objectManagerBridge = objectManagerBridge
 }

@@ -212,23 +212,25 @@ function handleAddKeyframe(param: Parameter) {
   const value = param.value
 
   switch (param.source) {
-    case 'object':
+    case 'object': {
       const objectsStore = (window as any).__objectsStore
       if (objectsStore && param.sourceId) {
         objectsStore.addKeyframe(param.sourceId, param.name, currentTime.value, value)
         param.hasKeyframes = true
       }
       break
+    }
 
-    case 'environment':
+    case 'environment': {
       const envStore = (window as any).__environmentStore
       if (envStore) {
         envStore.addKeyframe(param.name, currentTime.value, value)
         param.hasKeyframes = true
       }
       break
+    }
 
-    case 'camera':
+    case 'camera': {
       // Camera keyframes stored in environment or separate camera track
       const envStore2 = (window as any).__environmentStore
       if (envStore2) {
@@ -236,6 +238,7 @@ function handleAddKeyframe(param: Parameter) {
         param.hasKeyframes = true
       }
       break
+    }
 
     case 'synth':
       // Synth params don't support keyframes (they use .synthSequence)

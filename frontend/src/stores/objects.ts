@@ -745,7 +745,7 @@ function wasmFreeString(wasmModule: WasmModule, ptr: number): void {
 
 // Register on window for terminal access
 if (typeof window !== 'undefined') {
-  ;(window as any).__objectsStore = null // Will be set after store creation
+  (window as any).__objectsStore = null // Will be set after store creation
 }
 
 /**

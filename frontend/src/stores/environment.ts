@@ -407,7 +407,7 @@ function interpolate(a: number | number[] | unknown, b: number | number[] | unkn
 
 // Register on window for terminal access
 if (typeof window !== 'undefined') {
-  ;(window as any).__environmentStore = null
+  (window as any).__environmentStore = null
 }
 
 export function registerEnvironmentStoreForTerminal(): void {

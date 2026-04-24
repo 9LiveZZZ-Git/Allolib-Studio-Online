@@ -161,8 +161,8 @@ export class AllolibRuntime {
         if (!useWebGPU && backendType === 'webgpu') {
           this.onError('[Backend] ERROR: WebGPU was requested but is not available!')
         }
-      } else {
       }
+      // (no else branch — webgl2 is the default path below)
 
       // Create WebGL2 context only if NOT using WebGPU
       // (WebGL and WebGPU contexts are mutually exclusive on the same canvas)
@@ -200,7 +200,7 @@ export class AllolibRuntime {
           this.onPrint('[Backend] Reusing existing canvas for WebGPU')
         }
         // Mark canvas as WebGPU
-        ;(this.canvas as any).__hasGLContext = false
+        (this.canvas as any).__hasGLContext = false
         ;(this.canvas as any).__isWebGPU = true
         ;(window as any).__canvasIsWebGPU = this.canvas
       } else {
@@ -233,7 +233,7 @@ export class AllolibRuntime {
           }
         }
         // Mark canvas as WebGL2
-        ;(this.canvas as any).__hasGLContext = true
+        (this.canvas as any).__hasGLContext = true
         ;(this.canvas as any).__isWebGPU = false
         ;(window as any).__canvasIsWebGPU = null
         gl = this.canvas.getContext('webgl2', {
@@ -340,7 +340,7 @@ export class AllolibRuntime {
    */
   private setupPreInitCallbacks(): void {
     // Ensure window.allolib namespace exists
-    ;(window as any).allolib = (window as any).allolib || {}
+    (window as any).allolib = (window as any).allolib || {}
 
     // Store pending objects - will be synced after module fully loads
     const pendingObjects: Array<{
@@ -521,8 +521,7 @@ export class AllolibRuntime {
 
     try {
       // Log only the first request; repeated logging from the audio thread adds measurable latency.
-      if (this.audioRequestCount === 0) {
-      }
+      // (Reserved for future first-request diagnostic logging.)
       this.audioRequestCount++
 
       // Allocate buffer in WASM memory
@@ -633,7 +632,7 @@ export class AllolibRuntime {
       }
 
       // Also store globally for debugging
-      ;(window as any).__webgpuCanvasContext = context
+      (window as any).__webgpuCanvasContext = context
       ;(window as any).__webgpuDevice = device
 
       this.onPrint('[WebGPU] Canvas context configured successfully!')

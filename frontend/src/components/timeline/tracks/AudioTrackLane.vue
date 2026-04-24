@@ -18,13 +18,17 @@
           :class="{ active: track.muted }"
           @click="toggleMute"
           title="Mute"
-        >M</button>
+        >
+M
+</button>
         <button
           class="ctrl-btn"
           :class="{ active: track.solo }"
           @click="toggleSolo"
           title="Solo"
-        >S</button>
+        >
+S
+</button>
       </div>
     </div>
 

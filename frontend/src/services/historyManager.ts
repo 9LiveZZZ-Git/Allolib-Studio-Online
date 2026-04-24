@@ -110,13 +110,13 @@ function applySequencerSnapshot(snapshot: unknown) {
   const s = snapshot as SequencerSnapshot
   // The sequencer store doesn't have direct setters, so we need to do this carefully
   if (s.clips) {
-    ;(sequencerStore as Record<string, unknown>).clips = s.clips
+    (sequencerStore as Record<string, unknown>).clips = s.clips
   }
   if (s.clipInstances) {
-    ;(sequencerStore as Record<string, unknown>).clipInstances = s.clipInstances
+    (sequencerStore as Record<string, unknown>).clipInstances = s.clipInstances
   }
   if (s.arrangementTracks) {
-    ;(sequencerStore as Record<string, unknown>).arrangementTracks = s.arrangementTracks
+    (sequencerStore as Record<string, unknown>).arrangementTracks = s.arrangementTracks
   }
 }
 

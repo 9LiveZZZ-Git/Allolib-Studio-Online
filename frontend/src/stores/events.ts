@@ -536,7 +536,7 @@ function lerpOptional(a: number | undefined, b: number | undefined, t: number): 
 
 // Register on window for terminal access
 if (typeof window !== 'undefined') {
-  ;(window as any).__eventsStore = null
+  (window as any).__eventsStore = null
 }
 
 export function registerEventsStoreForTerminal(): void {

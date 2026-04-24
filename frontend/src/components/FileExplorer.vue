@@ -1,6 +1,11 @@
 <script setup lang="ts">
+/* eslint-disable no-redeclare */
+// `ref` and `FileTreeNode` are re-imported in the separate <script lang="ts">
+// block below for the TreeNode subcomponent. ESLint treats both scripts as
+// one scope and flags this; the duplication is intentional.
 import { ref, computed } from 'vue'
 import { useProjectStore, type FileTreeNode } from '@/stores/project'
+/* eslint-enable no-redeclare */
 import { useAssetLibraryStore, type Asset } from '@/stores/assetLibrary'
 
 const projectStore = useProjectStore()
@@ -121,6 +126,12 @@ function submitRename() {
 
 function cancelRename() {
   renaming.value = null
+}
+
+function onRenameInput(val: string) {
+  if (renaming.value) {
+    renaming.value.newName = val
+  }
 }
 
 // Close context menu on click outside
@@ -301,7 +312,7 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
             @contextmenu="handleContextMenu"
             @rename-submit="submitRename"
             @rename-cancel="cancelRename"
-            @rename-input="(val) => renaming && (renaming.newName = val)"
+            @rename-input="onRenameInput"
           />
         </template>
       </div>
@@ -370,8 +381,10 @@ function handleAssetDrop(asset: Asset, folderPath: string) {
 
 <script lang="ts">
 // TreeNode subcomponent
+// eslint-disable-next-line no-redeclare
 import { defineComponent, h, ref } from 'vue'
 import type { PropType } from 'vue'
+// eslint-disable-next-line no-redeclare
 import type { FileTreeNode } from '@/stores/project'
 
 const TreeNode = defineComponent({

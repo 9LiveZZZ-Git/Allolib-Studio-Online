@@ -15,13 +15,13 @@
     <TransportBar
       :playing="timeline.playing"
       :looping="sequencer.loopEnabled"
-      :currentTime="timeline.currentTime"
+      :current-time="timeline.currentTime"
       :duration="timeline.duration"
       :mode="timeline.mode"
       :bpm="sequencer.bpm"
-      :showBPM="true"
+      :show-b-p-m="true"
       :zoom="zoomPercent"
-      :activeTrackType="activeTrackType"
+      :active-track-type="activeTrackType"
       @play="timeline.play"
       @pause="timeline.pause"
       @stop="timeline.stop"
@@ -35,12 +35,12 @@
     <!-- Time Ruler -->
     <TimeRuler
       :duration="timeline.duration"
-      :currentTime="timeline.currentTime"
+      :current-time="timeline.currentTime"
       :zoom="timeline.viewport.zoomX"
-      :scrollX="timeline.viewport.scrollX"
+      :scroll-x="timeline.viewport.scrollX"
       :bpm="sequencer.bpm"
-      :showBeats="true"
-      :headerWidth="HEADER_WIDTH"
+      :show-beats="true"
+      :header-width="HEADER_WIDTH"
       @seek="timeline.seek"
     />
 
@@ -49,11 +49,11 @@
       ref="trackContainerRef"
       :duration="timeline.duration"
       :zoom="timeline.viewport.zoomX"
-      :scrollX="timeline.viewport.scrollX"
-      :scrollY="timeline.viewport.scrollY"
-      :headerWidth="HEADER_WIDTH"
+      :scroll-x="timeline.viewport.scrollX"
+      :scroll-y="timeline.viewport.scrollY"
+      :header-width="HEADER_WIDTH"
       :bpm="sequencer.bpm"
-      :showGrid="true"
+      :show-grid="true"
       @scroll="handleScroll"
     >
       <!-- Track Sections (Audio, Objects, Environment, Events) -->
@@ -64,12 +64,12 @@
         :label="cat.label"
         :icon="cat.icon"
         :color="cat.color"
-        :headerColor="cat.headerColor"
-        :trackBg="cat.trackBg"
+        :header-color="cat.headerColor"
+        :track-bg="cat.trackBg"
         :collapsed="cat.collapsed"
         :visible="cat.visible"
-        :trackCount="getTrackCount(cat.id)"
-        :showAddButton="cat.id === 'objects' || cat.id === 'events'"
+        :track-count="getTrackCount(cat.id)"
+        :show-add-button="cat.id === 'objects' || cat.id === 'events'"
         :active="activeTrackType === cat.id"
         @toggle-collapse="timeline.toggleSection(cat.id)"
         @toggle-visibility="timeline.toggleSectionVisibility(cat.id)"
@@ -91,12 +91,16 @@
                 :class="{ active: sequencer.viewMode === 'frequencyRoll' }"
                 @click="sequencer.viewMode = 'frequencyRoll'"
                 title="Frequency Roll"
-              >Roll</button>
+              >
+Roll
+</button>
               <button
                 :class="{ active: sequencer.viewMode === 'toneLattice' }"
                 @click="sequencer.viewMode = 'toneLattice'"
                 title="Tone Lattice"
-              >Lattice</button>
+              >
+Lattice
+</button>
             </div>
           </div>
 
@@ -105,8 +109,8 @@
             <ClipTimeline
               :embedded="true"
               :zoom="timeline.viewport.zoomX"
-              :scrollX="timeline.viewport.scrollX"
-              :headerWidth="HEADER_WIDTH"
+              :scroll-x="timeline.viewport.scrollX"
+              :header-width="HEADER_WIDTH"
               @open-lattice="showLatticePopup = true"
             />
           </div>
@@ -129,9 +133,9 @@
             :key="obj.id"
             :object="obj"
             :zoom="timeline.viewport.zoomX"
-            :scrollX="timeline.viewport.scrollX"
-            :headerWidth="HEADER_WIDTH"
-            :categoryColor="cat.color"
+            :scroll-x="timeline.viewport.scrollX"
+            :header-width="HEADER_WIDTH"
+            :category-color="cat.color"
             :selected="obj.id === objectsStore.selectedObjectId"
             @select="objectsStore.selectObject(obj.id)"
             @delete="handleDeleteObject(obj.id)"
@@ -145,9 +149,9 @@
         <template v-else-if="cat.id === 'environment'">
           <EnvironmentTrackLane
             :zoom="timeline.viewport.zoomX"
-            :scrollX="timeline.viewport.scrollX"
-            :headerWidth="HEADER_WIDTH"
-            :categoryColor="cat.color"
+            :scroll-x="timeline.viewport.scrollX"
+            :header-width="HEADER_WIDTH"
+            :category-color="cat.color"
             @edit-curve="openEnvironmentCurveEditor"
           />
         </template>
@@ -159,9 +163,9 @@
             :key="eventTrack.id"
             :track="eventTrack"
             :zoom="timeline.viewport.zoomX"
-            :scrollX="timeline.viewport.scrollX"
-            :headerWidth="HEADER_WIDTH"
-            :categoryColor="eventTrack.color"
+            :scroll-x="timeline.viewport.scrollX"
+            :header-width="HEADER_WIDTH"
+            :category-color="eventTrack.color"
             @delete="handleDeleteEventTrack(eventTrack.id)"
             @add-event="(time) => handleAddEvent(eventTrack.id, time)"
           />
@@ -190,7 +194,7 @@
     <!-- Create Object Dialog -->
     <CreateObjectDialog
       :visible="showCreateObjectDialog"
-      :currentTime="timeline.currentTime"
+      :current-time="timeline.currentTime"
       @close="showCreateObjectDialog = false"
       @created="onObjectCreated"
     />
@@ -199,12 +203,12 @@
     <CurveEditor
       v-if="showEnvCurveEditor"
       :visible="showEnvCurveEditor"
-      :propertyName="envCurveProperty"
-      :startTime="envCurveStartTime"
-      :endTime="envCurveEndTime"
-      :startValue="envCurveStartValue"
-      :endValue="envCurveEndValue"
-      :initialBezier="envCurveBezier"
+      :property-name="envCurveProperty"
+      :start-time="envCurveStartTime"
+      :end-time="envCurveEndTime"
+      :start-value="envCurveStartValue"
+      :end-value="envCurveEndValue"
+      :initial-bezier="envCurveBezier"
       @close="showEnvCurveEditor = false"
       @apply="saveEnvironmentCurve"
     />
@@ -233,19 +237,25 @@
                 :class="{ active: sequencer.latticeInteractionMode === 'note' }"
                 @click="sequencer.latticeInteractionMode = 'note'"
                 title="Single notes"
-              >Note</button>
+              >
+Note
+</button>
               <button
                 class="tool-btn"
                 :class="{ active: sequencer.latticeInteractionMode === 'path' }"
                 @click="sequencer.latticeInteractionMode = 'path'"
                 title="Draw melodic paths"
-              >Path</button>
+              >
+Path
+</button>
               <button
                 class="tool-btn"
                 :class="{ active: sequencer.latticeInteractionMode === 'chord' }"
                 @click="sequencer.latticeInteractionMode = 'chord'"
                 title="Build chords"
-              >Chord</button>
+              >
+Chord
+</button>
             </div>
 
             <!-- Poly Path Toggle (for path mode) -->
@@ -263,12 +273,16 @@
                 class="tool-btn"
                 :class="{ active: sequencer.latticeMode === '2d' }"
                 @click="sequencer.latticeMode = '2d'"
-              >2D</button>
+              >
+2D
+</button>
               <button
                 class="tool-btn"
                 :class="{ active: sequencer.latticeMode === '3d' }"
                 @click="sequencer.latticeMode = '3d'"
-              >3D</button>
+              >
+3D
+</button>
             </div>
 
             <!-- Fundamental & Range -->
@@ -303,19 +317,25 @@
                 :class="{ active: sequencer.editMode === 'select' }"
                 @click="sequencer.editMode = 'select'"
                 title="Select (V)"
-              >Select</button>
+              >
+Select
+</button>
               <button
                 class="tool-btn"
                 :class="{ active: sequencer.editMode === 'draw' }"
                 @click="sequencer.editMode = 'draw'"
                 title="Draw (D)"
-              >Draw</button>
+              >
+Draw
+</button>
               <button
                 class="tool-btn"
                 :class="{ active: sequencer.editMode === 'erase' }"
                 @click="sequencer.editMode = 'erase'"
                 title="Erase (E)"
-              >Erase</button>
+              >
+Erase
+</button>
             </div>
           </div>
           <div class="lattice-popup-content">

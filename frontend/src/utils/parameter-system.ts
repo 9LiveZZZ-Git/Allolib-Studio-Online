@@ -773,7 +773,7 @@ class ParameterSystem {
     switch (name) {
       case 'positionX':
       case 'positionY':
-      case 'positionZ':
+      case 'positionZ': {
         // Get all position values and send to WASM
         const posX = this.cameraParameters.find(p => p.name === 'positionX')?.value as number || 0
         const posY = this.cameraParameters.find(p => p.name === 'positionY')?.value as number || 0
@@ -782,6 +782,7 @@ class ParameterSystem {
           this.wasmModule._al_nav_set_pos(posX, posY, posZ)
         }
         break
+      }
 
       case 'fov':
         if (this.wasmModule._al_lens_set_fovy) {
@@ -992,7 +993,7 @@ export const parameterSystem = new ParameterSystem()
 
 // Expose to window for debugging
 if (typeof window !== 'undefined') {
-  ;(window as any).alloParameterSystem = parameterSystem
+  (window as any).alloParameterSystem = parameterSystem
 }
 
 // Type helper for UI display
@@ -1193,5 +1194,5 @@ export const presetManager = new PresetManager()
 
 // Expose to window for debugging
 if (typeof window !== 'undefined') {
-  ;(window as any).alloPresetManager = presetManager
+  (window as any).alloPresetManager = presetManager
 }

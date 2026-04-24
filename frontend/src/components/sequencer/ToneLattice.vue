@@ -213,12 +213,12 @@ function drawCompass(ctx: CanvasRenderingContext2D, w: number, h: number) {
     let x3 = axis.dx, y3 = axis.dy, z3 = axis.dz
 
     // Apply Y rotation
-    let nx = x3 * cosRy + z3 * sinRy
+    const nx = x3 * cosRy + z3 * sinRy
     let nz = -x3 * sinRy + z3 * cosRy
     x3 = nx; z3 = nz
 
     // Apply X rotation
-    let ny = y3 * cosRx - z3 * sinRx
+    const ny = y3 * cosRx - z3 * sinRx
     nz = y3 * sinRx + z3 * cosRx
     y3 = ny; z3 = nz
 
@@ -979,7 +979,9 @@ watch(() => sequencer.latticeInteractionMode, () => {
       <button
         @click="sequencer.closeContextMenu()"
         class="w-full text-xs text-gray-500 hover:text-white mt-1 py-0.5 rounded hover:bg-editor-active transition-colors"
-      >Close</button>
+      >
+Close
+</button>
     </div>
 
     <!-- Path context menu -->
@@ -1003,7 +1005,9 @@ watch(() => sequencer.latticeInteractionMode, () => {
       <button
         @click="applyPathOffset"
         class="w-full text-xs text-allolib-blue hover:text-white py-0.5 rounded hover:bg-editor-active transition-colors"
-      >Apply</button>
+      >
+Apply
+</button>
     </div>
 
     <!-- Poly paths dialog -->
@@ -1034,7 +1038,9 @@ watch(() => sequencer.latticeInteractionMode, () => {
       <button
         @click="showPolyDialog = false"
         class="w-full text-xs text-gray-500 hover:text-white mt-2 py-0.5 rounded hover:bg-editor-active transition-colors"
-      >Close</button>
+      >
+Close
+</button>
     </div>
 
     <!-- Chord finalization dialog -->
@@ -1077,11 +1083,15 @@ watch(() => sequencer.latticeInteractionMode, () => {
         <button
           @click="handleFinalizeChord"
           class="flex-1 py-1 text-xs bg-allolib-blue text-white rounded hover:bg-allolib-blue/80 transition-colors"
-        >Create</button>
+        >
+Create
+</button>
         <button
           @click="handleCancelChord"
           class="flex-1 py-1 text-xs text-gray-400 hover:text-white rounded hover:bg-editor-active border border-editor-border transition-colors"
-        >Cancel</button>
+        >
+Cancel
+</button>
       </div>
     </div>
   </div>

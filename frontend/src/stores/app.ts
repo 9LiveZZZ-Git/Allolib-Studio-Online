@@ -66,8 +66,8 @@ function preprocessForWasm(content: string): string {
     } else {
       result = result.replace(pattern, replacement)
     }
-    if (before !== result) {
-    }
+    // (If a pattern applied, `result` has been updated; no per-pattern logging needed.)
+    void before
   }
 
   // Check if ALLOLIB_WEB_MAIN is already used

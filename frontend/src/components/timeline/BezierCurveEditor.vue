@@ -20,7 +20,7 @@
           <h3>Edit Easing Curve</h3>
           <button class="close-btn" @click="$emit('cancel')" title="Close">
             <svg width="16" height="16" viewBox="0 0 16 16">
-              <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2"/>
+              <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" />
             </svg>
           </button>
         </div>
@@ -39,7 +39,7 @@
                 :title="name"
               >
                 <svg width="32" height="32" viewBox="0 0 32 32">
-                  <path :d="getPresetPath(points)" fill="none" stroke="currentColor" stroke-width="2"/>
+                  <path :d="getPresetPath(points)" fill="none" stroke="currentColor" stroke-width="2" />
                 </svg>
                 <span class="preset-name">{{ formatPresetName(name) }}</span>
               </button>

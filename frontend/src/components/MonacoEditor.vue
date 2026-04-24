@@ -38,7 +38,7 @@ let editor: monaco.editor.IStandaloneCodeEditor | null = null
 // Multi-model support
 const models = new Map<string, monaco.editor.ITextModel>()
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState | null>()
-let currentFilename = ref<string>('main.cpp')
+const currentFilename = ref<string>('main.cpp')
 
 function getLanguageForFile(filename: string): string {
   // All C/C++ files use 'cpp' language

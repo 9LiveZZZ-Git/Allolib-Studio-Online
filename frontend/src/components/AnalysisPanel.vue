@@ -121,7 +121,7 @@ const fftSizeOptions = [
 // Spectrum state
 let peakData: Float32Array | null = null
 const peakDecayRate = 0.002  // dB per frame
-let spectrumHoverInfo = ref<{ freq: number; db: number; x: number; y: number } | null>(null)
+const spectrumHoverInfo = ref<{ freq: number; db: number; x: number; y: number } | null>(null)
 const showSpectrumSettings = ref(false)
 
 // Level meter state
@@ -1657,7 +1657,8 @@ onBeforeUnmount(() => {
       <div class="px-2 py-1 shrink-0 flex items-center gap-2">
         <canvas ref="stereoMeterRef" class="flex-1 h-8 rounded" />
         <!-- Limiter Indicator -->
-        <div class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs"
+        <div
+class="flex flex-col items-center justify-center w-12 h-8 rounded text-xs"
              :class="isLimiting ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400'">
           <span class="font-bold text-[10px]">LIM</span>
           <span class="text-[9px]">{{ gainReduction.toFixed(1) }}dB</span>
@@ -1706,8 +1707,7 @@ onBeforeUnmount(() => {
     <div v-show="activeTab === 'timeline'" class="flex-1 flex flex-col overflow-hidden">
       <TimelinePanel class="flex-1" />
     </div>
-
-  </div>
+</div>
 </template>
 
 <style scoped>

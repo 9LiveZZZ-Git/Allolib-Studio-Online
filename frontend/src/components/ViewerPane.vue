@@ -248,7 +248,9 @@ function handlePopout() {
 function setupPopoutWindow(win: Window) {
   if (!canvasRef.value) return
 
-  // Write the HTML structure
+  // Write the HTML structure. The closing script tag inside the template
+  // literal is built via string concatenation (see below) to avoid terminating
+  // the outer script block of this .vue file when bundlers process it.
   win.document.write(`
     <!DOCTYPE html>
     <html>
@@ -316,7 +318,7 @@ function setupPopoutWindow(win: Window) {
             }
           }
         });
-      <\/script>
+      ${'<' + '/script>'}
     </body>
     </html>
   `)
