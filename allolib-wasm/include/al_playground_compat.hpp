@@ -831,35 +831,6 @@ public:
 } // namespace al
 
 // ============================================================================
-// Clock (WASM) - backed by emscripten_get_now() so dt()/fps()/frame() work
-// ============================================================================
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-namespace al {
-class Clock {
-public:
-    void update() {
-        double now = emscripten_get_now() * 0.001;  // ms -> seconds
-        if (mPrevTime > 0) mDt = now - mPrevTime;
-        mPrevTime = now;
-        mFrameCount++;
-    }
-    double now() const { return emscripten_get_now() * 0.001; }
-    double dt() const { return mDt; }
-    double fps() const { return mDt > 0 ? 1.0 / mDt : 60.0; }
-    int frame() const { return mFrameCount; }
-    void useRT() {}
-    void useNRT(double) {}
-    double rt() const { return now(); }
-private:
-    double mPrevTime = 0.0;
-    double mDt = 0.0;
-    int mFrameCount = 0;
-};
-} // namespace al
-#endif
-
-// ============================================================================
 // AppRecorder Stub
 // ============================================================================
 namespace al {
