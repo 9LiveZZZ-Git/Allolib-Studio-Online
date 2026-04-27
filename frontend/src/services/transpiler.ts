@@ -108,11 +108,11 @@ const nativeToWebPatterns: Array<{
     replacement: '#include "al_WebSamplePlayer.hpp"',
     description: 'SoundFile include'
   },
-  {
-    pattern: /#include\s*["<]al\/io\/al_File\.hpp[">]/g,
-    replacement: '#include "al_WebFile.hpp"',
-    description: 'File include'
-  },
+  // al/io/al_File.hpp now passes through unchanged. Post-M0 we link
+  // al/io/al_File.cpp into the WASM build so upstream FilePath / File /
+  // FileList / SearchPaths are fully available. al_WebFile.hpp still
+  // provides browser-only helpers (WebFile, UploadedFile, file picker)
+  // and can be included alongside the upstream header.
 
   // Include transformations - Asset loading (native uses Assimp, web uses custom loaders)
   {
