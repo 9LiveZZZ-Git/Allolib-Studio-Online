@@ -9,6 +9,9 @@ al_ext/
 # AlloLib docs (local reference copy, not pushed)
 allolib-docs/
 
+# Native test fixtures for milestone validation (not pushed; uploaded via Import Native UI)
+AlloLib Native Test Files/
+
 # Build outputs
 dist/
 build/
