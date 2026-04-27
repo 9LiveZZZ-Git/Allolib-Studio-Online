@@ -128,6 +128,18 @@ set(ALLOLIB_SOURCES
     ${ALLOLIB_DIR}/src/io/al_WindowGLFW.cpp
     ${ALLOLIB_DIR}/src/io/al_ControlNav.cpp
 
+    # App domains (M0 Push B: provides app.audioDomain(), .graphicsDomain(),
+    # .simulationDomain(), .consoleDomain() that native examples reach for).
+    # Skipped: al_OSCDomain.cpp (deferred to M5 — needs WebSocket OSC layer),
+    # al_GUIDomain.cpp (ImGui, intentionally not linked), al_OmniRendererDomain.cpp
+    # (AlloSphere multi-projector, out of scope), al_StateDistributionDomain.cpp
+    # (multi-machine sync, browser-impossible per M6).
+    ${ALLOLIB_DIR}/src/app/al_ComputationDomain.cpp
+    ${ALLOLIB_DIR}/src/app/al_AudioDomain.cpp
+    ${ALLOLIB_DIR}/src/app/al_SimulationDomain.cpp
+    ${ALLOLIB_DIR}/src/app/al_OpenGLGraphicsDomain.cpp
+    ${ALLOLIB_DIR}/src/app/al_ConsoleDomain.cpp
+
     # Graphics
     ${ALLOLIB_DIR}/src/graphics/al_BufferObject.cpp
     # NOTE: al_DefaultShaders.cpp and al_DefaultShaderString.cpp are replaced by web versions
