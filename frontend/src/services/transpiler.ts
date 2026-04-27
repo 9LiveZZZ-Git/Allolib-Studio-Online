@@ -142,6 +142,18 @@ const nativeToWebPatterns: Array<{
     replacement: ': public WebApp',
     description: 'Base class AudioApp'
   },
+  // DistributedApp / DistributedAppWithState<...> — collapse the network
+  // layer to a single-process WebApp; multi-machine is by design unsupported.
+  {
+    pattern: /:\s*public\s+al::DistributedApp(?:WithState\s*<[^>]*>)?\b/g,
+    replacement: ': public al::WebApp',
+    description: 'Base class al::DistributedApp(WithState)'
+  },
+  {
+    pattern: /:\s*public\s+DistributedApp(?:WithState\s*<[^>]*>)?\b/g,
+    replacement: ': public WebApp',
+    description: 'Base class DistributedApp(WithState)'
+  },
 
   // Main function transformations
   {
@@ -608,9 +620,27 @@ export function transpileToWeb(code: string): TranspileResult {
   // user's own main() can stay — the link uses --no-entry, so it is
   // harmless dead code.
   if (!result.includes('ALLOLIB_WEB_MAIN')) {
-    const classMatch = result.match(/class\s+(\w+)\s*:\s*public\s+(?:al::)?WebApp\b/)
-    if (classMatch) {
-      result = result.replace(/\s*$/, '') + `\n\nALLOLIB_WEB_MAIN(${classMatch[1]})\n`
+    // Match class OR struct, with optional template clause, deriving from
+    // any (al::)?WebApp. Falls back to grabbing the type used in
+    // `<Type> app; app.start();` if no derivation is found inline.
+    let appClass: string | undefined
+    const derivedMatch = result.match(
+      /(?:class|struct)\s+(\w+)\b[\s\S]{0,400}?:\s*public\s+(?:al::)?WebApp\b/
+    )
+    if (derivedMatch) {
+      appClass = derivedMatch[1]
+    } else {
+      const startCallMatch = result.match(
+        /\b(\w+)\s+\w+\s*;[\s\S]{0,400}?\b\w+\.start\s*\(\s*\)/
+      )
+      if (startCallMatch && /^[A-Z]/.test(startCallMatch[1])) {
+        appClass = startCallMatch[1]
+      }
+    }
+    if (appClass) {
+      result = result.replace(/\s*$/, '') + `\n\nALLOLIB_WEB_MAIN(${appClass})\n`
+    } else {
+      warnings.push('Could not detect App-derived class. Add ALLOLIB_WEB_MAIN(YourApp) manually.')
     }
   }
 

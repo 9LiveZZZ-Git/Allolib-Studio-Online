@@ -800,20 +800,11 @@ private:
 
 // ============================================================================
 // MIDI Keyboard Mapping
-// Note: allolib provides asciiToMIDI() in al/scene/al_PolySynth.hpp
+// Note: al::asciiToIndex() is provided by allolib's al/scene/al_PolySynth.hpp
+// (signature: int asciiToIndex(int asciiKey, int offset = 0)). Defining a
+// second overload here causes ambiguous-call errors when both headers are
+// visible, so we just rely on the upstream one.
 // ============================================================================
-
-namespace al {
-
-// ASCII to index (0-9 for presets)
-inline int asciiToIndex(int key) {
-    if (key >= '0' && key <= '9') {
-        return key - '0';
-    }
-    return -1;
-}
-
-} // namespace al
 
 // ============================================================================
 // Navigation Control Stub

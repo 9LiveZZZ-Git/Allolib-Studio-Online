@@ -172,6 +172,24 @@ public:
     /// Get audio configuration
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
 
+    /// Native al::App compatibility — returns an AudioIO-shaped view of
+    /// the WebAudioConfig so that imported code calling
+    /// `audioIO().framesPerSecond()` etc. compiles unchanged.
+    struct AudioIOView {
+        int sampleRate;
+        int bufferSize;
+        int outputChannels;
+        int inputChannels;
+        int framesPerSecond() const { return sampleRate; }
+        int framesPerBuffer() const { return bufferSize; }
+        int channelsOut() const { return outputChannels; }
+        int channelsIn() const { return inputChannels; }
+    };
+    AudioIOView audioIO() const {
+        return { mAudioConfig.sampleRate, mAudioConfig.bufferSize,
+                 mAudioConfig.outputChannels, mAudioConfig.inputChannels };
+    }
+
     /// Get/set the navigation pose (camera position) - compatible with al::App
     Nav& nav() { return mNav; }
     const Nav& nav() const { return mNav; }

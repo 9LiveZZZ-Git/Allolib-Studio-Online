@@ -94,6 +94,53 @@ struct MIDIMessage {
     // For pitch bend (14-bit value, center = 8192)
     int pitchBend() const { return (data2 << 7) | data1; }
     float pitchBendNormalized() const { return (pitchBend() - 8192) / 8192.0f; }
+
+    // Native AlloLib aliases — desktop code uses these names
+    int noteNumber() const { return data1; }
+    int controlNumber() const { return data1; }
+};
+
+// Native AlloLib's MIDIByte exposes the same status bytes as the
+// MIDIStatus enum above; aliasing the constants keeps `MIDIByte::NOTE_ON`
+// usage in imported native code compiling without modification.
+struct MIDIByte {
+    static constexpr uint8_t NOTE_OFF         = 0x80;
+    static constexpr uint8_t NOTE_ON          = 0x90;
+    static constexpr uint8_t POLY_PRESSURE    = 0xA0;
+    static constexpr uint8_t CONTROL_CHANGE   = 0xB0;
+    static constexpr uint8_t PROGRAM_CHANGE   = 0xC0;
+    static constexpr uint8_t CHANNEL_PRESSURE = 0xD0;
+    static constexpr uint8_t PITCH_BEND       = 0xE0;
+    static constexpr uint8_t SYSTEM           = 0xF0;
+};
+
+// MIDIMessageHandler — native AlloLib mixin that apps inherit from to
+// receive MIDI callbacks. In WASM the actual delivery happens via
+// WebMIDI's JS bridge, so this is a virtual stub. bindTo() accepts any
+// MIDI source (WebMIDI, RtMidiIn alias, etc.) without coupling the
+// types — the stub does nothing at link time.
+class MIDIMessageHandler {
+public:
+    virtual ~MIDIMessageHandler() = default;
+    virtual void onMIDIMessage(const MIDIMessage&) {}
+    template <typename T> void bindTo(T&) {}
+};
+
+// RtMidiIn is the native MIDI input class from the RtMidi C++ library.
+// Browsers can't open OS MIDI devices directly — Web MIDI is the only
+// path — so this stub keeps imported code compiling. Real input flows
+// through `WebMIDI`, which the user can use in place of `RtMidiIn`.
+class RtMidiIn {
+public:
+    void openVirtualPort(const std::string& = "") {}
+    void openPort(unsigned int = 0, const std::string& = "") {}
+    void closePort() {}
+    unsigned int getPortCount() const { return 0; }
+    std::string getPortName(unsigned int = 0) const { return ""; }
+    void ignoreTypes(bool = true, bool = true, bool = true) {}
+    void setCallback(void*, void* = nullptr) {}
+    void cancelCallback() {}
+    bool isPortOpen() const { return false; }
 };
 
 /**
