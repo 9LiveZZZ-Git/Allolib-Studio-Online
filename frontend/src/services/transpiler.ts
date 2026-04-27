@@ -601,6 +601,19 @@ export function transpileToWeb(code: string): TranspileResult {
     }
   }
 
+  // Ensure ALLOLIB_WEB_MAIN(AppClass) is present so WASM exports
+  // (allolib_create/start/stop/process_audio/...) get emitted by the
+  // macro. Native main() bodies vary too much to regex-match reliably;
+  // append the macro based on the App-derived class declaration. The
+  // user's own main() can stay — the link uses --no-entry, so it is
+  // harmless dead code.
+  if (!result.includes('ALLOLIB_WEB_MAIN')) {
+    const classMatch = result.match(/class\s+(\w+)\s*:\s*public\s+(?:al::)?WebApp\b/)
+    if (classMatch) {
+      result = result.replace(/\s*$/, '') + `\n\nALLOLIB_WEB_MAIN(${classMatch[1]})\n`
+    }
+  }
+
   // Check for unsupported features
   if (result.includes('DistributedApp')) {
     warnings.push('DistributedApp is not supported in web. Network features need alternative implementation.')

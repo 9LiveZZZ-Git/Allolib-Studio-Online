@@ -156,6 +156,9 @@ public:
 #endif
     }
 
+    template <typename G>
+    void draw(G&) { draw(); }
+
     void begin() {}
     void end() {}
 
