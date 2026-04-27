@@ -121,7 +121,9 @@ set(ALLOLIB_SOURCES
     ${ALLOLIB_DIR}/external/glad/src/glad.c
 
     # IO (audio data handling)
+    ${ALLOLIB_DIR}/src/io/al_AudioIO.cpp           # M0: AL_AUDIO_DUMMY branch keeps this Emscripten-safe
     ${ALLOLIB_DIR}/src/io/al_AudioIOData.cpp
+    ${ALLOLIB_DIR}/src/io/al_File.cpp              # M0: provides al::FilePath/FileList/SearchPaths + path helpers
     ${ALLOLIB_DIR}/src/io/al_Window.cpp
     ${ALLOLIB_DIR}/src/io/al_WindowGLFW.cpp
     ${ALLOLIB_DIR}/src/io/al_ControlNav.cpp
@@ -175,6 +177,9 @@ set(ALLOLIB_SOURCES
     ${ALLOLIB_DIR}/src/sound/al_SpeakerAdjustment.cpp
     ${ALLOLIB_DIR}/src/sound/al_StereoPanner.cpp
     ${ALLOLIB_DIR}/src/sound/al_Vbap.cpp
+
+    # Sphere (M0: AlloSphere venue speaker layout — pure geometry, no platform deps)
+    ${ALLOLIB_DIR}/src/sphere/al_AlloSphereSpeakerLayout.cpp
 
     # Spatial
     ${ALLOLIB_DIR}/src/spatial/al_HashSpace.cpp
