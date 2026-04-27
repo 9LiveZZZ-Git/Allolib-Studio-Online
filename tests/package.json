@@ -10,12 +10,12 @@
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
     "test:ui": "playwright test --ui",
-    "test:compilation": "node --loader ts-node/esm scripts/test-compilation.ts",
-    "test:local": "node --loader ts-node/esm scripts/local-test-runner.ts",
-    "test:examples": "node --loader ts-node/esm scripts/test-all-examples.ts",
-    "test:examples:webgl2": "node --loader ts-node/esm scripts/test-all-examples.ts --backend webgl2",
-    "test:examples:webgpu": "node --loader ts-node/esm scripts/test-all-examples.ts --backend webgpu",
-    "test:examples:both": "node --loader ts-node/esm scripts/test-all-examples.ts --backend both",
+    "test:compilation": "tsx scripts/test-compilation.ts",
+    "test:local": "tsx scripts/local-test-runner.ts",
+    "test:examples": "tsx scripts/test-all-examples.ts",
+    "test:examples:webgl2": "tsx scripts/test-all-examples.ts --backend webgl2",
+    "test:examples:webgpu": "tsx scripts/test-all-examples.ts --backend webgpu",
+    "test:examples:both": "tsx scripts/test-all-examples.ts --backend both",
     "test:pipeline": "playwright test all-examples-pipeline-test",
     "test:pipeline:webgl2": "playwright test all-examples-pipeline-test --project=chromium-webgl2",
     "test:pipeline:webgpu": "playwright test all-examples-pipeline-test --project=chromium-webgpu",
@@ -23,7 +23,7 @@
     "test:visual": "playwright test visual-regression",
     "test:visual:update": "UPDATE_BASELINES=true playwright test visual-regression",
     "report": "playwright show-report test-results/html-report",
-    "dashboard": "node --loader ts-node/esm scripts/local-test-runner.ts --dashboard",
+    "dashboard": "tsx scripts/local-test-runner.ts --dashboard",
     "lint": "eslint . --ext .ts"
   },
   "devDependencies": {
@@ -37,6 +37,7 @@
     "ora": "^8.0.1",
     "pngjs": "^7.0.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.0",
     "ws": "^8.14.2"
   }

@@ -139,7 +139,7 @@ jobs:
       - name: Run WebGL2 Example Tests
         working-directory: tests
         run: |
-          node --loader ts-node/esm scripts/test-all-examples.ts \
+          npx tsx scripts/test-all-examples.ts \
             --backend webgl2 \
             --parallel ${{ github.event.inputs.parallel || '1' }} \
             ${{ github.event.inputs.filter && format('--filter "{0}"', github.event.inputs.filter) || '' }}
@@ -207,7 +207,7 @@ jobs:
       - name: Run WebGPU Example Tests
         working-directory: tests
         run: |
-          node --loader ts-node/esm scripts/test-all-examples.ts \
+          npx tsx scripts/test-all-examples.ts \
             --backend webgpu \
             --parallel 1
         env:
