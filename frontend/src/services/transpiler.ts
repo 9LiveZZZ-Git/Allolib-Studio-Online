@@ -638,6 +638,24 @@ export function transpileToWeb(code: string): TranspileResult {
       }
     }
     if (appClass) {
+      // Strip any existing `int main(...) { ... }` block before injecting,
+      // since ALLOLIB_WEB_MAIN expands to its own `int main()` and a
+      // duplicate would fail the link. Brace-counted scan so multi-line
+      // bodies with nested blocks are handled correctly.
+      const mainOpen = /int\s+main\s*\([^)]*\)\s*\{/.exec(result)
+      if (mainOpen) {
+        let depth = 1
+        let i = mainOpen.index + mainOpen[0].length
+        while (i < result.length && depth > 0) {
+          const c = result[i]
+          if (c === '{') depth++
+          else if (c === '}') depth--
+          i++
+        }
+        if (depth === 0) {
+          result = result.slice(0, mainOpen.index) + result.slice(i)
+        }
+      }
       result = result.replace(/\s*$/, '') + `\n\nALLOLIB_WEB_MAIN(${appClass})\n`
     } else {
       warnings.push('Could not detect App-derived class. Add ALLOLIB_WEB_MAIN(YourApp) manually.')
