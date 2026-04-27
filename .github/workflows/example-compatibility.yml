@@ -10,11 +10,10 @@
 
 name: Example Compatibility
 
+# NOTE: Auto-triggers (schedule, push) disabled — these tests target the
+# desktop dev environment, not Railway's online deploy. Re-enable by
+# restoring schedule/push blocks below when desktop CI is ready.
 on:
-  schedule:
-    # Run weekly on Sunday at 2 AM UTC
-    - cron: '0 2 * * 0'
-
   workflow_dispatch:
     inputs:
       backend:
@@ -35,12 +34,6 @@ on:
         required: false
         default: '1'
         type: string
-
-  push:
-    branches: [main, develop]
-    paths:
-      - 'frontend/src/data/**'
-      - 'allolib-wasm/**'
 
 permissions:
   contents: read

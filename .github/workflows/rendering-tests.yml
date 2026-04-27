@@ -5,17 +5,10 @@
 
 name: Rendering Pipeline Tests
 
+# NOTE: Auto-triggers (push, pull_request, schedule) disabled — these tests
+# target the desktop dev environment, not Railway's online deploy. Re-enable
+# by restoring push/pull_request blocks below when desktop CI is ready.
 on:
-  push:
-    branches: [main, develop, 'feature/**']
-    paths:
-      - 'frontend/**'
-      - 'backend/**'
-      - 'allolib-wasm/**'
-      - 'tests/**'
-      - '.github/workflows/rendering-tests.yml'
-  pull_request:
-    branches: [main, develop]
   workflow_dispatch:
     inputs:
       backend:
