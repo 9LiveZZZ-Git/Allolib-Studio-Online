@@ -21,6 +21,11 @@ extern "C" int gladLoadGLLoader(void* (*load)(const char*));
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <dirent.h>
+#include <sys/stat.h>
 
 // Gamma DSP library for oscillators etc.
 #include "Gamma/Domain.h"
@@ -1090,12 +1095,6 @@ float al_texture_lod_get_continuous(float distance, int maxMipLevel) {
 // when the user starts a new project / loads an example). After a wipe,
 // the JS side calls FS.syncfs(false, ...) to flush the empty IDBFS to
 // IndexedDB so the deletion persists.
-
-#include <dirent.h>
-#include <sys/stat.h>
-#include <fstream>
-#include <sstream>
-#include <string>
 
 EMSCRIPTEN_KEEPALIVE
 const char* al_list_dir(const char* path) {
