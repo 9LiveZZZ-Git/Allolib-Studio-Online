@@ -26,6 +26,7 @@ extern "C" int gladLoadGLLoader(void* (*load)(const char*));
 #include <string>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>  // ::rmdir, ::unlink for al_remove_dir
 
 // Gamma DSP library for oscillators etc.
 #include "Gamma/Domain.h"
