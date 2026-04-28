@@ -76,6 +76,13 @@ const nativeToWebPatterns: Array<{
   },
 
   // Include transformations - Scene/Synth classes
+  // M1: DistributedScene collapses to DynamicScene (single-process; the
+  // multi-machine sync layer is browser-impossible per the M6 plan).
+  {
+    pattern: /#include\s*["<]al\/scene\/al_DistributedScene\.hpp[">]/g,
+    replacement: '#include "al/scene/al_DynamicScene.hpp"  // M1: collapsed (no multi-machine in browser)',
+    description: 'DistributedScene → DynamicScene collapse'
+  },
   {
     pattern: /#include\s*["<]al\/scene\/al_PolySynth\.hpp[">]/g,
     replacement: '#include "al_playground_compat.hpp"  // Provides PolySynth',
@@ -148,6 +155,18 @@ const nativeToWebPatterns: Array<{
     pattern: /:\s*public\s+al::DistributedApp(?:WithState\s*<[^>]*>)?\b/g,
     replacement: ': public al::WebApp',
     description: 'Base class al::DistributedApp(WithState)'
+  },
+  // DistributedScene → DynamicScene: collapse the multi-machine sync layer
+  // (M1, browser-impossible per M6).
+  {
+    pattern: /:\s*public\s+al::DistributedScene\b/g,
+    replacement: ': public al::DynamicScene',
+    description: 'Base class al::DistributedScene → DynamicScene'
+  },
+  {
+    pattern: /:\s*public\s+DistributedScene\b/g,
+    replacement: ': public DynamicScene',
+    description: 'Base class DistributedScene → DynamicScene'
   },
   {
     pattern: /:\s*public\s+DistributedApp(?:WithState\s*<[^>]*>)?\b/g,
