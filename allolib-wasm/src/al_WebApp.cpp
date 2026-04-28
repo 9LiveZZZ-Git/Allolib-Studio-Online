@@ -290,7 +290,12 @@ void WebApp::stop() {
     std::cout << "[AlloLib] Application stopped" << std::endl;
 }
 
+// Optional pre-onAnimate hook installed by playground_compat (PresetHandler
+// tickAll for morph interpolation). nullptr when no PresetHandler exists.
+void (*gPlaygroundAnimateHook)(double dt) = nullptr;
+
 void WebApp::tick(double dt) {
+    if (gPlaygroundAnimateHook) gPlaygroundAnimateHook(dt);
     // Call user's onAnimate
     onAnimate(dt);
 

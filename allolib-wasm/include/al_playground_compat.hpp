@@ -69,6 +69,8 @@ inline void gammaSetSampleRate(int sr) {
 #ifdef __EMSCRIPTEN__
 // WASM builds: Include web-based parameter GUI, sequencer bridge, and MIDI
 #include <emscripten.h>
+#include <nlohmann/json.hpp>
+#include "al/types/al_VariantValue.hpp"
 #include "al_WebControlGUI.hpp"
 #include "al_WebSequencerBridge.hpp"
 #include "al_WebMIDI.hpp"
@@ -138,18 +140,45 @@ using ControlGUI = WebControlGUI;
 } // namespace al
 
 // ============================================================================
-// PresetHandler Stub (uses file system - localStorage in future)
+// PresetHandler — full ParameterMeta::getFields/setFields round-trip
 // ============================================================================
+//
+// Serializes registered parameters via the same VariantValue field schema
+// upstream uses (al_Parameter.hpp), so every parameter type round-trips:
+// Parameter (float), ParameterInt, ParameterBool, ParameterString,
+// ParameterMenu, ParameterChoice, ParameterVec3/Vec4, ParameterColor,
+// ParameterPose, Trigger.
+//
+// Storage: JSON-per-preset in localStorage under key
+//   `allolib_preset_<rootDir>_<presetName>`
+// JSON shape: { "param.name": <scalar OR array of scalars> }
+//
+// morphTo(name, time) snapshots the current field set, loads the target
+// without applying, and walks the interpolation each tick(dt) call. The
+// playground compat tick is invoked from WebApp::tickAudio so morphing
+// runs at audio rate (configurable later).
+
+// Hook installed in al_WebApp.cpp; PresetHandler points it at tickAll on
+// first construction so morph interpolation runs once per frame from
+// WebApp::tick(dt), without users needing to plumb a tick call themselves.
+extern void (*gPlaygroundAnimateHook)(double dt);
 
 namespace al {
 
 class PresetHandler {
 public:
-    PresetHandler(std::string name = "presets", bool = false) : mName(name) {}
-    PresetHandler(TimeMasterMode, std::string name = "presets", bool = false) : mName(name) {}
-    ~PresetHandler() = default;
+    PresetHandler(std::string name = "presets", bool = false) : mName(name) {
+        registerForTick();
+    }
+    PresetHandler(TimeMasterMode, std::string name = "presets", bool = false) : mName(name) {
+        registerForTick();
+    }
+    ~PresetHandler() {
+        auto& v = activeHandlers();
+        v.erase(std::remove(v.begin(), v.end(), this), v.end());
+    }
 
-    // Registration
+    // ── Registration ──────────────────────────────────────────────────────
     PresetHandler& registerParameter(ParameterMeta& p) {
         mParams.push_back(&p);
         return *this;
@@ -158,21 +187,20 @@ public:
     PresetHandler& registerParameterBundle(ParameterBundle&) { return *this; }  // bundles not fully supported yet
     PresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
 
-    // Store presets - serialize registered params to JSON in localStorage
+    // ── Store / recall ────────────────────────────────────────────────────
     void storePreset(std::string name) {
-        std::string json = "{";
-        for (size_t i = 0; i < mParams.size(); ++i) {
-            if (i > 0) json += ",";
-            json += "\"" + mParams[i]->getName() + "\":";
-            // Best-effort: use toFloat() for numeric params
-            json += std::to_string(mParams[i]->toFloat());
+        nlohmann::json root = nlohmann::json::object();
+        for (auto* p : mParams) {
+            std::vector<VariantValue> fields;
+            p->getFields(fields);
+            root[p->getName()] = serializeFields(fields);
         }
-        json += "}";
+        std::string s = root.dump();
         EM_ASM({
             try {
                 localStorage.setItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1), UTF8ToString($2));
             } catch(e) { console.warn('[PresetHandler] localStorage full', e); }
-        }, mName.c_str(), name.c_str(), json.c_str());
+        }, mName.c_str(), name.c_str(), s.c_str());
         mCurrentPreset = name;
     }
     void storePreset(int index, std::string name = "", bool = true) {
@@ -180,53 +208,83 @@ public:
         storePreset(name);
     }
 
-    // Recall presets - read JSON from localStorage and fromFloat() each value
     void recallPreset(std::string name) {
-        char* jsonPtr = (char*)EM_ASM_PTR({
-            var v = localStorage.getItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1));
-            if (!v) return 0;
-            var lengthBytes = lengthBytesUTF8(v) + 1;
-            var ptr = _malloc(lengthBytes);
-            stringToUTF8(v, ptr, lengthBytes);
-            return ptr;
-        }, mName.c_str(), name.c_str());
-        if (jsonPtr == nullptr) return;
-        std::string json(jsonPtr);
-        free(jsonPtr);
-        // Naive JSON parse: find "name":value pairs
+        nlohmann::json root;
+        if (!loadPresetJson(name, root)) return;
         for (auto* p : mParams) {
-            std::string key = "\"" + p->getName() + "\":";
-            size_t pos = json.find(key);
-            if (pos != std::string::npos) {
-                size_t valStart = pos + key.length();
-                size_t valEnd = json.find_first_of(",}", valStart);
-                try {
-                    float val = std::stof(json.substr(valStart, valEnd - valStart));
-                    p->fromFloat(val);
-                } catch(...) {}
-            }
+            auto it = root.find(p->getName());
+            if (it == root.end()) continue;
+            std::vector<VariantValue> fields;
+            p->getFields(fields);  // get type schema for the parameter
+            applyJsonToFields(*it, fields);
+            p->setFields(fields);
         }
         mCurrentPreset = name;
+        mMorphElapsed = mMorphDuration;  // cancel any in-flight morph
     }
     void recallPreset(int index) { recallPreset(std::to_string(index)); }
     void recallPresetSynchronous(std::string name) { recallPreset(name); }
     void recallPresetSynchronous(int index) { recallPreset(index); }
 
-    // Morphing - no interpolation yet, just direct recall
+    // ── Morph ─────────────────────────────────────────────────────────────
+    // Same semantics as native: snapshot current values and interpolate
+    // toward the target preset over `morphTime` seconds. Numeric fields
+    // are linearly interpolated; non-numeric (string/bool) snap at the
+    // midpoint. Caller must invoke tick(dt) periodically for the morph
+    // to advance (we tick from the audio loop in WebApp).
+    void recallPreset(std::string name, float morphTime) {
+        if (morphTime <= 0.0f) { recallPreset(name); return; }
+        nlohmann::json root;
+        if (!loadPresetJson(name, root)) return;
+        mMorphFromFields.clear();
+        mMorphToFields.clear();
+        mMorphParams.clear();
+        for (auto* p : mParams) {
+            auto it = root.find(p->getName());
+            if (it == root.end()) continue;
+            std::vector<VariantValue> fromF, toF;
+            p->getFields(fromF);
+            toF = fromF;  // copy schema
+            applyJsonToFields(*it, toF);
+            mMorphParams.push_back(p);
+            mMorphFromFields.push_back(std::move(fromF));
+            mMorphToFields.push_back(std::move(toF));
+        }
+        mMorphDuration = morphTime;
+        mMorphElapsed  = 0.0f;
+        mCurrentPreset = name;
+    }
+    void recallPreset(int i, float morphTime) { recallPreset(std::to_string(i), morphTime); }
+
     void setMorphTime(float t) { mMorphTime = t; }
     float getMorphTime() const { return mMorphTime; }
-    void morphTo(std::string name, float) { recallPreset(name); }
-    void morphTo(int i, float) { recallPreset(i); }
-    void stopMorph() {}
+    void morphTo(std::string name, float t) { recallPreset(name, t); }
+    void morphTo(int i, float t)            { recallPreset(i, t); }
+    void stopMorph() { mMorphElapsed = mMorphDuration; }
 
-    // Paths
+    // Advance the active morph by dt seconds. Safe to call when no morph
+    // is in progress (no-op).
+    void tick(float dt) {
+        if (mMorphElapsed >= mMorphDuration) return;
+        mMorphElapsed += dt;
+        float t = mMorphElapsed / mMorphDuration;
+        if (t >= 1.0f) t = 1.0f;
+        for (size_t i = 0; i < mMorphParams.size(); ++i) {
+            std::vector<VariantValue> blended = mMorphFromFields[i];
+            for (size_t k = 0; k < blended.size() && k < mMorphToFields[i].size(); ++k) {
+                blended[k] = lerpVariant(mMorphFromFields[i][k], mMorphToFields[i][k], t);
+            }
+            mMorphParams[i]->setFields(blended);
+        }
+    }
+
+    // ── Paths / metadata ──────────────────────────────────────────────────
     void setRootPath(std::string) {}
     std::string getRootPath() const { return ""; }
     void setSubDirectory(std::string) {}
     std::string getSubDirectory() const { return ""; }
     std::string getCurrentPath() const { return ""; }
 
-    // Preset listing - iterate localStorage keys matching prefix
     std::vector<std::string> availablePresets() const {
         std::vector<std::string> result;
         char* listPtr = (char*)EM_ASM_PTR({
@@ -259,18 +317,132 @@ public:
     int getCurrentPresetIndex() const { return 0; }
     std::string getCurrentPresetName() const { return mCurrentPreset; }
 
-    // Callbacks
+    // ── Callbacks (no-op for now; future: dispatch on store/recall) ───────
     void registerPresetCallback(std::function<void(int, void*)>, void* = nullptr) {}
     void registerMorphTimeCallback(std::function<void(float, void*)>, void* = nullptr) {}
 
-    // Verbose
     void verbose(bool) {}
 
 private:
+    // ── Helpers ───────────────────────────────────────────────────────────
+    static nlohmann::json variantToJson(const VariantValue& v) {
+        switch (v.type()) {
+            case VariantType::VARIANT_FLOAT:  return v.get<float>();
+            case VariantType::VARIANT_DOUBLE: return v.get<double>();
+            case VariantType::VARIANT_INT8:   return v.get<int8_t>();
+            case VariantType::VARIANT_INT16:  return v.get<int16_t>();
+            case VariantType::VARIANT_INT32:  return v.get<int32_t>();
+            case VariantType::VARIANT_INT64:  return v.get<int64_t>();
+            case VariantType::VARIANT_UINT8:  return v.get<uint8_t>();
+            case VariantType::VARIANT_UINT16: return v.get<uint16_t>();
+            case VariantType::VARIANT_UINT32: return v.get<uint32_t>();
+            case VariantType::VARIANT_UINT64: return v.get<uint64_t>();
+            case VariantType::VARIANT_BOOL:   return v.get<bool>();
+            case VariantType::VARIANT_STRING: return v.get<std::string>();
+            case VariantType::VARIANT_CHAR:   return std::string(1, v.get<char>());
+            default: return nullptr;
+        }
+    }
+
+    static nlohmann::json serializeFields(const std::vector<VariantValue>& fields) {
+        if (fields.size() == 1) return variantToJson(fields[0]);
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto& f : fields) arr.push_back(variantToJson(f));
+        return arr;
+    }
+
+    static VariantValue jsonToVariantOfType(const nlohmann::json& j, VariantType t) {
+        switch (t) {
+            case VariantType::VARIANT_FLOAT:
+                return VariantValue(j.is_number() ? j.get<float>() : 0.0f);
+            case VariantType::VARIANT_DOUBLE:
+                return VariantValue(j.is_number() ? j.get<double>() : 0.0);
+            case VariantType::VARIANT_INT32:
+                return VariantValue(j.is_number() ? j.get<int32_t>() : (int32_t)0);
+            case VariantType::VARIANT_INT64:
+                return VariantValue(j.is_number() ? j.get<int64_t>() : (int64_t)0);
+            case VariantType::VARIANT_BOOL:
+                return VariantValue(j.is_boolean() ? j.get<bool>() : (j.is_number() && j.get<int>() != 0));
+            case VariantType::VARIANT_STRING:
+                return VariantValue(j.is_string() ? j.get<std::string>() : std::string());
+            default:
+                return j.is_number() ? VariantValue((float)j.get<double>()) : VariantValue();
+        }
+    }
+
+    // Replace each entry in `fields` with the corresponding JSON value,
+    // preserving the original VariantType (so setFields gets the right
+    // schema even if JSON loses precision/type info).
+    static void applyJsonToFields(const nlohmann::json& v, std::vector<VariantValue>& fields) {
+        if (v.is_array()) {
+            size_t n = std::min(fields.size(), v.size());
+            for (size_t i = 0; i < n; ++i) {
+                fields[i] = jsonToVariantOfType(v[i], fields[i].type());
+            }
+        } else if (!fields.empty()) {
+            fields[0] = jsonToVariantOfType(v, fields[0].type());
+        }
+    }
+
+    bool loadPresetJson(const std::string& name, nlohmann::json& out) const {
+        char* jsonPtr = (char*)EM_ASM_PTR({
+            var v = localStorage.getItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1));
+            if (!v) return 0;
+            var lengthBytes = lengthBytesUTF8(v) + 1;
+            var ptr = _malloc(lengthBytes);
+            stringToUTF8(v, ptr, lengthBytes);
+            return ptr;
+        }, mName.c_str(), name.c_str());
+        if (!jsonPtr) return false;
+        std::string json(jsonPtr);
+        free(jsonPtr);
+        out = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+        return !out.is_discarded();
+    }
+
+    static VariantValue lerpVariant(const VariantValue& a, const VariantValue& b, float t) {
+        switch (a.type()) {
+            case VariantType::VARIANT_FLOAT:
+                return VariantValue(a.get<float>() + (b.get<float>() - a.get<float>()) * t);
+            case VariantType::VARIANT_DOUBLE:
+                return VariantValue(a.get<double>() + (b.get<double>() - a.get<double>()) * (double)t);
+            case VariantType::VARIANT_INT32:
+                return VariantValue((int32_t)(a.get<int32_t>() + (int32_t)((b.get<int32_t>() - a.get<int32_t>()) * t)));
+            case VariantType::VARIANT_INT64:
+                return VariantValue((int64_t)(a.get<int64_t>() + (int64_t)((b.get<int64_t>() - a.get<int64_t>()) * t)));
+            // Non-numeric: snap at the midpoint.
+            default:
+                return t < 0.5f ? a : b;
+        }
+    }
+
     std::string mName;
     std::string mCurrentPreset;
     std::vector<ParameterMeta*> mParams;
     float mMorphTime = 0.0f;
+
+    // Active morph state
+    float mMorphDuration = 0.0f;
+    float mMorphElapsed  = 0.0f;
+    std::vector<ParameterMeta*>           mMorphParams;
+    std::vector<std::vector<VariantValue>> mMorphFromFields;
+    std::vector<std::vector<VariantValue>> mMorphToFields;
+
+    // Static auto-tick registry — wired into WebApp::tick via the
+    // gPlaygroundAnimateHook function pointer at first construction.
+    static std::vector<PresetHandler*>& activeHandlers() {
+        static std::vector<PresetHandler*> v;
+        return v;
+    }
+    static void tickAllFromAnimate(double dt) {
+        for (auto* h : activeHandlers()) h->tick((float)dt);
+    }
+    void registerForTick() {
+        if (gPlaygroundAnimateHook == nullptr) {
+            gPlaygroundAnimateHook = &PresetHandler::tickAllFromAnimate;
+        }
+        activeHandlers().push_back(this);
+    }
 };
 
 } // namespace al
