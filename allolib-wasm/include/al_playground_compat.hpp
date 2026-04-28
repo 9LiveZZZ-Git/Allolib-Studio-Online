@@ -61,6 +61,9 @@ inline void gammaSetSampleRate(int sr) {
 // Standard library
 #include <cmath>
 #include <memory>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
 
 // ============================================================================
 // Platform-specific includes
@@ -182,28 +185,68 @@ public:
     }
 
     // ── Registration ──────────────────────────────────────────────────────
+    // Registering a parameter with PresetHandler also forwards it to the
+    // active WebControlGUI so it shows up in the parameter panel — saves
+    // users from writing both `mPresets << p` and `gui << p`. If no panel
+    // exists yet, a default one is lazily created on first call.
     PresetHandler& registerParameter(ParameterMeta& p) {
         mParams.push_back(&p);
+        auto* gui = WebControlGUI::getActiveInstance();
+        if (!gui) {
+            static WebControlGUI sDefaultPanel;
+            gui = &sDefaultPanel;
+        }
+        gui->registerParameterMeta(p);
         return *this;
     }
     PresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
-    PresetHandler& registerParameterBundle(ParameterBundle&) { return *this; }  // bundles not fully supported yet
+    PresetHandler& registerParameterBundle(ParameterBundle& b) {
+        for (auto* p : b.parameters()) {
+            if (p) registerParameter(*p);
+        }
+        return *this;
+    }
     PresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
 
     // ── Store / recall ────────────────────────────────────────────────────
+    // Stores a preset in three forms in parallel:
+    //   1. localStorage JSON (legacy / quick reload across page refreshes)
+    //   2. <rootDir>/<name>.preset           (native AlloLib OSC-text format)
+    //   3. <rootDir>/<name>.arrangement.json (extended JSON metadata)
+    // The folder is created in MEMFS if it doesn't exist (same setup the
+    // export-to-native flow can later zip up).
     void storePreset(std::string name) {
         nlohmann::json root = nlohmann::json::object();
+        std::ostringstream presetText;
+        presetText << "::" << name << "\n";
+
         for (auto* p : mParams) {
             std::vector<VariantValue> fields;
             p->getFields(fields);
             root[p->getName()] = serializeFields(fields);
+            // Native .preset line: /address typeChars value(s)
+            std::string types, vals;
+            for (auto& f : fields) appendNativeField(types, vals, f);
+            presetText << p->getFullAddress() << " " << types << " " << vals << "\n";
         }
-        std::string s = root.dump();
+        presetText << "::\n";
+
+        std::string jsonStr = root.dump(2);
+
+        // 1. localStorage
         EM_ASM({
             try {
                 localStorage.setItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1), UTF8ToString($2));
             } catch(e) { console.warn('[PresetHandler] localStorage full', e); }
-        }, mName.c_str(), name.c_str(), s.c_str());
+        }, mName.c_str(), name.c_str(), jsonStr.c_str());
+
+        // 2 + 3. MEMFS files in <rootDir>/
+        ensureDirectory(mName);
+        const std::string presetPath = mName + "/" + name + ".preset";
+        const std::string jsonPath   = mName + "/" + name + ".arrangement.json";
+        if (std::ofstream f{presetPath}; f) f << presetText.str();
+        if (std::ofstream f{jsonPath};   f) f << jsonStr;
+
         mCurrentPreset = name;
     }
     void storePreset(int index, std::string name = "", bool = true) {
@@ -384,6 +427,58 @@ private:
             }
         } else if (!fields.empty()) {
             fields[0] = jsonToVariantOfType(v, fields[0].type());
+        }
+    }
+
+    // Append one VariantValue to the native AlloLib .preset wire format
+    // (type-char appended to `types`, stringified value appended to `vals`
+    // followed by a space). Bool is written as `i` (0/1), string as `s`,
+    // floats/doubles as `f`/`d`, integers as `i`. Matches upstream
+    // PresetHandler::savePresetValues so files are interchangeable.
+    static void appendNativeField(std::string& types, std::string& vals, const VariantValue& v) {
+        switch (v.type()) {
+            case VariantType::VARIANT_FLOAT:
+                types += 'f'; vals += std::to_string(v.get<float>())  + " "; break;
+            case VariantType::VARIANT_DOUBLE:
+                types += 'd'; vals += std::to_string(v.get<double>()) + " "; break;
+            case VariantType::VARIANT_INT8:
+            case VariantType::VARIANT_INT16:
+            case VariantType::VARIANT_INT32:
+                types += 'i'; vals += std::to_string(v.get<int32_t>()) + " "; break;
+            case VariantType::VARIANT_INT64:
+                types += 'i'; vals += std::to_string((int64_t)v.get<int64_t>()) + " "; break;
+            case VariantType::VARIANT_UINT8:
+            case VariantType::VARIANT_UINT16:
+            case VariantType::VARIANT_UINT32:
+                types += 'i'; vals += std::to_string(v.get<uint32_t>()) + " "; break;
+            case VariantType::VARIANT_UINT64:
+                types += 'i'; vals += std::to_string((uint64_t)v.get<uint64_t>()) + " "; break;
+            case VariantType::VARIANT_BOOL:
+                types += 'i'; vals += (v.get<bool>() ? "1 " : "0 "); break;
+            case VariantType::VARIANT_STRING:
+                types += 's'; vals += v.get<std::string>() + " "; break;
+            case VariantType::VARIANT_CHAR:
+                types += 's'; vals += std::string(1, v.get<char>()) + " "; break;
+            default:
+                types += '?'; vals += "0 "; break;
+        }
+    }
+
+    // mkdir -p semantics on MEMFS so storePreset can drop files into a
+    // user-supplied path like "./presets" or "songs/scene1" without the
+    // user having to pre-create the directory.
+    static void ensureDirectory(const std::string& path) {
+        if (path.empty() || path == "." || path == "/") return;
+        std::string acc;
+        for (size_t i = 0; i < path.size(); ++i) {
+            char c = path[i];
+            if (c == '/' && !acc.empty() && acc != ".") {
+                ::mkdir(acc.c_str(), 0777);
+            }
+            acc += c;
+        }
+        if (!acc.empty() && acc != ".") {
+            ::mkdir(acc.c_str(), 0777);
         }
     }
 
