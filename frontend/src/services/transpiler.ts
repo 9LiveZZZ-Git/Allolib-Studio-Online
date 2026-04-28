@@ -24,6 +24,78 @@ export interface TranspileResult {
 }
 
 /**
+ * M6 — Browser-impossible APIs.
+ *
+ * Detected pattern emits a line-anchored error (or warning). The Apply button
+ * in TranspileModal disables when any error is present, so the user sees
+ * the issue + the suggested web alternative before any compile attempt.
+ *
+ * `severity: 'error'` blocks Apply. `severity: 'warning'` is informational.
+ */
+interface UnsupportedPattern {
+  pattern: RegExp
+  severity: 'error' | 'warning'
+  message: string
+}
+
+const unsupportedPatterns: UnsupportedPattern[] = [
+  // ── Hard-no: serial / native sockets / native dialogs ───────────────────
+  {
+    pattern: /#include\s*["<]al\/io\/al_Arduino\.hpp[">]/,
+    severity: 'error',
+    message: 'Arduino serial I/O is not available in browsers. Use the Web Serial API directly via EM_ASM, or run a hardware-WebSocket bridge on the host.'
+  },
+  {
+    pattern: /#include\s*["<]al\/io\/al_SerialIO\.hpp[">]/,
+    severity: 'error',
+    message: 'al::SerialIO is not available in browsers. Use the Web Serial API or a hardware-WebSocket bridge.'
+  },
+  {
+    pattern: /#include\s*["<]al\/io\/al_Socket\.hpp[">]/,
+    severity: 'error',
+    message: 'Raw TCP/UDP sockets are not available in browsers. Use WebSocket via JS, or al_WebOSC.hpp for OSC traffic.'
+  },
+  {
+    pattern: /#include\s*["<]al\/io\/al_FileSelector\.hpp[">]/,
+    severity: 'error',
+    message: 'FileSelector uses ImGui which is not part of the web build. Use the Cross-Platform → Import Native dialog, or the file picker in al_WebFile.hpp.'
+  },
+  {
+    pattern: /#include\s*["<]al\/protocol\/al_CommandConnection\.hpp[">]/,
+    severity: 'error',
+    message: 'CommandConnection / CommandClient / CommandServer require raw TCP. For browser-to-browser RPC use al_WebOSC.hpp instead.'
+  },
+  // ── Browser-impossible inheritance ──────────────────────────────────────
+  {
+    pattern: /:\s*public\s+(?:al::)?Arduino\b/,
+    severity: 'error',
+    message: 'Inheriting from al::Arduino is not supported in the browser. See al_WebSerial.hpp for the WebSerial-based alternative.'
+  },
+  {
+    pattern: /:\s*public\s+(?:al::)?(?:Command(?:Client|Server|Connection))\b/,
+    severity: 'error',
+    message: 'CommandClient/CommandServer cannot run in a browser sandbox. Use al_WebOSC.hpp for browser-to-browser messaging.'
+  },
+  // ── Pipeline features no web GPU spec supports ──────────────────────────
+  {
+    pattern: /ShaderProgram\s*\.\s*compile\s*\([^,)]+,[^,)]+,\s*[^),\s][^)]*\)/,
+    severity: 'error',
+    message: 'Geometry shaders are not supported on WebGL2 or WebGPU. Replace with a vertex/fragment pipeline, or move the work into a WebGPU compute shader.'
+  },
+  // ── Degraded but not blocked ────────────────────────────────────────────
+  {
+    pattern: /#include\s*["<]al\/io\/al_AppRecorder\.hpp[">]/,
+    severity: 'warning',
+    message: 'AppRecorder writes to native disk; the web build records via WebM in-browser. Use the toolbar Record button or app.startRecording().'
+  },
+  {
+    pattern: /\bglPolygonMode\s*\(/,
+    severity: 'warning',
+    message: 'glPolygonMode is unsupported in WebGL2 — the call will be a no-op. For wireframe, render an al::Mesh with primitive(LINES).'
+  },
+]
+
+/**
  * Patterns for converting native AlloLib to AlloLib Online
  */
 const nativeToWebPatterns: Array<{
@@ -600,6 +672,20 @@ export function transpileToWeb(code: string): TranspileResult {
   const warnings: string[] = []
   const errors: string[] = []
   let result = code
+
+  // M6 — scan for browser-impossible APIs and emit line-anchored errors
+  // before any rewrites. Must run on the original source (pre-replace) so
+  // the line numbers match what the user wrote in their editor / file.
+  const lines = code.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    for (const { pattern, severity, message } of unsupportedPatterns) {
+      if (pattern.test(lines[i])) {
+        const tagged = `line ${i + 1}: ${message}`
+        if (severity === 'error') errors.push(tagged)
+        else warnings.push(tagged)
+      }
+    }
+  }
 
   // Check if already web code
   const codeType = detectCodeType(code)
