@@ -43,7 +43,9 @@ enum class WebParamType {
     VEC4 = 5,
     COLOR = 6,
     MENU = 7,
-    TRIGGER = 8
+    TRIGGER = 8,
+    CHOICE = 9,   // bitmask over elements (ParameterChoice)
+    POSE = 10     // 7-component: pos.xyz + quat.wxyz (ParameterPose)
 };
 
 /**
@@ -52,13 +54,15 @@ enum class WebParamType {
 struct WebParamInfo {
     std::string name;
     std::string group;
-    WebParamType type;
-    float min;
-    float max;
-    float value;
-    float defaultValue;
-    std::vector<std::string> menuItems;  // For menu/choice parameters
-    int index;  // Index in the parameter list
+    WebParamType type = WebParamType::FLOAT;
+    float min = 0.0f;
+    float max = 1.0f;
+    float value = 0.0f;
+    float defaultValue = 0.0f;
+    std::vector<std::string> menuItems;   // MENU element labels, CHOICE element labels
+    std::vector<float> components;        // VEC3 (3), VEC4 (4), COLOR (4 RGBA), POSE (7 xyz + wxyz)
+    std::string stringValue;              // STRING current value
+    int index = -1;
 };
 
 /**
@@ -231,16 +235,45 @@ public:
             for (const auto& elem : elements) {
                 info.menuItems.push_back(elem);
             }
-        } else if (dynamic_cast<ParameterVec3*>(p)) {
+        } else if (auto* vp = dynamic_cast<ParameterVec3*>(p)) {
             info.type = WebParamType::VEC3;
-        } else if (dynamic_cast<ParameterVec4*>(p)) {
+            auto v = vp->get();
+            info.components = { v.x, v.y, v.z };
+            info.value = v.x;  // legacy float channel — first component
+        } else if (auto* vp = dynamic_cast<ParameterVec4*>(p)) {
             info.type = WebParamType::VEC4;
-        } else if (dynamic_cast<ParameterColor*>(p)) {
+            auto v = vp->get();
+            info.components = { v.x, v.y, v.z, v.w };
+            info.value = v.x;
+        } else if (auto* cp = dynamic_cast<ParameterColor*>(p)) {
             info.type = WebParamType::COLOR;
-        } else if (dynamic_cast<Trigger*>(p)) {
+            auto c = cp->get();
+            info.components = { c.r, c.g, c.b, c.a };
+            info.value = c.r;
+        } else if (auto* poseP = dynamic_cast<ParameterPose*>(p)) {
+            info.type = WebParamType::POSE;
+            auto pose = poseP->get();
+            auto pos = pose.pos();
+            auto quat = pose.quat();
+            info.components = {
+                (float)pos.x, (float)pos.y, (float)pos.z,
+                (float)quat.w, (float)quat.x, (float)quat.y, (float)quat.z
+            };
+        } else if (auto* chp = dynamic_cast<ParameterChoice*>(p)) {
+            info.type = WebParamType::CHOICE;
+            info.value = (float)chp->get();
+            info.defaultValue = (float)chp->getDefault();
+            for (const auto& e : chp->getElements()) info.menuItems.push_back(e);
+            info.max = (float)((1u << info.menuItems.size()) - 1);
+        } else if (auto* tr = dynamic_cast<Trigger*>(p)) {
             info.type = WebParamType::TRIGGER;
-        } else if (dynamic_cast<ParameterString*>(p)) {
+            info.min = 0;
+            info.max = 1;
+            info.value = tr->get() ? 1.0f : 0.0f;
+            info.defaultValue = tr->getDefault() ? 1.0f : 0.0f;
+        } else if (auto* sp = dynamic_cast<ParameterString*>(p)) {
             info.type = WebParamType::STRING;
+            info.stringValue = sp->get();
         }
 
         return info;
@@ -332,9 +365,32 @@ private:
     std::vector<float> mLastValues;
 
     void notifyParameterAdded(ParameterMeta& param) {
+        (void)param;
         // Notify JavaScript that a parameter was added
         size_t index = mParameters.size() - 1;
         WebParamInfo info = getParameterInfo(index);
+
+        // Pack multi-component values + menuItems as JSON strings — keeps
+        // the EM_ASM signature small and avoids needing extra C exports
+        // for read-side enumeration.
+        std::string menuJson = "[";
+        for (size_t i = 0; i < info.menuItems.size(); ++i) {
+            if (i) menuJson += ",";
+            menuJson += "\"";
+            for (char c : info.menuItems[i]) {
+                if (c == '"' || c == '\\') menuJson += '\\';
+                menuJson += c;
+            }
+            menuJson += "\"";
+        }
+        menuJson += "]";
+
+        std::string compJson = "[";
+        for (size_t i = 0; i < info.components.size(); ++i) {
+            if (i) compJson += ",";
+            compJson += std::to_string(info.components[i]);
+        }
+        compJson += "]";
 
         EM_ASM({
             if (window.allolib && window.allolib.onParameterAdded) {
@@ -346,11 +402,15 @@ private:
                     min: $4,
                     max: $5,
                     value: $6,
-                    defaultValue: $7
+                    defaultValue: $7,
+                    menuItems: JSON.parse(UTF8ToString($8)),
+                    components: JSON.parse(UTF8ToString($9)),
+                    stringValue: UTF8ToString($10)
                 });
             }
         }, index, info.name.c_str(), info.group.c_str(),
-           static_cast<int>(info.type), info.min, info.max, info.value, info.defaultValue);
+           static_cast<int>(info.type), info.min, info.max, info.value, info.defaultValue,
+           menuJson.c_str(), compJson.c_str(), info.stringValue.c_str());
 
         mLastValues.push_back(info.value);
     }

@@ -231,6 +231,13 @@ public:
         for (auto* p : mParams) {
             std::vector<VariantValue> fields;
             p->getFields(fields);
+            // Some parameter types (e.g. al::Trigger) inherit
+            // ParameterWrapper<bool> without overriding getFields/setFields,
+            // which makes the base class log a "not implemented" warning
+            // and return an empty fields vector. Triggers have no
+            // persisted state by design — skip them silently rather than
+            // spamming the log on every store + morph tick.
+            if (fields.empty()) continue;
             root[p->getName()] = serializeFields(fields);
             // Native .preset line: /address typeChars value(s)
             std::string types, vals;
@@ -274,6 +281,7 @@ public:
             if (it == root.end()) continue;
             std::vector<VariantValue> fields;
             p->getFields(fields);  // get type schema for the parameter
+            if (fields.empty()) continue;  // skip Trigger/no-field params
             applyJsonToFields(*it, fields);
             p->setFields(fields);
         }
@@ -302,6 +310,7 @@ public:
             if (it == root.end()) continue;
             std::vector<VariantValue> fromF, toF;
             p->getFields(fromF);
+            if (fromF.empty()) continue;  // skip Trigger/no-field params
             toF = fromF;  // copy schema
             applyJsonToFields(*it, toF);
             mMorphParams.push_back(p);

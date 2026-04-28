@@ -320,6 +320,30 @@ function getColorValue(param: Parameter): [number, number, number, number] {
   }
   return [1, 1, 1, 1]
 }
+
+// String value setter — routes through parameterSystem.setParameterString
+// when source is synth (writes to WASM), else through generic setter.
+function handleStringChange(param: Parameter, value: string) {
+  parameterSystem.setParameterValue(param.source, param.name, value as unknown as number, param.sourceId)
+}
+
+// Choice (bitmask) toggle — flip the bit for `idx` and push the new
+// integer value back to WASM via the synth setter.
+function handleChoiceToggle(param: Parameter, idx: number, checked: boolean) {
+  const current = Number(param.value) | 0
+  const next = checked ? (current | (1 << idx)) : (current & ~(1 << idx))
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setByIndex(param.index, next)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name, next, param.sourceId)
+  }
+}
+
+// Format a slice of a Pose's components vector ([x,y,z,w,qx,qy,qz]).
+function formatPoseSlice(param: Parameter, from: number, to: number): string {
+  if (!Array.isArray(param.value)) return '—'
+  return param.value.slice(from, to).map(n => n.toFixed(2)).join(', ')
+}
 </script>
 
 <template>
@@ -581,7 +605,45 @@ function getColorValue(param: Parameter): [number, number, number, number] {
                 >
                   {{ param.displayName }}
                 </label>
-                <div class="text-xs text-imgui-text-dim italic">String input coming soon</div>
+                <input
+                  type="text"
+                  :value="String(param.value ?? '')"
+                  @change="handleStringChange(param, ($event.target as HTMLInputElement).value)"
+                  class="flex-1 px-2 py-0.5 text-xs bg-imgui-input border border-imgui-border rounded text-imgui-text"
+                />
+              </div>
+            </template>
+
+            <!-- Choice (bitmask checkboxes) -->
+            <template v-else-if="param.type === ParameterType.CHOICE">
+              <div class="space-y-1">
+                <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
+                <div class="grid grid-cols-2 gap-1">
+                  <label
+                    v-for="(item, idx) in param.menuItems || []"
+                    :key="idx"
+                    class="flex items-center gap-1 text-xs text-imgui-text-dim"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="((Number(param.value) >> idx) & 1) === 1"
+                      @change="handleChoiceToggle(param, idx, ($event.target as HTMLInputElement).checked)"
+                      class="w-3 h-3"
+                    />
+                    {{ item }}
+                  </label>
+                </div>
+              </div>
+            </template>
+
+            <!-- Pose (xyz position + wxyz quaternion, read-only display for now) -->
+            <template v-else-if="param.type === ParameterType.POSE">
+              <div class="space-y-1">
+                <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
+                <div class="text-[10px] text-imgui-text-dim font-mono pl-2">
+                  pos:  {{ formatPoseSlice(param, 0, 3) }}<br />
+                  quat: {{ formatPoseSlice(param, 3, 7) }}
+                </div>
               </div>
             </template>
           </div>

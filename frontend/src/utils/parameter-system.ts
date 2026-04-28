@@ -31,6 +31,8 @@ export enum ParameterType {
   COLOR = 6,
   MENU = 7,
   TRIGGER = 8,
+  CHOICE = 9,    // bitmask over elements (ParameterChoice)
+  POSE = 10,     // pos.xyz + quat.wxyz (ParameterPose)
 }
 
 // ─── Source Types for Unified Parameter System ───────────────────────────────
@@ -269,12 +271,23 @@ class ParameterSystem {
       max: number
       value: number
       defaultValue: number
+      menuItems?: string[]    // MENU/CHOICE element labels
+      components?: number[]   // VEC3/VEC4/COLOR/POSE field values
+      stringValue?: string    // STRING current value
     }) => {
+      // For multi-component types, the param.value is the array of
+      // components. For STRING, it's the string. Otherwise scalar.
+      let value: number | number[] | string = info.value
+      if (info.components && info.components.length > 0) {
+        value = info.components
+      } else if (info.type === ParameterType.STRING && typeof info.stringValue === 'string') {
+        value = info.stringValue as unknown as number  // keep Parameter.value typing happy
+      }
       const param: Parameter = {
         name: info.name,
         displayName: info.name,
         group: info.group || 'Parameters',
-        value: info.value,
+        value: value as number | number[],
         min: info.min,
         max: info.max,
         defaultValue: info.defaultValue,
@@ -284,6 +297,7 @@ class ParameterSystem {
         source: 'synth',
         isKeyframeable: true,
         hasKeyframes: false,
+        menuItems: info.menuItems,
       }
       this.parameters.set(info.index, param)
       this.notifyChange()
