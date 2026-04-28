@@ -423,7 +423,7 @@ function handlePoseEulerChange(param: Parameter, euler: [number, number, number]
 // Version stamp — visible in the panel header to confirm which JS bundle
 // the browser is actually running (vs which one is on the server). When
 // users report "v0.3.X behavior" we know what they actually have loaded.
-const panelVersion = '0.3.26'
+const panelVersion = '0.3.27'
 
 // Per-row diagnostic that's always visible regardless of whether a
 // type-specific template fully renders. Lets the user spot a wrong
@@ -533,13 +533,26 @@ function paramDiag(param: Parameter): string {
 
         <!-- Parameters -->
         <div v-if="expandedGroups.has(`${group.source}-${group.sourceId}-${group.name}`)" class="px-2 py-1.5 space-y-2 bg-imgui-content">
-          <div v-for="param in group.parameters" :key="param.index" class="parameter-row">
-            <!-- Always-visible spine: name + diagnostic badge. Confirms each
-                 registered param is reaching the row regardless of whether
-                 a type-specific template successfully renders below. -->
-            <div class="flex items-center justify-between text-[10px] text-imgui-text-dim/60 leading-none -mb-0.5">
-              <span class="font-mono">{{ param.name }}</span>
-              <span class="font-mono">{{ paramDiag(param) }}</span>
+          <div v-for="param in group.parameters" :key="param.index" class="parameter-row"
+               :style="{
+                 borderLeft: '3px solid hsl(' + ((param.index * 47) % 360) + ', 70%, 50%)',
+                 paddingLeft: '6px',
+                 marginBottom: '4px',
+               }">
+            <!-- Always-visible spine — bulletproof inline styles so no
+                 Tailwind purge or CSS-var quirk can hide it. Confirms each
+                 registered param reaches the v-for, regardless of whether
+                 the type-specific template below renders anything. -->
+            <div :style="{
+                   display: 'flex',
+                   justifyContent: 'space-between',
+                   fontSize: '10px',
+                   fontFamily: 'monospace',
+                   color: '#ffd966',
+                   lineHeight: '1.1',
+                 }">
+              <span>[{{ param.index }}] {{ param.name }}</span>
+              <span>{{ paramDiag(param) }}</span>
             </div>
             <!-- Float/Int Slider -->
             <template v-if="param.type === ParameterType.FLOAT || param.type === ParameterType.INT">
