@@ -305,6 +305,16 @@ Each milestone is one push, validates against an upload of a representative exam
 - Allow `handleAddKeyframe` to accept synth params (drop the early-return)
 - Add `addKeyframe / removeKeyframe / getValueAtTime` to `eventsStore`
 - Wire `environmentStore.getValueAtTime` into `objectManager.interpolateAllObjects` (current omission)
+- **Folded from prior task #22 (OPFS bridge)**:
+  - Enable `-lidbfs.js` in compile.sh + CMakeLists.txt
+  - `FS.mount(IDBFS, {}, '/presets')` in `WebApp::start()` after `onInit()`
+  - Initial `FS.syncfs(true)` to load existing files; periodic `syncfs(false)` after `PresetHandler::storePreset`
+  - JS-side `_al_list_dir(path)` C export returning JSON of MEMFS contents
+  - `App.vue` handlers for "New Project" / "Load Example" / "Import .allolib" wipe `/presets/*` before swap
+  - Project store gains a "Saved Files" virtual folder reading from MEMFS
+- **Folded from prior task #20 (M4.4 — PresetSequencer/Mapper/MIDI link)**:
+  - Lands alongside M5 OSC (PresetSequencer is `public osc::MessageConsumer`)
+  - Requires consolidating our stub `al::PresetHandler` with the upstream class — either drop our stub when upstream becomes link-clean, OR keep stub and make upstream's consumers see the stub via override headers
 
 ### T1 — New stores + data model
 
