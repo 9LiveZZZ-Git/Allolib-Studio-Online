@@ -823,19 +823,112 @@ namespace al {
 
 class PresetSequencer {
 public:
+    // Native upstream uses TIME_MASTER_CPU which spawns a thread + needs
+    // osc::MessageConsumer (its base class). We can't provide either until
+    // M5 OSC scaffolding lands, so this stays a compile-compat stub that
+    // makes imports link without functional sequence playback.
     PresetSequencer(TimeMasterMode = TimeMasterMode::TIME_MASTER_CPU) {}
 
-    void playSequence(const std::string&, double = 0.0) {}
+    void playSequence(std::string = "", double = 0.0) {}
     void stopSequence() {}
     bool running() const { return false; }
 
-    PresetSequencer& registerPresetHandler(PresetHandler&) { return *this; }
-    PresetSequencer& operator<<(PresetHandler&) { return *this; }
+    PresetSequencer& registerPresetHandler(PresetHandler& h) {
+        mPresetHandler = &h;
+        return *this;
+    }
+    PresetSequencer& operator<<(PresetHandler& h) { return registerPresetHandler(h); }
+    PresetHandler* presetHandler() { return mPresetHandler; }
 
     void setDirectory(const std::string&) {}
     std::string getDirectory() const { return ""; }
+    void setHandlerSubDirectory(const std::string& d) {
+        if (mPresetHandler) mPresetHandler->setSubDirectory(d);
+    }
+
+    void rewind() {}
+    void setTime(double) {}
+    double getSequenceTotalDuration(const std::string&) const { return 0.0; }
+    void registerBeginCallback(std::function<void(PresetSequencer*)>, void* = nullptr) {}
+    void registerEndCallback(std::function<void(bool, PresetSequencer*)>, void* = nullptr) {}
+    void registerTimeChangeCallback(std::function<void(float)>, float = 0.05f) {}
+    void enableBeginCallback(bool) {}
+    void enableEndCallback(bool) {}
+    void verbose(bool) {}
 
     std::vector<std::string> getSequenceList() const { return {}; }
+    std::vector<std::string> getAvailableSequences() const { return {}; }
+
+    void appendStep(const std::string&, double = 0.0, double = 0.0) {}
+    void clearSteps() {}
+
+private:
+    PresetHandler* mPresetHandler = nullptr;
+};
+
+} // namespace al
+
+// ============================================================================
+// PresetMapper — preset-collection ("preset map") manager
+// Compile-compat stub; archive/restore is no-op until full impl in M5+.
+// ============================================================================
+
+namespace al {
+
+class PresetMapper {
+public:
+    PresetMapper(bool = false) {}
+
+    PresetMapper& registerPresetHandler(PresetHandler& h) { mPresetHandler = &h; return *this; }
+    PresetMapper& operator<<(PresetHandler& h) { return registerPresetHandler(h); }
+
+    void archive(std::string = "default", bool = true) {}
+    void restore(std::string = "default", bool = true) {}
+    bool load(std::string) { return false; }
+    bool store(std::string) { return false; }
+    void setVersion(double) {}
+
+    std::vector<std::string> listAvailableMaps(bool = false) { return {}; }
+    std::string currentMap() const { return ""; }
+    void verbose(bool) {}
+
+private:
+    PresetHandler* mPresetHandler = nullptr;
+};
+
+} // namespace al
+
+// ============================================================================
+// PresetMIDI — MIDI control surface ↔ PresetHandler recall slot bindings
+// Compile-compat stub; binding routing happens in WebMIDI in a future push.
+// ============================================================================
+
+namespace al {
+
+class PresetMIDI {
+public:
+    PresetMIDI() = default;
+    PresetMIDI(int /*deviceIndex*/) {}
+    PresetMIDI(int /*deviceIndex*/, PresetHandler& h) { setPresetHandler(h); }
+
+    void open(int = 0) {}
+    void open(int, PresetHandler& h) { setPresetHandler(h); }
+    void close() {}
+    bool isOpen() const { return false; }
+
+    void setPresetHandler(PresetHandler& h) { mPresetHandler = &h; }
+    PresetHandler* presetHandler() { return mPresetHandler; }
+
+    void connectNoteToPreset(int /*channel*/, int /*midiNote*/, int /*presetIndex*/) {}
+    void connectProgramToPreset(int /*channel*/, int /*program*/, int /*presetIndex*/) {}
+    void connectCCToMorphTime(int /*channel*/, int /*cc*/, float /*minSec*/ = 0.f, float /*maxSec*/ = 10.f) {}
+    void clearBindings() {}
+
+    void setMorphTimeFromCC(bool) {}
+    void verbose(bool) {}
+
+private:
+    PresetHandler* mPresetHandler = nullptr;
 };
 
 } // namespace al

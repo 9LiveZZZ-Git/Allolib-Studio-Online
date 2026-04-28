@@ -146,6 +146,16 @@ const nativeToWebPatterns: Array<{
     replacement: '#include "al_playground_compat.hpp"  // Provides ParameterMIDI stub',
     description: 'ParameterMIDI include'
   },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_PresetMapper\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides PresetMapper stub (M4.4 compile-compat; full impl pending M5)',
+    description: 'PresetMapper include'
+  },
+  {
+    pattern: /#include\s*["<]al\/ui\/al_PresetMIDI\.hpp[">]/g,
+    replacement: '#include "al_playground_compat.hpp"  // Provides PresetMIDI stub (M4.4 compile-compat; full impl pending M5)',
+    description: 'PresetMIDI include'
+  },
 
   // Include transformations - Scene/Synth classes
   // M1: DistributedScene collapses to DynamicScene (single-process; the
