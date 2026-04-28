@@ -1036,6 +1036,128 @@ function getStep(param: Parameter): number {
   return 1
 }
 
+// ── M4 panel additions: spine + handlers for the missing 6 types ──────────
+// (The "Params" tab here is a duplicate inline implementation — it was
+// missing templates for STRING / VEC3 / VEC4 / COLOR / CHOICE / POSE.
+// ParameterPanel.vue had them, but isn't the rendered component.)
+
+const panelVersion = '0.3.28'
+
+function paramDiag(param: Parameter): string {
+  const t = ParameterType[param.type] ?? `?${param.type}`
+  const v = Array.isArray(param.value)
+    ? `[${param.value.map(x => Number.isFinite(x) ? x.toFixed(2) : '?').join(',')}]`
+    : (typeof param.value === 'number' ? param.value.toFixed(3) : String(param.value))
+  return `${t} ${v}`
+}
+
+function getVec3Value(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 3) {
+    return [param.value[0], param.value[1], param.value[2]]
+  }
+  return [0, 0, 0]
+}
+
+function getVec4Value(param: Parameter): [number, number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 4) {
+    return [param.value[0], param.value[1], param.value[2], param.value[3]]
+  }
+  if (Array.isArray(param.value) && param.value.length === 3) {
+    return [param.value[0], param.value[1], param.value[2], 1]
+  }
+  return [0, 0, 0, 1]
+}
+
+function handleVec3Change(param: Parameter, axis: 0 | 1 | 2, value: number) {
+  const v = getVec3Value(param)
+  v[axis] = value
+  parameterSystem.setParameterValue(param.source, param.name, v as unknown as number, param.sourceId)
+}
+
+function handleVec4Change(param: Parameter, axis: 0 | 1 | 2 | 3, value: number) {
+  const v = getVec4Value(param)
+  v[axis] = value
+  parameterSystem.setParameterValue(param.source, param.name, v as unknown as number, param.sourceId)
+}
+
+function handleStringChange(param: Parameter, value: string) {
+  parameterSystem.setParameterValue(param.source, param.name, value as unknown as number, param.sourceId)
+}
+
+function handleChoiceToggle(param: Parameter, idx: number, checked: boolean) {
+  const cur = Number(param.value) | 0
+  const next = checked ? (cur | (1 << idx)) : (cur & ~(1 << idx))
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setByIndex(param.index, next)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name, next, param.sourceId)
+  }
+}
+
+function getPosePos(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 3) {
+    return [param.value[0], param.value[1], param.value[2]]
+  }
+  return [0, 0, 0]
+}
+
+function quatToEulerDeg(w: number, x: number, y: number, z: number): [number, number, number] {
+  const sinp = 2 * (w * x + y * z)
+  const cosp = 1 - 2 * (x * x + y * y)
+  const pitch = Math.atan2(sinp, cosp)
+  let s = 2 * (w * y - z * x)
+  s = Math.max(-1, Math.min(1, s))
+  const yaw = Math.asin(s)
+  const sinr = 2 * (w * z + x * y)
+  const cosr = 1 - 2 * (y * y + z * z)
+  const roll = Math.atan2(sinr, cosr)
+  const r2d = 180 / Math.PI
+  return [pitch * r2d, yaw * r2d, roll * r2d]
+}
+
+function getPoseEuler(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 7) {
+    return quatToEulerDeg(param.value[3], param.value[4], param.value[5], param.value[6])
+  }
+  return [0, 0, 0]
+}
+
+function eulerDegToQuat(p: number, y: number, r: number): [number, number, number, number] {
+  const d2r = Math.PI / 180
+  const cp = Math.cos((p * d2r) / 2), sp = Math.sin((p * d2r) / 2)
+  const cy = Math.cos((y * d2r) / 2), sy = Math.sin((y * d2r) / 2)
+  const cr = Math.cos((r * d2r) / 2), sr = Math.sin((r * d2r) / 2)
+  return [
+    cp * cy * cr + sp * sy * sr,
+    sp * cy * cr - cp * sy * sr,
+    cp * sy * cr + sp * cy * sr,
+    cp * cy * sr - sp * sy * cr,
+  ]
+}
+
+function pushPose(param: Parameter, x: number, y: number, z: number, qw: number, qx: number, qy: number, qz: number) {
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setPose(param.index, x, y, z, qw, qx, qy, qz)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name, [x, y, z, qw, qx, qy, qz] as unknown as number, param.sourceId)
+  }
+}
+
+function handlePosePos(param: Parameter, axis: 0 | 1 | 2, value: number) {
+  const p = getPosePos(param)
+  p[axis] = value
+  const c = Array.isArray(param.value) ? param.value : [0, 0, 0, 1, 0, 0, 0]
+  pushPose(param, p[0], p[1], p[2], c[3] ?? 1, c[4] ?? 0, c[5] ?? 0, c[6] ?? 0)
+}
+
+function handlePoseEuler(param: Parameter, axis: 0 | 1 | 2, value: number) {
+  const e = getPoseEuler(param)
+  e[axis] = value
+  const [qw, qx, qy, qz] = eulerDegToQuat(e[0], e[1], e[2])
+  const c = Array.isArray(param.value) ? param.value : [0, 0, 0]
+  pushPose(param, c[0] ?? 0, c[1] ?? 0, c[2] ?? 0, qw, qx, qy, qz)
+}
+
 // Save preset with custom name to project file
 function savePreset() {
   if (!newPresetName.value.trim()) return
@@ -1275,6 +1397,7 @@ onBeforeUnmount(() => {
           >
             Params
             <span v-if="hasParameters" class="ml-1 text-[10px] opacity-70">({{ parameterSystem.count }})</span>
+            <span class="ml-1 text-[10px] opacity-50 font-mono">v{{ panelVersion }}</span>
           </button>
           <button
             @click="activeTab = 'timeline'"
@@ -1513,7 +1636,26 @@ onBeforeUnmount(() => {
 
           <!-- Parameters -->
           <div v-if="expandedGroups.has(group.name)" class="px-3 py-1.5 space-y-1.5 bg-editor-bg">
-            <div v-for="param in group.parameters" :key="param.index" class="flex items-center gap-2">
+            <div v-for="param in group.parameters" :key="param.index"
+                 :style="{
+                   borderLeft: '3px solid hsl(' + ((param.index * 47) % 360) + ', 70%, 50%)',
+                   paddingLeft: '6px',
+                 }">
+              <!-- Always-visible spine — proves every registered param
+                   reaches the v-for, prints type+value at-a-glance. -->
+              <div :style="{
+                     display: 'flex',
+                     justifyContent: 'space-between',
+                     fontSize: '10px',
+                     fontFamily: 'monospace',
+                     color: '#ffd966',
+                     lineHeight: '1.1',
+                     marginBottom: '2px',
+                   }">
+                <span>[{{ param.index }}] {{ param.name }}</span>
+                <span>{{ paramDiag(param) }}</span>
+              </div>
+              <div class="flex items-center gap-2">
               <!-- Float/Int Slider -->
               <template v-if="param.type === ParameterType.FLOAT || param.type === ParameterType.INT">
                 <label
@@ -1583,6 +1725,81 @@ onBeforeUnmount(() => {
                   Trigger
                 </button>
               </template>
+
+              <!-- String -->
+              <template v-else-if="param.type === ParameterType.STRING">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">{{ param.displayName }}</label>
+                <input
+                  type="text"
+                  :value="String(param.value ?? '')"
+                  @change="handleStringChange(param, ($event.target as HTMLInputElement).value)"
+                  class="flex-1 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-2 text-gray-300"
+                />
+              </template>
+
+              <!-- Vec3 -->
+              <template v-else-if="param.type === ParameterType.VEC3">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">{{ param.displayName }}</label>
+                <div class="flex-1 grid grid-cols-3 gap-1">
+                  <input v-for="(c, i) in getVec3Value(param)" :key="i"
+                         type="number" :value="Number(c).toFixed(2)" :step="0.1"
+                         @change="handleVec3Change(param, i as 0|1|2, parseFloat(($event.target as HTMLInputElement).value))"
+                         class="h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300 font-mono text-right" />
+                </div>
+              </template>
+
+              <!-- Vec4 / Color -->
+              <template v-else-if="param.type === ParameterType.VEC4 || param.type === ParameterType.COLOR">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">{{ param.displayName }}</label>
+                <div class="flex-1 grid grid-cols-4 gap-1">
+                  <input v-for="(c, i) in getVec4Value(param)" :key="i"
+                         type="number" :value="Number(c).toFixed(2)" :step="0.1"
+                         @change="handleVec4Change(param, i as 0|1|2|3, parseFloat(($event.target as HTMLInputElement).value))"
+                         class="h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300 font-mono text-right" />
+                </div>
+              </template>
+
+              <!-- Choice (bitmask checkboxes) -->
+              <template v-else-if="param.type === ParameterType.CHOICE">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">{{ param.displayName }}</label>
+                <div class="flex-1 flex flex-wrap gap-2">
+                  <label v-for="(item, idx) in (param.menuItems || [])" :key="idx"
+                         class="flex items-center gap-1 text-xs text-gray-400">
+                    <input type="checkbox"
+                           :checked="((Number(param.value) >> idx) & 1) === 1"
+                           @change="handleChoiceToggle(param, idx, ($event.target as HTMLInputElement).checked)"
+                           class="w-3 h-3" />
+                    {{ item }}
+                  </label>
+                </div>
+              </template>
+
+              <!-- Pose: pos.xyz + Euler°  -->
+              <template v-else-if="param.type === ParameterType.POSE">
+                <label class="text-xs text-gray-400 w-24 truncate flex-shrink-0">{{ param.displayName }}</label>
+                <div class="flex-1 space-y-1">
+                  <div class="flex items-center gap-1 text-[10px] text-gray-500">
+                    <span class="w-8">pos</span>
+                    <input v-for="(c, i) in getPosePos(param)" :key="i"
+                           type="number" :value="Number(c).toFixed(2)" :step="0.1"
+                           @change="handlePosePos(param, i as 0|1|2, parseFloat(($event.target as HTMLInputElement).value))"
+                           class="flex-1 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300 font-mono text-right" />
+                  </div>
+                  <div class="flex items-center gap-1 text-[10px] text-gray-500">
+                    <span class="w-8">rot°</span>
+                    <input v-for="(c, i) in getPoseEuler(param)" :key="i"
+                           type="number" :value="Number(c).toFixed(1)" :step="1"
+                           @change="handlePoseEuler(param, i as 0|1|2, parseFloat(($event.target as HTMLInputElement).value))"
+                           class="flex-1 h-5 text-xs bg-gray-700 border border-gray-600 rounded px-1 text-gray-300 font-mono text-right" />
+                  </div>
+                </div>
+              </template>
+
+              <!-- Diagnostic fallback for unknown types -->
+              <template v-else>
+                <span class="text-xs text-yellow-400">{{ param.displayName }} — type {{ param.type }} (no renderer)</span>
+              </template>
+              </div>
             </div>
           </div>
         </div>
