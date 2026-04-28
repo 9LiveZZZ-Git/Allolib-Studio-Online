@@ -419,6 +419,22 @@ function handlePoseEulerChange(param: Parameter, euler: [number, number, number]
   const c = Array.isArray(param.value) ? param.value : [0, 0, 0]
   pushPose(param, c[0] ?? 0, c[1] ?? 0, c[2] ?? 0, qw, qx, qy, qz)
 }
+
+// Version stamp — visible in the panel header to confirm which JS bundle
+// the browser is actually running (vs which one is on the server). When
+// users report "v0.3.X behavior" we know what they actually have loaded.
+const panelVersion = '0.3.26'
+
+// Per-row diagnostic that's always visible regardless of whether a
+// type-specific template fully renders. Lets the user spot a wrong
+// type / NaN value at a glance without opening devtools.
+function paramDiag(param: Parameter): string {
+  const t = ParameterType[param.type] ?? `?${param.type}`
+  const v = Array.isArray(param.value)
+    ? `[${param.value.map(x => Number.isFinite(x) ? x.toFixed(2) : '?').join(',')}]`
+    : (typeof param.value === 'number' ? param.value.toFixed(3) : String(param.value))
+  return `${t} ${v}`
+}
 </script>
 
 <template>
@@ -434,6 +450,7 @@ function handlePoseEulerChange(param: Parameter, euler: [number, number, number]
         </svg>
         <span class="text-xs font-medium text-imgui-text">Parameters</span>
         <span class="text-xs text-imgui-text-dim">({{ parameterSystem.count }})</span>
+        <span class="text-[10px] text-imgui-text-dim font-mono">v{{ panelVersion }}</span>
       </div>
       <svg
         class="w-3 h-3 text-imgui-text-dim transition-transform"
@@ -517,6 +534,13 @@ function handlePoseEulerChange(param: Parameter, euler: [number, number, number]
         <!-- Parameters -->
         <div v-if="expandedGroups.has(`${group.source}-${group.sourceId}-${group.name}`)" class="px-2 py-1.5 space-y-2 bg-imgui-content">
           <div v-for="param in group.parameters" :key="param.index" class="parameter-row">
+            <!-- Always-visible spine: name + diagnostic badge. Confirms each
+                 registered param is reaching the row regardless of whether
+                 a type-specific template successfully renders below. -->
+            <div class="flex items-center justify-between text-[10px] text-imgui-text-dim/60 leading-none -mb-0.5">
+              <span class="font-mono">{{ param.name }}</span>
+              <span class="font-mono">{{ paramDiag(param) }}</span>
+            </div>
             <!-- Float/Int Slider -->
             <template v-if="param.type === ParameterType.FLOAT || param.type === ParameterType.INT">
               <div class="flex items-center gap-1">
