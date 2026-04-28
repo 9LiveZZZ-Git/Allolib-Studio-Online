@@ -275,9 +275,18 @@ class ParameterSystem {
       components?: number[]   // VEC3/VEC4/COLOR/POSE field values
       stringValue?: string    // STRING current value
     }) => {
+      // Sanitize numeric fields — pre-v0.3.23 WASM struct had no
+      // defaults, so Vec3/Vec4/Color/Pose returned NaN/garbage values
+      // that broke Vec3Input/ColorPicker rendering and made the rows
+      // disappear from the panel. Coerce to safe defaults.
+      const safeMin = Number.isFinite(info.min) ? info.min : 0
+      const safeMax = Number.isFinite(info.max) ? info.max : 1
+      const safeVal = Number.isFinite(info.value) ? info.value : 0
+      const safeDef = Number.isFinite(info.defaultValue) ? info.defaultValue : 0
+
       // For multi-component types, the param.value is the array of
       // components. For STRING, it's the string. Otherwise scalar.
-      let value: number | number[] | string = info.value
+      let value: number | number[] | string = safeVal
       if (info.components && info.components.length > 0) {
         value = info.components
       } else if (info.type === ParameterType.STRING && typeof info.stringValue === 'string') {
@@ -288,9 +297,9 @@ class ParameterSystem {
         displayName: info.name,
         group: info.group || 'Parameters',
         value: value as number | number[],
-        min: info.min,
-        max: info.max,
-        defaultValue: info.defaultValue,
+        min: safeMin,
+        max: safeMax,
+        defaultValue: safeDef,
         type: info.type as ParameterType,
         index: info.index,
         step: info.type === ParameterType.INT ? 1 : 0.01,
@@ -410,20 +419,28 @@ class ParameterSystem {
       const value       = this.wasmModule._al_webgui_get_parameter_value(i)
       const defaultValue = this.wasmModule._al_webgui_get_parameter_default(i)
 
+      // Same NaN-guard as onParameterAdded so polling-loaded params
+      // don't break Vec3Input/ColorPicker via undefined min/max.
+      // Preserve any existing array value (set by onParameterAdded for
+      // Vec3/Vec4/Color/Pose) since the polling exports only return
+      // the first scalar component.
+      const existing = this.parameters.get(i)
+      const hasArrayValue = existing && Array.isArray(existing.value)
       fresh.set(i, {
         name,
         displayName: name,
         group: group || 'Parameters',
-        value,
-        min,
-        max,
-        defaultValue,
+        value: hasArrayValue ? existing!.value : (Number.isFinite(value) ? value : 0),
+        min: Number.isFinite(min) ? min : 0,
+        max: Number.isFinite(max) ? max : 1,
+        defaultValue: Number.isFinite(defaultValue) ? defaultValue : 0,
         type: type as ParameterType,
         index: i,
         step: type === ParameterType.INT ? 1 : 0.01,
         source: 'synth',
         isKeyframeable: true,
         hasKeyframes: false,
+        menuItems: existing?.menuItems,
       })
       wasmNames.add(name)
     }

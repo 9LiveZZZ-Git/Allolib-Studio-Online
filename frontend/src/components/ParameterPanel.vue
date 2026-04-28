@@ -749,6 +749,19 @@ function handlePoseEulerChange(param: Parameter, euler: [number, number, number]
                 </div>
               </div>
             </template>
+
+            <!-- Diagnostic fallback — surfaces params whose type doesn't
+                 match any template above. Was silently empty before, which
+                 hid Vec/Color/Pose/Choice/String params on stale WASM
+                 builds (struct returned garbage type). -->
+            <template v-else>
+              <div class="flex items-center gap-2 text-xs text-yellow-400/80">
+                <label class="w-24 truncate flex-shrink-0" :title="param.name">
+                  {{ param.displayName }}
+                </label>
+                <span class="font-mono text-[10px]">type {{ param.type }} (no renderer)</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
