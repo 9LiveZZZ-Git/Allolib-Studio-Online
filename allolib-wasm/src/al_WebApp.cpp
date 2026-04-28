@@ -647,24 +647,30 @@ void WebApp::initGraphics() {
 #endif
 }
 
+void WebApp::audioCBThunk(AudioIOData& io) {
+    // Bridge AudioIO::callback → WebApp::onSound. The user pointer is set
+    // in initAudio() to `this`, so we recover the WebApp and dispatch.
+    if (auto* self = static_cast<WebApp*>(io.user())) {
+        self->onSound(io);
+    }
+}
+
 void WebApp::initAudio() {
     std::cout << "[AlloLib] Initializing audio..." << std::endl;
-
-    // Clean up any existing audio IO
-    if (mAudioIO) {
-        delete mAudioIO;
-        mAudioIO = nullptr;
-    }
 
     // Set up Gamma DSP sample rate (required for oscillators to work correctly)
     gam::sampleRate(mAudioConfig.sampleRate);
 
-    // Create and configure AudioIOData with proper buffers
-    mAudioIO = new AudioIOData();
-    mAudioIO->framesPerBuffer(mAudioConfig.bufferSize);
-    mAudioIO->framesPerSecond(mAudioConfig.sampleRate);
-    mAudioIO->channelsOut(mAudioConfig.outputChannels);
-    mAudioIO->channelsIn(mAudioConfig.inputChannels);
+    // Configure the unified AudioIO — same instance returned by audioIO()
+    // and used by the worklet. Setting the callback + user data lets
+    // processAudio() invoke onSound first, then iterate any user-appended
+    // AudioCallbacks for post-FX.
+    mAudioIOReal.framesPerBuffer(mAudioConfig.bufferSize);
+    mAudioIOReal.framesPerSecond(mAudioConfig.sampleRate);
+    mAudioIOReal.channelsOut(mAudioConfig.outputChannels);
+    mAudioIOReal.channelsIn(mAudioConfig.inputChannels);
+    mAudioIOReal.callback = &WebApp::audioCBThunk;
+    mAudioIOReal.user(this);
 
     mAudioInitialized = true;
 
@@ -678,11 +684,10 @@ void WebApp::cleanupGraphics() {
 
 void WebApp::cleanupAudio() {
     mAudioInitialized = false;
-
-    if (mAudioIO) {
-        delete mAudioIO;
-        mAudioIO = nullptr;
-    }
+    // mAudioIOReal is a value member; nothing to delete. Clear the
+    // callback so a stale this-pointer can't be used after teardown.
+    mAudioIOReal.callback = nullptr;
+    mAudioIOReal.user(static_cast<void*>(nullptr));
 }
 
 void WebApp::initBackend() {
@@ -801,12 +806,12 @@ void WebApp::processAudioBuffer(float* outputBuffer, int numFrames, int numChann
     // Debug: log state on first few calls
     if (audioCallCount < 5) {
         EM_ASM({
-            console.log('[WASM Audio] processAudioBuffer: mRunning=' + $0 + ', mAudioInit=' + $1 + ', mAudioIO=' + $2);
-        }, mRunning ? 1 : 0, mAudioInitialized ? 1 : 0, mAudioIO ? 1 : 0);
+            console.log('[WASM Audio] processAudioBuffer: mRunning=' + $0 + ', mAudioInit=' + $1);
+        }, mRunning ? 1 : 0, mAudioInitialized ? 1 : 0);
     }
 #endif
 
-    if (!mRunning || !mAudioInitialized || !mAudioIO) {
+    if (!mRunning || !mAudioInitialized) {
         // Fill with silence
         for (int i = 0; i < numFrames * numChannels; ++i) {
             outputBuffer[i] = 0.0f;
@@ -830,19 +835,17 @@ void WebApp::processAudioBuffer(float* outputBuffer, int numFrames, int numChann
 #endif
     audioCallCount++;
 
-    // Reset frame counter
-    mAudioIO->frame(0);
-
-    // Zero the output buffer
-    mAudioIO->zeroOut();
-
-    // Call user's audio callback
-    onSound(*mAudioIO);
+    // Zero output, then run the unified callback chain:
+    //   1. AudioIO::callback (audioCBThunk → onSound)
+    //   2. each user-appended AudioCallback (post-FX)
+    // processAudio() resets the frame counter before each step.
+    mAudioIOReal.zeroOut();
+    mAudioIOReal.processAudio();
 
     // Copy from non-interleaved format to interleaved output
     for (int frame = 0; frame < numFrames; ++frame) {
         for (int ch = 0; ch < numChannels; ++ch) {
-            outputBuffer[frame * numChannels + ch] = mAudioIO->out(ch, frame);
+            outputBuffer[frame * numChannels + ch] = mAudioIOReal.out(ch, frame);
         }
     }
 

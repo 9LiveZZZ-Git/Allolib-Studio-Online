@@ -177,24 +177,13 @@ public:
     /// Get audio configuration
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
 
-    /// Native al::App compatibility — returns the underlying al::AudioIO
-    /// (a real AudioIO, not a value-type proxy). The actual audio still
-    /// flows through the AudioWorklet; this object just exposes the
-    /// native channel/rate/buffer/append/start/cpu/time API surface so
-    /// imported native code compiles unchanged. Lazily synced from
-    /// mAudioConfig so framesPerSecond() etc. return the configured rate.
-    AudioIO& audioIO() {
-        if (mAudioIOReal.framesPerSecond() != mAudioConfig.sampleRate) {
-            mAudioIOReal.framesPerSecond(mAudioConfig.sampleRate);
-            mAudioIOReal.framesPerBuffer(mAudioConfig.bufferSize);
-            mAudioIOReal.channelsOut(mAudioConfig.outputChannels);
-            mAudioIOReal.channelsIn(mAudioConfig.inputChannels);
-        }
-        return mAudioIOReal;
-    }
-    const AudioIO& audioIO() const {
-        return const_cast<WebApp*>(this)->audioIO();
-    }
+    /// Native al::App compatibility — returns the underlying al::AudioIO.
+    /// This is the SAME instance the AudioWorklet drives, so:
+    ///   audioIO().append(myCallback)  // post-FX runs after onSound
+    ///   audioIO().framesPerSecond()   // matches the configured rate
+    /// configureAudio() (re-)initializes it.
+    AudioIO& audioIO() { return mAudioIOReal; }
+    const AudioIO& audioIO() const { return mAudioIOReal; }
 
     /// Get/set the navigation pose (camera position) - compatible with al::App
     Nav& nav() { return mNav; }
@@ -384,9 +373,12 @@ private:
     std::unique_ptr<Graphics> mGraphics;
     std::unique_ptr<GraphicsBackend> mBackend;
 
-    // Audio
-    AudioIOData* mAudioIO = nullptr;
-    AudioIO mAudioIOReal;  // exposed via audioIO() — config-synced wrapper
+    // Audio — the AudioIO is both the worklet's working buffer AND the
+    // object exposed via audioIO(). append()ed callbacks run after onSound
+    // because processAudio() calls the registered callback first then
+    // iterates appendees. See WebApp::audioCBThunk for the callback wiring.
+    AudioIO mAudioIOReal;
+    static void audioCBThunk(AudioIOData& io);
 
     // Navigation and view
     Nav mNav;
