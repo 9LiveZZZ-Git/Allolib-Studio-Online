@@ -362,30 +362,41 @@ class ParameterSystem {
   }
 
   /**
-   * Load parameters from WASM module
+   * Load parameters from WASM module.
+   *
+   * The WASM-side WebControlGUI is the source of truth for synth params.
+   * This method:
+   *  - Drops any stale entries whose index >= current WASM count
+   *    (handles WebControlGUI swaps + count decreases).
+   *  - Drops any source='synth' entry whose name does not appear at its
+   *    canonical WASM index — purges leftovers from
+   *    populateFromDetectedSynths added at fake indices before WASM
+   *    finished registering.
+   *  - Refreshes every entry from WASM so name/group/type/min/max
+   *    aren't out of date after a hot-swap.
    */
   loadFromWasm(): void {
     if (!this.wasmModule) return
-
     const getCount = this.wasmModule._al_webgui_get_parameter_count
-    if (!getCount) {
-      return
-    }
+    if (!getCount) return
 
     const count = getCount()
 
+    // 1. Build the canonical WASM map first.
+    const wasmNames = new Set<string>()
+    const fresh = new Map<number, Parameter>()
     for (let i = 0; i < count; i++) {
-      const namePtr = this.wasmModule._al_webgui_get_parameter_name(i)
-      const groupPtr = this.wasmModule._al_webgui_get_parameter_group(i)
-      const name = this.wasmModule.UTF8ToString(namePtr)
-      const group = this.wasmModule.UTF8ToString(groupPtr)
-      const type = this.wasmModule._al_webgui_get_parameter_type(i)
-      const min = this.wasmModule._al_webgui_get_parameter_min(i)
-      const max = this.wasmModule._al_webgui_get_parameter_max(i)
-      const value = this.wasmModule._al_webgui_get_parameter_value(i)
+      const namePtr     = this.wasmModule._al_webgui_get_parameter_name(i)
+      const groupPtr    = this.wasmModule._al_webgui_get_parameter_group(i)
+      const name        = this.wasmModule.UTF8ToString(namePtr)
+      const group       = this.wasmModule.UTF8ToString(groupPtr)
+      const type        = this.wasmModule._al_webgui_get_parameter_type(i)
+      const min         = this.wasmModule._al_webgui_get_parameter_min(i)
+      const max         = this.wasmModule._al_webgui_get_parameter_max(i)
+      const value       = this.wasmModule._al_webgui_get_parameter_value(i)
       const defaultValue = this.wasmModule._al_webgui_get_parameter_default(i)
 
-      const param: Parameter = {
+      fresh.set(i, {
         name,
         displayName: name,
         group: group || 'Parameters',
@@ -399,10 +410,24 @@ class ParameterSystem {
         source: 'synth',
         isKeyframeable: true,
         hasKeyframes: false,
-      }
-
-      this.parameters.set(i, param)
+      })
+      wasmNames.add(name)
     }
+
+    // 2. Drop stale synth entries (out-of-range indices, or duplicates by
+    //    name added at fake indices by populateFromDetectedSynths).
+    for (const [idx, p] of Array.from(this.parameters.entries())) {
+      if (p.source !== 'synth') continue
+      const stillValid =
+        fresh.has(idx) ||                       // canonical WASM slot
+        (idx >= count && !wasmNames.has(p.name))  // unknown to WASM → leftover
+      if (!stillValid || (idx >= count && wasmNames.has(p.name))) {
+        this.parameters.delete(idx)
+      }
+    }
+
+    // 3. Apply the fresh canonical entries.
+    for (const [idx, p] of fresh) this.parameters.set(idx, p)
 
     this.notifyChange()
   }
@@ -446,26 +471,35 @@ class ParameterSystem {
     const getValue = this.wasmModule._al_webgui_get_parameter_value
     if (!getCount || !getValue) return
 
-    // Check if new parameters were added since last load
     const wasmCount = getCount()
-    if (wasmCount > this.parameters.size) {
+    // Count of synth-source params we currently track. Camera / object /
+    // environment params live in the same map but aren't WASM-indexed, so
+    // we mustn't compare against this.parameters.size (would mask a real
+    // mismatch when non-synth params exist).
+    let synthTracked = 0
+    for (const p of this.parameters.values()) {
+      if (p.source === 'synth') synthTracked++
+    }
+    // Reload on ANY change (add or remove) so a swapped WebControlGUI or
+    // a synth voice that drops a param doesn't leave stale rows in the
+    // panel.
+    if (wasmCount !== synthTracked) {
       this.loadFromWasm()
       return
     }
 
-    // Sync existing parameter values
+    // Same count → just refresh values.
     let changed = false
     for (const [index, param] of this.parameters) {
+      if (param.source !== 'synth') continue
+      if (index >= wasmCount) continue
       const newValue = getValue(index)
-      if (Math.abs(param.value - newValue) > 0.0001) {
+      if (typeof param.value === 'number' && Math.abs(param.value - newValue) > 0.0001) {
         param.value = newValue
         changed = true
       }
     }
-
-    if (changed) {
-      this.notifyChange()
-    }
+    if (changed) this.notifyChange()
   }
 
   /**
@@ -906,6 +940,14 @@ class ParameterSystem {
   populateFromDetectedSynths(
     detectedParams: Array<{ name: string; defaultValue: number; min: number; max: number }>
   ): void {
+    // Bail out if WASM has already published any synth params — those are
+    // the ground truth. Adding source-detected entries on top creates
+    // doubled rows in the panel (same name, different fake index).
+    if (this.wasmModule) {
+      const wasmCount = this.wasmModule._al_webgui_get_parameter_count?.()
+      if (typeof wasmCount === 'number' && wasmCount > 0) return
+    }
+
     // Check which params we already have by name
     const existingNames = new Set<string>()
     for (const param of this.parameters.values()) {
@@ -917,8 +959,10 @@ class ParameterSystem {
     for (const detected of detectedParams) {
       if (existingNames.has(detected.name)) continue
 
-      // Find next available index
-      let nextIndex = 0
+      // Find next available index — keep above the WASM index range
+      // (start at 1000) so a later WASM registration can claim the
+      // canonical slot without colliding.
+      let nextIndex = 1000
       while (this.parameters.has(nextIndex)) nextIndex++
 
       const param: Parameter = {

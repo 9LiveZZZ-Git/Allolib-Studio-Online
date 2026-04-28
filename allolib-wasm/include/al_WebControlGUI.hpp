@@ -84,6 +84,13 @@ public:
     // =========================================================================
 
     WebControlGUI& registerParameterMeta(ParameterMeta& param) {
+        // Dedupe by pointer: re-registering the same parameter (common
+        // when both `gui << p` and `mPresets << p` route through here)
+        // must not create a second slot — that produced phantom doubles
+        // in the panel.
+        for (auto* existing : mParameters) {
+            if (existing == &param) return *this;
+        }
         mParameters.push_back(&param);
         notifyParameterAdded(param);
         return *this;
