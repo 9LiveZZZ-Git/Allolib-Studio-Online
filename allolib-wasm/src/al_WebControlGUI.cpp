@@ -96,6 +96,14 @@ void al_webgui_set_parameter_vec4(int index, float x, float y, float z, float w)
     (void)w;
 }
 
+__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+void al_webgui_set_parameter_pose(int index, float x, float y, float z,
+                                   float qw, float qx, float qy, float qz) {
+    (void)index;
+    (void)x; (void)y; (void)z;
+    (void)qw; (void)qx; (void)qy; (void)qz;
+}
+
 } // extern "C"
 
 #endif // __EMSCRIPTEN__

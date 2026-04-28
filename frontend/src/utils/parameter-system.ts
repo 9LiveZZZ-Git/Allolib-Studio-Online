@@ -851,6 +851,22 @@ class ParameterSystem {
   }
 
   /**
+   * Set a Pose parameter (pos.xyz + quat.wxyz) by index. Caller is
+   * responsible for handing in a normalized quaternion (the Vue
+   * Pose editor converts from Euler angles via eulerDegToQuat).
+   */
+  setPose(index: number, x: number, y: number, z: number,
+          qw: number, qx: number, qy: number, qz: number): void {
+    const param = this.parameters.get(index)
+    if (!param) return
+    param.value = [x, y, z, qw, qx, qy, qz]
+    if (this.wasmModule && (this.wasmModule as any)._al_webgui_set_parameter_pose) {
+      ;(this.wasmModule as any)._al_webgui_set_parameter_pose(index, x, y, z, qw, qx, qy, qz)
+    }
+    this.notifyChange()
+  }
+
+  /**
    * Set a parameter value by index
    */
   setByIndex(index: number, value: number): void {

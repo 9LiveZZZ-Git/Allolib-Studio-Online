@@ -334,6 +334,18 @@ public:
         }
     }
 
+    // Set Pose parameter — pos.xyz + quat.wxyz (7 floats). Caller is
+    // responsible for handing in a unit quaternion (Vue side converts
+    // from Euler angles); we don't normalize on this side because doing
+    // so would silently swallow the gimbal-lock-near-poles error case.
+    void setParameterPose(size_t index, float x, float y, float z,
+                          float qw, float qx, float qy, float qz) {
+        if (index >= mParameters.size()) return;
+        if (auto* pp = dynamic_cast<ParameterPose*>(mParameters[index])) {
+            pp->set(Pose(Vec3d(x, y, z), Quatd(qw, qx, qy, qz)));
+        }
+    }
+
     // Get current float value
     float getParameterValue(size_t index) {
         if (index >= mParameters.size()) return 0;
@@ -588,6 +600,15 @@ inline void al_webgui_set_parameter_vec4(int index, float x, float y, float z, f
     auto* gui = al::WebControlGUI::getActiveInstance();
     if (gui) {
         gui->setParameterVec4(index, x, y, z, w);
+    }
+}
+
+__attribute__((used)) EMSCRIPTEN_KEEPALIVE
+inline void al_webgui_set_parameter_pose(int index, float x, float y, float z,
+                                          float qw, float qx, float qy, float qz) {
+    auto* gui = al::WebControlGUI::getActiveInstance();
+    if (gui) {
+        gui->setParameterPose(index, x, y, z, qw, qx, qy, qz);
     }
 }
 

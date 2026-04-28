@@ -344,6 +344,81 @@ function formatPoseSlice(param: Parameter, from: number, to: number): string {
   if (!Array.isArray(param.value)) return '—'
   return param.value.slice(from, to).map(n => n.toFixed(2)).join(', ')
 }
+
+// ─── Pose helpers ──────────────────────────────────────────────────────────
+// Pose components vector layout: [x, y, z, qw, qx, qy, qz]
+
+function getPosePos(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 3) {
+    return [param.value[0], param.value[1], param.value[2]]
+  }
+  return [0, 0, 0]
+}
+
+function getPoseEuler(param: Parameter): [number, number, number] {
+  if (Array.isArray(param.value) && param.value.length >= 7) {
+    return quatToEulerDeg(param.value[3], param.value[4], param.value[5], param.value[6])
+  }
+  return [0, 0, 0]
+}
+
+// Quaternion (w, x, y, z) → Euler degrees (pitch, yaw, roll).
+// Standard XYZ-intrinsic convention; matches al::Quat::toEuler when used
+// alongside its eulerToQuat counterpart for round-trip stability.
+function quatToEulerDeg(w: number, x: number, y: number, z: number): [number, number, number] {
+  // pitch (X axis)
+  const sinp = 2 * (w * x + y * z)
+  const cosp = 1 - 2 * (x * x + y * y)
+  const pitch = Math.atan2(sinp, cosp)
+
+  // yaw (Y axis) — clamp for gimbal lock
+  let s = 2 * (w * y - z * x)
+  s = Math.max(-1, Math.min(1, s))
+  const yaw = Math.asin(s)
+
+  // roll (Z axis)
+  const sinr = 2 * (w * z + x * y)
+  const cosr = 1 - 2 * (y * y + z * z)
+  const roll = Math.atan2(sinr, cosr)
+
+  const r2d = 180 / Math.PI
+  return [pitch * r2d, yaw * r2d, roll * r2d]
+}
+
+function eulerDegToQuat(pitch: number, yaw: number, roll: number): [number, number, number, number] {
+  const d2r = Math.PI / 180
+  const cp = Math.cos((pitch * d2r) / 2), sp = Math.sin((pitch * d2r) / 2)
+  const cy = Math.cos((yaw   * d2r) / 2), sy = Math.sin((yaw   * d2r) / 2)
+  const cr = Math.cos((roll  * d2r) / 2), sr = Math.sin((roll  * d2r) / 2)
+  return [
+    cp * cy * cr + sp * sy * sr, // w
+    sp * cy * cr - cp * sy * sr, // x
+    cp * sy * cr + sp * cy * sr, // y
+    cp * cy * sr - sp * sy * cr, // z
+  ]
+}
+
+function pushPose(param: Parameter, x: number, y: number, z: number,
+                  qw: number, qx: number, qy: number, qz: number) {
+  if (param.source === 'synth' && param.index >= 0) {
+    parameterSystem.setPose(param.index, x, y, z, qw, qx, qy, qz)
+  } else {
+    parameterSystem.setParameterValue(param.source, param.name,
+      [x, y, z, qw, qx, qy, qz] as unknown as number, param.sourceId)
+  }
+}
+
+function handlePosePosChange(param: Parameter, pos: [number, number, number]) {
+  const c = Array.isArray(param.value) ? param.value : [0, 0, 0, 1, 0, 0, 0]
+  pushPose(param, pos[0], pos[1], pos[2],
+           c[3] ?? 1, c[4] ?? 0, c[5] ?? 0, c[6] ?? 0)
+}
+
+function handlePoseEulerChange(param: Parameter, euler: [number, number, number]) {
+  const [qw, qx, qy, qz] = eulerDegToQuat(euler[0], euler[1], euler[2])
+  const c = Array.isArray(param.value) ? param.value : [0, 0, 0]
+  pushPose(param, c[0] ?? 0, c[1] ?? 0, c[2] ?? 0, qw, qx, qy, qz)
+}
 </script>
 
 <template>
@@ -636,12 +711,40 @@ function formatPoseSlice(param: Parameter, from: number, to: number): string {
               </div>
             </template>
 
-            <!-- Pose (xyz position + wxyz quaternion, read-only display for now) -->
+            <!-- Pose: pos.xyz + Euler rotation (degrees) + quat readout -->
             <template v-else-if="param.type === ParameterType.POSE">
               <div class="space-y-1">
-                <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
-                <div class="text-[10px] text-imgui-text-dim font-mono pl-2">
-                  pos:  {{ formatPoseSlice(param, 0, 3) }}<br />
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-imgui-text">{{ param.displayName }}</label>
+                  <button
+                    v-if="param.isKeyframeable"
+                    @click="handleAddKeyframe(param)"
+                    :class="[
+                      'w-4 h-4 flex items-center justify-center text-xs transition-colors',
+                      param.hasKeyframes ? 'text-imgui-accent' : 'text-imgui-text-dim hover:text-imgui-accent'
+                    ]"
+                    :title="`Add keyframe @ ${formatTime(currentTime)}`"
+                  >
+                    ◆
+                  </button>
+                </div>
+                <div class="flex items-center gap-1 text-[10px] text-imgui-text-dim">
+                  <span class="w-8">pos</span>
+                  <Vec3Input
+                    :model-value="getPosePos(param)"
+                    @update:model-value="handlePosePosChange(param, $event)"
+                    :step="0.01"
+                  />
+                </div>
+                <div class="flex items-center gap-1 text-[10px] text-imgui-text-dim">
+                  <span class="w-8">rot°</span>
+                  <Vec3Input
+                    :model-value="getPoseEuler(param)"
+                    @update:model-value="handlePoseEulerChange(param, $event)"
+                    :step="1"
+                  />
+                </div>
+                <div class="text-[10px] text-imgui-text-dim font-mono pl-9">
                   quat: {{ formatPoseSlice(param, 3, 7) }}
                 </div>
               </div>
