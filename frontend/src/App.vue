@@ -15,6 +15,7 @@ import ExportDialog from './components/ExportDialog.vue'
 import ImportDialog from './components/ImportDialog.vue'
 import { defaultCode } from '@/utils/monaco-config'
 import { isMultiFileExample, type AnyExample } from '@/data/examples'
+import { clearPresetFiles, syncPresetFilesToProject } from '@/services/presetFiles'
 import { wsService } from '@/services/websocket'
 import type { AllolibRuntime } from '@/services/runtime'
 import {
@@ -130,6 +131,10 @@ const handleAddExampleToProject = (example: AnyExample) => {
 }
 
 const handleReplaceProjectWithExample = (example: AnyExample) => {
+  // Wipe IDBFS-backed presets from the previous project so they don't
+  // bleed into the example we're loading. Fire-and-forget — the next
+  // project's WASM init does its own syncfs(true) at startup.
+  void clearPresetFiles()
   // Clear existing project
   projectStore.newProject()
 
@@ -156,6 +161,7 @@ const handleReplaceProjectWithExample = (example: AnyExample) => {
 // File menu handlers
 const handleFileNew = () => {
   if (confirm('Create a new project? Unsaved changes will be lost.')) {
+    void clearPresetFiles()
     editorRef.value?.newProject()
     currentFileName.value = 'main.cpp'
     appStore.log('[INFO] New project created')
@@ -382,6 +388,16 @@ watch(() => appStore.status, (newStatus) => {
     // The WASM now properly reports only ControlGUI parameters (the app's
     // user-facing params), not the voice trigger parameters (which are for
     // sequencing). Source detection was adding duplicates.
+
+    // Surface IDBFS-restored .preset / .arrangement.json files in the
+    // explorer. WebApp::start mounted /presets and called syncfs(true);
+    // by the time the app status flips to 'running' the load is complete
+    // and PresetHandler may also have written new files in onCreate.
+    // Defer briefly so the syncfs callback (async) has fired.
+    setTimeout(() => {
+      const n = syncPresetFilesToProject(projectStore)
+      if (n > 0) appStore.log(`[INFO] /presets contains ${n} file(s) — visible in explorer`)
+    }, 250)
   }
 })
 

@@ -186,6 +186,26 @@ void WebApp::start() {
 #endif
     std::cout << "[AlloLib] Starting web application..." << std::endl;
 
+    // Mount IDBFS at /presets BEFORE onInit so PresetHandler ctors
+    // running there see any persisted .preset / .arrangement.json
+    // files from a prior session. syncfs(true) is fire-and-forget;
+    // by the time the user actually calls recallPreset (in onCreate
+    // or later) the IDB load has completed.
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        try { FS.mkdir('/presets'); } catch (e) { /* exists */ }
+        try {
+            FS.mount(IDBFS, {}, '/presets');
+            FS.syncfs(true, function(err) {
+                if (err) console.warn('[IDBFS] load /presets failed:', err);
+                else console.log('[IDBFS] /presets restored from IndexedDB');
+            });
+        } catch (e) {
+            console.warn('[IDBFS] mount failed (non-fatal):', e);
+        }
+    });
+#endif
+
     // Native al::App lifecycle: onInit() runs FIRST so user code can
     // register parameters / presets / configure audio + backend before
     // any subsystem spins up. Skipping this call meant `mPresets << p`
@@ -1057,6 +1077,101 @@ float al_texture_lod_get_reference_distance() {
 EMSCRIPTEN_KEEPALIVE
 float al_texture_lod_get_continuous(float distance, int maxMipLevel) {
     return al::gAutoLODInstance ? al::gAutoLODInstance->getContinuousTextureLOD(distance, maxMipLevel) : 0.0f;
+}
+
+// ── MEMFS / IDBFS bridge for the IDE file explorer ─────────────────────────
+//
+// _al_list_dir(path) returns a JSON string describing the directory's
+// contents — file name, size, isDir flag, and (for files under 32 KB)
+// the contents inlined as `body`. The caller is responsible for using
+// the return pointer immediately; subsequent calls overwrite the buffer.
+//
+// _al_remove_dir(path) recursively unlinks `path` (used by the frontend
+// when the user starts a new project / loads an example). After a wipe,
+// the JS side calls FS.syncfs(false, ...) to flush the empty IDBFS to
+// IndexedDB so the deletion persists.
+
+#include <dirent.h>
+#include <sys/stat.h>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+EMSCRIPTEN_KEEPALIVE
+const char* al_list_dir(const char* path) {
+    static thread_local std::string buffer;
+    buffer = "[";
+    DIR* d = ::opendir(path);
+    if (!d) { buffer += "]"; return buffer.c_str(); }
+    bool first = true;
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        const std::string name = ent->d_name;
+        if (name == "." || name == "..") continue;
+        std::string full = std::string(path);
+        if (full.empty() || full.back() != '/') full += "/";
+        full += name;
+        struct stat st{};
+        if (::stat(full.c_str(), &st) != 0) continue;
+        const bool isDir = (st.st_mode & S_IFDIR) != 0;
+        if (!first) buffer += ",";
+        first = false;
+        buffer += "{\"name\":\"";
+        for (char c : name) {
+            if (c == '"' || c == '\\') buffer += '\\';
+            buffer += c;
+        }
+        buffer += "\",\"size\":" + std::to_string((long long)st.st_size);
+        buffer += ",\"isDir\":" + std::string(isDir ? "true" : "false");
+        // Inline small text files so the IDE can render them without a
+        // round-trip. 32 KB is comfortably above any reasonable preset.
+        if (!isDir && st.st_size < 32 * 1024) {
+            std::ifstream f(full);
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            std::string body = ss.str();
+            buffer += ",\"body\":\"";
+            for (char c : body) {
+                if (c == '"')      buffer += "\\\"";
+                else if (c == '\\') buffer += "\\\\";
+                else if (c == '\n') buffer += "\\n";
+                else if (c == '\r') buffer += "\\r";
+                else if (c == '\t') buffer += "\\t";
+                else if ((unsigned char)c < 0x20) buffer += "?";
+                else buffer += c;
+            }
+            buffer += "\"";
+        }
+        buffer += "}";
+    }
+    ::closedir(d);
+    buffer += "]";
+    return buffer.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+void al_remove_dir(const char* path) {
+    // Recursive rm. Walks the tree depth-first, unlinks files, rmdirs
+    // empty directories. Safe when path doesn't exist (no-op).
+    DIR* d = ::opendir(path);
+    if (!d) return;
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        const std::string name = ent->d_name;
+        if (name == "." || name == "..") continue;
+        std::string full = std::string(path);
+        if (full.empty() || full.back() != '/') full += "/";
+        full += name;
+        struct stat st{};
+        if (::stat(full.c_str(), &st) != 0) continue;
+        if (st.st_mode & S_IFDIR) {
+            al_remove_dir(full.c_str());
+            ::rmdir(full.c_str());
+        } else {
+            ::unlink(full.c_str());
+        }
+    }
+    ::closedir(d);
 }
 
 } // extern "C"

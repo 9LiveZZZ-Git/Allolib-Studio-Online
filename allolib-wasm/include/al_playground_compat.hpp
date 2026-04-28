@@ -266,6 +266,18 @@ public:
         if (std::ofstream f{jsonPath};   f) f << jsonStr;
         printf("[PresetHandler] wrote %s and %s\n", presetPath.c_str(), jsonPath.c_str());
 
+        // Flush IDBFS to IndexedDB so the files survive a page reload.
+        // Async / fire-and-forget; the next storePreset within the same
+        // session is fine even if this hasn't finished yet because IDBFS
+        // serializes sync calls internally.
+        EM_ASM({
+            if (typeof FS !== 'undefined' && FS.syncfs) {
+                FS.syncfs(false, function(err) {
+                    if (err) console.warn('[IDBFS] persist failed:', err);
+                });
+            }
+        });
+
         mCurrentPreset = name;
     }
     void storePreset(int index, std::string name = "", bool = true) {
