@@ -193,10 +193,18 @@ public:
         mParams.push_back(&p);
         auto* gui = WebControlGUI::getActiveInstance();
         if (!gui) {
+            // Lazy default panel — first PresetHandler::registerParameter
+            // call constructs it, registering itself as sActiveInstance via
+            // WebControlGUI's ctor. Lives until program exit.
             static WebControlGUI sDefaultPanel;
-            gui = &sDefaultPanel;
+            gui = WebControlGUI::getActiveInstance();
+            if (!gui) gui = &sDefaultPanel;
         }
         gui->registerParameterMeta(p);
+        EM_ASM({
+            console.log('[PresetHandler] auto-registered "' + UTF8ToString($0)
+                + '" with WebControlGUI (panel total: ' + $1 + ')');
+        }, p.getName().c_str(), (int)gui->parameterCount());
         return *this;
     }
     PresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
@@ -240,12 +248,19 @@ public:
             } catch(e) { console.warn('[PresetHandler] localStorage full', e); }
         }, mName.c_str(), name.c_str(), jsonStr.c_str());
 
-        // 2 + 3. MEMFS files in <rootDir>/
-        ensureDirectory(mName);
-        const std::string presetPath = mName + "/" + name + ".preset";
-        const std::string jsonPath   = mName + "/" + name + ".arrangement.json";
+        // 2 + 3. MEMFS files in <rootDir>/  — normalize to absolute path so
+        // it doesn't depend on Emscripten's CWD (which is "/" but a leading
+        // "./" or no slash creates ambiguity).
+        const std::string dir = absPresetDir();
+        ensureDirectory(dir);
+        const std::string presetPath = dir + "/" + name + ".preset";
+        const std::string jsonPath   = dir + "/" + name + ".arrangement.json";
         if (std::ofstream f{presetPath}; f) f << presetText.str();
         if (std::ofstream f{jsonPath};   f) f << jsonStr;
+        EM_ASM({
+            console.log('[PresetHandler] wrote ' + UTF8ToString($0)
+                + ' and ' + UTF8ToString($1));
+        }, presetPath.c_str(), jsonPath.c_str());
 
         mCurrentPreset = name;
     }
@@ -369,6 +384,31 @@ public:
 
     void verbose(bool) {}
 
+    // Diagnostic — prints the resolved MEMFS path and lists files there.
+    // Useful when a save appears to "go to the wrong folder". Call from
+    // C++ via `mPresets.dumpFiles()`.
+    void dumpFiles() const {
+        const std::string dir = absPresetDir();
+        EM_ASM({
+            var path = UTF8ToString($0);
+            try {
+                var entries = FS.readdir(path).filter(function(n) {
+                    return n !== '.' && n !== '..';
+                });
+                console.log('[PresetHandler] ' + path + ' contains '
+                    + entries.length + ' file(s):', entries);
+                entries.forEach(function(name) {
+                    try {
+                        var content = FS.readFile(path + '/' + name, { encoding: 'utf8' });
+                        console.log('  ' + name + ':\n' + content);
+                    } catch(e) { console.warn('  could not read ' + name, e); }
+                });
+            } catch(e) {
+                console.warn('[PresetHandler] cannot list ' + path, e);
+            }
+        }, dir.c_str());
+    }
+
 private:
     // ── Helpers ───────────────────────────────────────────────────────────
     static nlohmann::json variantToJson(const VariantValue& v) {
@@ -462,6 +502,22 @@ private:
             default:
                 types += '?'; vals += "0 "; break;
         }
+    }
+
+    // Normalize the user-supplied root (e.g. "./presets", "presets",
+    // "/presets/songs") into a single absolute MEMFS path. Emscripten's
+    // CWD is "/" but a leading "./" creates a path like "/./presets"
+    // which mkdir -p handles inconsistently across browsers.
+    std::string absPresetDir() const {
+        std::string p = mName;
+        // Strip leading "./" if present
+        if (p.size() >= 2 && p[0] == '.' && p[1] == '/') p.erase(0, 2);
+        // Strip duplicate leading slashes
+        while (p.size() >= 2 && p[0] == '/' && p[1] == '/') p.erase(0, 1);
+        // Ensure leading "/"
+        if (p.empty()) p = "presets";
+        if (p[0] != '/') p = "/" + p;
+        return p;
     }
 
     // mkdir -p semantics on MEMFS so storePreset can drop files into a
