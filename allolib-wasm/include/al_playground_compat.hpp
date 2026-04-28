@@ -201,10 +201,10 @@ public:
             if (!gui) gui = &sDefaultPanel;
         }
         gui->registerParameterMeta(p);
-        EM_ASM({
-            console.log('[PresetHandler] auto-registered "' + UTF8ToString($0)
-                + '" with WebControlGUI (panel total: ' + $1 + ')');
-        }, p.getName().c_str(), (int)gui->parameterCount());
+        // printf so the message lands in Studio's log panel (Module.print
+        // pipe), not just the browser devtools console.
+        printf("[PresetHandler] auto-registered \"%s\" with WebControlGUI (panel total: %d)\n",
+               p.getName().c_str(), (int)gui->parameterCount());
         return *this;
     }
     PresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
@@ -257,10 +257,7 @@ public:
         const std::string jsonPath   = dir + "/" + name + ".arrangement.json";
         if (std::ofstream f{presetPath}; f) f << presetText.str();
         if (std::ofstream f{jsonPath};   f) f << jsonStr;
-        EM_ASM({
-            console.log('[PresetHandler] wrote ' + UTF8ToString($0)
-                + ' and ' + UTF8ToString($1));
-        }, presetPath.c_str(), jsonPath.c_str());
+        printf("[PresetHandler] wrote %s and %s\n", presetPath.c_str(), jsonPath.c_str());
 
         mCurrentPreset = name;
     }
