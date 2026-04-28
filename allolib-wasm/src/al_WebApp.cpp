@@ -290,13 +290,11 @@ void WebApp::stop() {
     std::cout << "[AlloLib] Application stopped" << std::endl;
 }
 
-// Optional pre-onAnimate hook installed by playground_compat (PresetHandler
-// tickAll for morph interpolation). nullptr when no PresetHandler exists.
-void (*gPlaygroundAnimateHook)(double dt) = nullptr;
-
 void WebApp::tick(double dt) {
-    if (gPlaygroundAnimateHook) gPlaygroundAnimateHook(dt);
-    // Call user's onAnimate
+    // Call user's onAnimate. Preset morph auto-tick is wired
+    // header-only via al_playground_compat.hpp's gPlaygroundAnimateHook
+    // inline variable; user code that includes that header brings its
+    // own definition, so libal_web.a stays unchanged on header revs.
     onAnimate(dt);
 
     // Update navigation direction vectors (needed for uf(), ur(), uu())

@@ -158,10 +158,13 @@ using ControlGUI = WebControlGUI;
 // playground compat tick is invoked from WebApp::tickAudio so morphing
 // runs at audio rate (configurable later).
 
-// Hook installed in al_WebApp.cpp; PresetHandler points it at tickAll on
-// first construction so morph interpolation runs once per frame from
-// WebApp::tick(dt), without users needing to plumb a tick call themselves.
-extern void (*gPlaygroundAnimateHook)(double dt);
+// Header-only hook (C++17 inline variable) so referencing it from the
+// user's main.cpp doesn't require libal_web.a to export a symbol —
+// avoids the rebuild gap when this header changes. WebApp::tick checks
+// it via the same inline-variable mechanism after Railway rebuilds; if
+// the lib in use is older, the hook is simply un-fired and the user
+// can call mPresets.tick(dt) manually from onAnimate as a fallback.
+inline void (*gPlaygroundAnimateHook)(double dt) = nullptr;
 
 namespace al {
 
