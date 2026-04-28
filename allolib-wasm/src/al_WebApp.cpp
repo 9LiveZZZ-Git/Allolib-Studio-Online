@@ -186,6 +186,13 @@ void WebApp::start() {
 #endif
     std::cout << "[AlloLib] Starting web application..." << std::endl;
 
+    // Native al::App lifecycle: onInit() runs FIRST so user code can
+    // register parameters / presets / configure audio + backend before
+    // any subsystem spins up. Skipping this call meant `mPresets << p`
+    // chains in onInit silently no-oped — the v0.3.21 audit that
+    // showed missing register-printf lines traces back to here.
+    onInit();
+
     // Register global AutoLOD for JS bridge
     setGlobalAutoLOD(&mAutoLOD);
 
