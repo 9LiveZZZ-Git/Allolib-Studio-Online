@@ -35,6 +35,7 @@
 #include "al/graphics/al_Shapes.hpp"
 #include "al/graphics/al_Lens.hpp"
 #include "al/graphics/al_Viewpoint.hpp"
+#include "al/io/al_AudioIO.hpp"
 #include "al/io/al_AudioIOData.hpp"
 #include "al/io/al_Window.hpp"
 #include "al/io/al_ControlNav.hpp"
@@ -87,6 +88,10 @@ public:
     // =========================================================================
 
     /// Called once when the application starts
+    /// Called once before onCreate() to set up domains/configuration —
+    /// matches al::App's onInit() lifecycle hook.
+    virtual void onInit() {}
+
     virtual void onCreate() {}
 
     /// Called every frame for animation (dt = time since last frame in seconds)
@@ -172,22 +177,23 @@ public:
     /// Get audio configuration
     const WebAudioConfig& audioConfig() const { return mAudioConfig; }
 
-    /// Native al::App compatibility — returns an AudioIO-shaped view of
-    /// the WebAudioConfig so that imported code calling
-    /// `audioIO().framesPerSecond()` etc. compiles unchanged.
-    struct AudioIOView {
-        int sampleRate;
-        int bufferSize;
-        int outputChannels;
-        int inputChannels;
-        int framesPerSecond() const { return sampleRate; }
-        int framesPerBuffer() const { return bufferSize; }
-        int channelsOut() const { return outputChannels; }
-        int channelsIn() const { return inputChannels; }
-    };
-    AudioIOView audioIO() const {
-        return { mAudioConfig.sampleRate, mAudioConfig.bufferSize,
-                 mAudioConfig.outputChannels, mAudioConfig.inputChannels };
+    /// Native al::App compatibility — returns the underlying al::AudioIO
+    /// (a real AudioIO, not a value-type proxy). The actual audio still
+    /// flows through the AudioWorklet; this object just exposes the
+    /// native channel/rate/buffer/append/start/cpu/time API surface so
+    /// imported native code compiles unchanged. Lazily synced from
+    /// mAudioConfig so framesPerSecond() etc. return the configured rate.
+    AudioIO& audioIO() {
+        if (mAudioIOReal.framesPerSecond() != mAudioConfig.sampleRate) {
+            mAudioIOReal.framesPerSecond(mAudioConfig.sampleRate);
+            mAudioIOReal.framesPerBuffer(mAudioConfig.bufferSize);
+            mAudioIOReal.channelsOut(mAudioConfig.outputChannels);
+            mAudioIOReal.channelsIn(mAudioConfig.inputChannels);
+        }
+        return mAudioIOReal;
+    }
+    const AudioIO& audioIO() const {
+        return const_cast<WebApp*>(this)->audioIO();
     }
 
     /// Get/set the navigation pose (camera position) - compatible with al::App
@@ -380,6 +386,7 @@ private:
 
     // Audio
     AudioIOData* mAudioIO = nullptr;
+    AudioIO mAudioIOReal;  // exposed via audioIO() — config-synced wrapper
 
     // Navigation and view
     Nav mNav;
