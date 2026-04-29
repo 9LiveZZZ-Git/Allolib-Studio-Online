@@ -41,9 +41,9 @@ struct M52Test : public App {
 
   // ASYNC mode + an explicit root keep the test deterministic across
   // platforms (no thread, write to a known directory).
-  PresetHandler mPresets{TimeMasterMode::TIME_MASTER_ASYNC,
+  PresetHandler mPresets{TimeMasterMode::TIME_MASTER_FREE,
                          "M5_2_test_presets", true};
-  PresetSequencer mSeq{TimeMasterMode::TIME_MASTER_ASYNC};
+  PresetSequencer mSeq{TimeMasterMode::TIME_MASTER_FREE};
   PresetMapper mMapper{false};
 
   void onInit() override {
@@ -67,7 +67,7 @@ struct M52Test : public App {
     std::cout << "[M5.2] recallPreset(0) returned: " << recalledName
               << std::endl;
 
-    // Manual morph stepping (TIME_MASTER_ASYNC means no thread; we tick).
+    // Manual morph stepping (TIME_MASTER_FREE means no thread; we tick).
     std::cout << "[M5.2] morphTo started: 1.5 s" << std::endl;
     mPresets.morphTo("dark", 1.5f);
 

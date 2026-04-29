@@ -194,22 +194,24 @@ public:
     // Web-friendly defaults: rooted at /presets (IDBFS mountpoint); ASYNC
     // mode disables the upstream CPU-thread morph (Emscripten's pthread
     // story is fragile; we tick stepMorphing from gPlaygroundAnimateHook).
+    // Web-friendly defaults: rooted at /presets (IDBFS mountpoint); FREE
+    // mode is the only PresetHandler mode that does NOT spawn the upstream
+    // CPU-thread morph (CPU starts a thread; GRAPHICS and AUDIO fall back
+    // to CPU per upstream's PresetHandler.cpp). We tick stepMorphing() from
+    // gPlaygroundAnimateHook instead.
     explicit WebPresetHandler(std::string rootDirectory = "/presets",
                               bool verbose = false)
-        : PresetHandler(TimeMasterMode::TIME_MASTER_ASYNC,
+        : PresetHandler(TimeMasterMode::TIME_MASTER_FREE,
                         rootDirectory, verbose) {
         installWebHooks();
     }
-    // Compat overload: caller supplies an explicit time-master mode. We
-    // route through it but warn (in Studio's log) if they ask for CPU
-    // mode, which spawns a thread that won't behave reliably under
-    // Emscripten.
+    // Compat overload: caller supplies an explicit time-master mode.
     WebPresetHandler(TimeMasterMode mode, std::string rootDirectory = "/presets",
                      bool verbose = false)
         : PresetHandler(mode, rootDirectory, verbose) {
         if (mode == TimeMasterMode::TIME_MASTER_CPU) {
-            printf("[WebPresetHandler] TIME_MASTER_CPU is unreliable on web; "
-                   "TIME_MASTER_ASYNC is recommended.\n");
+            printf("[WebPresetHandler] TIME_MASTER_CPU spawns a CPU thread; "
+                   "TIME_MASTER_FREE is recommended on web.\n");
         }
         installWebHooks();
     }
@@ -250,7 +252,9 @@ public:
     void stopMorph()                { stopMorphing(); }
 
     // ── Diagnostic: list /presets contents in the JS console ─────────────
-    void dumpFiles() const {
+    // Non-const because upstream PresetHandler::getCurrentPath() is
+    // non-const (it lazily refreshes the cached subdirectory string).
+    void dumpFiles() {
         const std::string dir = getCurrentPath();
         EM_ASM({
             var path = UTF8ToString($0);
