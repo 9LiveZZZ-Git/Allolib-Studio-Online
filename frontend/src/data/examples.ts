@@ -13,6 +13,11 @@
 
 import { playgroundCategories, playgroundExamples } from './playgroundExamples'
 import { studioCategories, studioExamples, studioMultiFileExamples } from './studioExamples'
+import {
+  mat200bCategories,
+  mat200bExamples,
+  mat200bMultiFileExamples,
+} from './mat200bExamples'
 
 export interface ExampleFile {
   path: string
@@ -169,6 +174,11 @@ export const categoryGroups: CategoryGroup[] = [
       },
     ],
   },
+  {
+    id: 'mat200b',
+    title: 'MAT200B',
+    categories: mat200bCategories,
+  },
 ]
 
 // GPU-specific categories for the flat list
@@ -189,6 +199,7 @@ export const categories: ExampleCategory[] = [
   ...playgroundCategories,
   ...studioCategories,
   ...gpuCategories,
+  ...mat200bCategories,
 ]
 
 // Combine base examples with playground examples
@@ -12517,6 +12528,9 @@ ALLOLIB_WEB_MAIN(MultiFileSynthApp)
   // Merge studio examples (AlloLib Studio Online originals)
   ...studioExamples,
 
+  // Merge MAT200B examples (course buildable A/V set; see MAT200B_EXAMPLES_PLAN.md)
+  ...mat200bExamples,
+
   // ==========================================================================
   // ALLOLIB STUDIO (GPU) - WebGPU-optimized examples
   // ==========================================================================
@@ -13235,7 +13249,12 @@ public:
 ]
 
 // Combined list of all examples (single and multi-file)
-export const allExamples: AnyExample[] = [...examples, ...multiFileExamples, ...studioMultiFileExamples]
+export const allExamples: AnyExample[] = [
+  ...examples,
+  ...multiFileExamples,
+  ...studioMultiFileExamples,
+  ...mat200bMultiFileExamples,
+]
 
 export function getExamplesByCategory(categoryId: string): AnyExample[] {
   return allExamples.filter((e) => e.category === categoryId)
