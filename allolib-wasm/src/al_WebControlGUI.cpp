@@ -1,107 +1,130 @@
 /**
- * WebControlGUI C exports - weak stub implementations
+ * WebControlGUI C exports — strong definitions.
  *
- * This file provides WEAK stub implementations of the WebGUI C functions.
- * These are used when user code doesn't include al_WebControlGUI.hpp.
+ * Previously this file held weak stubs intended to be overridden by `inline`
+ * definitions in al_WebControlGUI.hpp. That doesn't work: `inline` functions
+ * are weak symbols in C++, and weak-vs-weak resolves to whichever the linker
+ * sees first — usually this .cpp (it's pulled in to satisfy the
+ * EXPORTED_FUNCTIONS list directly), so the header's logic was dead. The
+ * Studio Params panel showed empty for parameters registered through any
+ * route (PresetHandler, ParameterServer, gui<<p) because every export
+ * collapsed to "0".
  *
- * When user code DOES include al_WebControlGUI.hpp, the strong (non-weak)
- * definitions in that header take precedence over these weak stubs.
+ * The C exports now live here as the single, strong definitions. They read
+ * from `WebControlGUI::getActiveInstance()` exactly like the header copies
+ * intended; the inline copies still in the header are harmless (weak; .cpp
+ * wins) but should eventually be removed.
  */
 
 #ifdef __EMSCRIPTEN__
 
 #include <emscripten.h>
+#include <string>
+
+#include "al_WebControlGUI.hpp"
+
+using al::WebControlGUI;
 
 extern "C" {
 
-// All stubs are weak - they will be overridden by strong definitions from the header
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 int al_webgui_get_parameter_count() {
-    return 0;
+    auto* gui = WebControlGUI::getActiveInstance();
+    return gui ? static_cast<int>(gui->parameterCount()) : 0;
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 const char* al_webgui_get_parameter_name(int index) {
-    (void)index;
+    static std::string name;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) {
+        auto* p = gui->getParameter(index);
+        if (p) { name = p->getName(); return name.c_str(); }
+    }
     return "";
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 const char* al_webgui_get_parameter_group(int index) {
-    (void)index;
+    static std::string group;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) {
+        auto* p = gui->getParameter(index);
+        if (p) { group = p->getGroup(); return group.c_str(); }
+    }
     return "";
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 int al_webgui_get_parameter_type(int index) {
-    (void)index;
-    return 0;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (!gui) return 0;
+    return static_cast<int>(gui->getParameterInfo(index).type);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 float al_webgui_get_parameter_min(int index) {
-    (void)index;
-    return 0.0f;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (!gui) return 0.f;
+    return gui->getParameterInfo(index).min;
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 float al_webgui_get_parameter_max(int index) {
-    (void)index;
-    return 1.0f;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (!gui) return 1.f;
+    return gui->getParameterInfo(index).max;
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 float al_webgui_get_parameter_value(int index) {
-    (void)index;
-    return 0.0f;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (!gui) return 0.f;
+    return gui->getParameterValue(index);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 float al_webgui_get_parameter_default(int index) {
-    (void)index;
-    return 0.0f;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (!gui) return 0.f;
+    return gui->getParameterInfo(index).defaultValue;
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_set_parameter_value(int index, float value) {
-    (void)index;
-    (void)value;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->setParameterValue(index, value);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_set_parameter_string(int index, const char* value) {
-    (void)index;
-    (void)value;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->setParameterString(index, value ? value : "");
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_trigger_parameter(int index) {
-    (void)index;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->triggerParameter(index);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_set_parameter_vec3(int index, float x, float y, float z) {
-    (void)index;
-    (void)x;
-    (void)y;
-    (void)z;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->setParameterVec3(index, x, y, z);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_set_parameter_vec4(int index, float x, float y, float z, float w) {
-    (void)index;
-    (void)x;
-    (void)y;
-    (void)z;
-    (void)w;
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->setParameterVec4(index, x, y, z, w);
 }
 
-__attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void al_webgui_set_parameter_pose(int index, float x, float y, float z,
-                                   float qw, float qx, float qy, float qz) {
-    (void)index;
-    (void)x; (void)y; (void)z;
-    (void)qw; (void)qx; (void)qy; (void)qz;
+                                  float qw, float qx, float qy, float qz) {
+    auto* gui = WebControlGUI::getActiveInstance();
+    if (gui) gui->setParameterPose(index, x, y, z, qw, qx, qy, qz);
 }
 
 } // extern "C"
