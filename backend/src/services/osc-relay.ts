@@ -148,8 +148,13 @@ export function initOscRelay() {
 const sharedHubs = new Map<number, Set<WebSocket>>()
 let sharedWss: WebSocketServer | null = null
 
-export function attachOscRelayToServer(httpServer: HttpServer) {
-  const wss = new WebSocketServer({ server: httpServer, path: '/osc' })
+/**
+ * Returns a `noServer:true` WebSocketServer for /osc. The caller is
+ * responsible for routing HTTP upgrade events to it (see index.ts) so we
+ * don't conflict with the /ws WSS that lives on the same HTTP server.
+ */
+export function attachOscRelayToServer(): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true })
   sharedWss = wss
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
@@ -202,7 +207,8 @@ export function attachOscRelayToServer(httpServer: HttpServer) {
     })
   })
 
-  logger.info('[osc-relay shared] attached at /osc on main HTTP server (?port=N to join hub)')
+  logger.info('[osc-relay shared] /osc WSS ready (caller routes upgrade events; ?port=N to join hub)')
+  return wss
 }
 
 export function shutdownOscRelay() {
