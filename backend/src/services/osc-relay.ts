@@ -27,7 +27,7 @@
  * produce in al_OSC_Web.cpp. No URL rewriting needed.
  */
 
-import { createServer as createHttpServer, type Server as HttpServer } from 'http'
+import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createSocket, type Socket as DgramSocket } from 'dgram'
 import { logger } from './logger.js'
@@ -134,6 +134,77 @@ export function initOscRelay() {
   for (const port of ports) startPortHub(port, udpBridge)
 }
 
+// ─── Shared /osc endpoint on the main HTTP server ─────────────────────────
+//
+// Production deployments (Railway) expose only one HTTP port. Browser clients
+// can't reach the per-port hubs above because (a) Railway doesn't open
+// arbitrary ports, and (b) `ws://127.0.0.1:<port>/osc` from a remote browser
+// is the user's own loopback, not ours. So we attach a second WSS to the
+// existing PORT (4000) at path `/osc` and demux clients by `?port=N` query —
+// each port becomes a hub, identical fan-out semantics to the per-port
+// listeners. The frontend runtime sets window.__alloOscRelayUrl to this URL
+// and the WASM appends `?port=N`.
+
+const sharedHubs = new Map<number, Set<WebSocket>>()
+let sharedWss: WebSocketServer | null = null
+
+export function attachOscRelayToServer(httpServer: HttpServer) {
+  const wss = new WebSocketServer({ server: httpServer, path: '/osc' })
+  sharedWss = wss
+
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    const queryStr = (req.url ?? '').split('?')[1] ?? ''
+    const params = new URLSearchParams(queryStr)
+    const portStr = params.get('port') ?? '0'
+    const port = parseInt(portStr, 10)
+    if (!port || port < 1 || port > 65535) {
+      logger.warn(`[osc-relay shared] rejecting connection without valid ?port (got "${portStr}")`)
+      ws.close(1008, 'missing port query param')
+      return
+    }
+
+    let hub = sharedHubs.get(port)
+    if (!hub) {
+      hub = new Set<WebSocket>()
+      sharedHubs.set(port, hub)
+    }
+    hub.add(ws)
+    logger.info(`[osc-relay shared :${port}] client joined (${hub.size} on hub)`)
+
+    ws.on('message', (data, isBinary) => {
+      if (!isBinary) return
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
+      const peers = sharedHubs.get(port)
+      if (!peers) return
+      for (const peer of peers) {
+        if (peer === ws) continue
+        if (peer.readyState === WebSocket.OPEN) peer.send(buf, { binary: true })
+      }
+      // If a per-port hub on this port also exists (e.g. with UDP bridge
+      // enabled), forward into that hub's UDP socket so native receivers
+      // hear browser frames.
+      const localHub = hubs.get(port)
+      if (localHub?.udp) {
+        localHub.udp.send(buf, port, '127.0.0.1', () => {})
+      }
+    })
+
+    ws.on('close', () => {
+      const peers = sharedHubs.get(port)
+      if (peers) {
+        peers.delete(ws)
+        if (peers.size === 0) sharedHubs.delete(port)
+        logger.info(`[osc-relay shared :${port}] client left (${peers.size} remaining)`)
+      }
+    })
+    ws.on('error', (err) => {
+      logger.warn(`[osc-relay shared :${port}] ws error: ${err.message}`)
+    })
+  })
+
+  logger.info('[osc-relay shared] attached at /osc on main HTTP server (?port=N to join hub)')
+}
+
 export function shutdownOscRelay() {
   for (const hub of hubs.values()) {
     for (const c of hub.clients) c.close()
@@ -142,4 +213,10 @@ export function shutdownOscRelay() {
     hub.http.close()
   }
   hubs.clear()
+  if (sharedWss) {
+    for (const peers of sharedHubs.values()) for (const c of peers) c.close()
+    sharedHubs.clear()
+    sharedWss.close()
+    sharedWss = null
+  }
 }

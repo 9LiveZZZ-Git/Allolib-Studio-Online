@@ -7,7 +7,7 @@ import { createServer } from 'http'
 import { compileRouter } from './routes/compile.js'
 import { logger } from './services/logger.js'
 import { initWsManager } from './services/ws-manager.js'
-import { initOscRelay } from './services/osc-relay.js'
+import { attachOscRelayToServer, initOscRelay } from './services/osc-relay.js'
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -56,10 +56,14 @@ wss.on('connection', (ws) => {
   })
 })
 
-// M5.5: OSC ↔ WebSocket relay listens on its own port(s) so the WASM URL
-// `ws://<host>:<port>/osc` produced by al::osc::Send/Recv connects directly.
-// Configurable via OSC_RELAY_PORTS / OSC_UDP_BRIDGE; default port 9010.
+// M5.5: OSC ↔ WebSocket relay.
+//   - Per-port hubs (initOscRelay) bind to OSC_RELAY_PORTS for native UDP
+//     interop and dev parity with the literal ws://host:port/osc URL.
+//   - Shared `/osc` endpoint on the main HTTP server (attachOscRelayToServer)
+//     is the production path: Railway only opens one port, and browser
+//     clients route through window.__alloOscRelayUrl + ?port=N.
 initOscRelay()
+attachOscRelayToServer(server)
 
 // Start server
 server.listen(PORT, () => {

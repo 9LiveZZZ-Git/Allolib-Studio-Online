@@ -301,6 +301,24 @@ export class AllolibRuntime {
       // can rewrite /assets/... to the correct subdirectory on GitHub Pages.
       ;(window as any).__alloBasePath = import.meta.env.BASE_URL
 
+      // M5.5 client side: derive the OSC relay base URL from the backend URL
+      // (same origin we already use for /api/compile + /ws). The WASM
+      // al::osc::Send/Recv check window.__alloOscRelayUrl on each open() and
+      // route through `<base>?port=<N>` instead of dialing
+      // ws://127.0.0.1:<N>/osc, which from the browser would mean the user's
+      // own machine and is unreachable in production.
+      {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL as string | undefined
+        let oscBase: string
+        if (backendUrl) {
+          oscBase = backendUrl.replace(/^http/, 'ws') + '/osc'
+        } else {
+          const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+          oscBase = `${proto}//${window.location.host}/osc`
+        }
+        ;(window as any).__alloOscRelayUrl = oscBase
+      }
+
       // Dynamically import the ES6 module
       // The module exports a factory function that returns a Promise<Module>
       this.onPrint('[INFO] Importing ES6 module...')

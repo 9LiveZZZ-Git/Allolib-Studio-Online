@@ -238,6 +238,35 @@ Message& Message::operator>>(Blob& v) {
     return *this;
 }
 
+// ─── URL builder (M5.5 client side) ───────────────────────────────────────
+//
+// Browsers can't dial `ws://127.0.0.1:<port>/osc` and reach a Railway-hosted
+// relay — that URL points at the user's own machine. Frontend runtime sets
+// window.__alloOscRelayUrl to the backend's OSC base (e.g.
+// "wss://allolib-backend.up.railway.app/osc"); when present, route through
+// it with the OSC port encoded as ?port=<N>. The backend hub demuxes by
+// query string. If the override isn't set, fall back to the literal native
+// URL (still useful for dev with a local relay bound to that exact port).
+static std::string buildRelayUrl(uint16_t port, const std::string& address) {
+    char* override_cstr = (char*)EM_ASM_PTR({
+        var u = (typeof window !== 'undefined') && window.__alloOscRelayUrl;
+        if (!u) return 0;
+        var len = lengthBytesUTF8(u) + 1;
+        var ptr = _malloc(len);
+        stringToUTF8(u, ptr, len);
+        return ptr;
+    });
+    if (override_cstr && *override_cstr) {
+        std::string base = override_cstr;
+        free(override_cstr);
+        std::string sep = (base.find('?') == std::string::npos) ? "?" : "&";
+        return base + sep + "port=" + std::to_string(port);
+    }
+    if (override_cstr) free(override_cstr);
+    std::string host = address.empty() ? std::string("127.0.0.1") : address;
+    return "ws://" + host + ":" + std::to_string(port) + "/osc";
+}
+
 // ─── Send (Emscripten WebSocket transport) ────────────────────────────────
 
 class Send::SocketSender {
@@ -317,9 +346,7 @@ Send::~Send() {
 bool Send::open(uint16_t port, const char* address) {
     mPort = port;
     mAddress = address ? address : "";
-    std::string host = mAddress.empty() ? std::string("127.0.0.1") : mAddress;
-    std::string wsURL = "ws://" + host + ":" + std::to_string(port) + "/osc";
-    return socketSender->open(wsURL);
+    return socketSender->open(buildRelayUrl(port, mAddress));
 }
 
 size_t Send::send() {
@@ -353,8 +380,7 @@ public:
 
     bool open(uint16_t port, const std::string& address, Recv* p) {
         parent = p;
-        std::string host = address.empty() ? std::string("127.0.0.1") : address;
-        url = "ws://" + host + ":" + std::to_string(port) + "/osc";
+        url = buildRelayUrl(port, address);
         EmscriptenWebSocketCreateAttributes attr = { url.c_str(), nullptr, EM_TRUE };
         ws = emscripten_websocket_new(&attr);
         if (ws <= 0) return false;
