@@ -7,6 +7,7 @@ import { createServer } from 'http'
 import { compileRouter } from './routes/compile.js'
 import { logger } from './services/logger.js'
 import { initWsManager } from './services/ws-manager.js'
+import { initOscRelay } from './services/osc-relay.js'
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -54,6 +55,11 @@ wss.on('connection', (ws) => {
     logger.info('WebSocket client disconnected')
   })
 })
+
+// M5.5: OSC ↔ WebSocket relay listens on its own port(s) so the WASM URL
+// `ws://<host>:<port>/osc` produced by al::osc::Send/Recv connects directly.
+// Configurable via OSC_RELAY_PORTS / OSC_UDP_BRIDGE; default port 9010.
+initOscRelay()
 
 // Start server
 server.listen(PORT, () => {
