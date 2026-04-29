@@ -3200,15 +3200,15 @@ void onAnimate(double dt) override {
   {
     term: 'PresetHandler',
     category: 'types',
-    definition: 'Manages saving and loading parameter presets to/from files. Supports morphing between presets.',
-    syntax: 'PresetHandler presets{"presets"};',
-    example: `PresetHandler presets{"presets"};
-presets << amplitude << frequency;
-presets.storePreset("brass");
+    definition: 'Manages saving and loading parameter presets to/from files. Supports morphing between presets. Studio Online users should prefer WebPresetHandler — same API, plus auto-mirror to the Studio Params panel and IDBFS-backed persistence across reloads.',
+    syntax: 'WebPresetHandler presets{"/presets"};',
+    example: `WebPresetHandler presets;  // defaults to /presets root, ASYNC morph
+presets << amplitude << frequency;     // also lights up Studio Params panel
+presets.storePreset("brass");          // writes /presets/brass.preset, IDBFS-synced
 presets.recallPreset("brass");
-presets.setMorphTime(2.0);  // 2 second morph`,
-    platforms: ['native'],
-    webAlternative: 'Quick Save button creates .preset files in bin/{synthName}-data/',
+presets.morphTo("dark", 2.0);          // 2-second morph (or recallPreset("dark", 2.0))`,
+    platforms: ['both'],
+    webAlternative: 'WebPresetHandler is the Studio Online subclass; bare PresetHandler also links via upstream AlloLib but lacks the Studio Params auto-mirror.',
     relatedTerms: ['Parameter', 'ControlGUI', 'SynthGUIManager'],
   },
   {

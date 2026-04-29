@@ -212,6 +212,14 @@ set(ALLOLIB_SOURCES
     ${ALLOLIB_DIR}/src/ui/al_ParameterBundle.cpp
     ${ALLOLIB_DIR}/src/ui/al_ParameterServer.cpp  # M5.6: real upstream impl
 
+    # M5.2: link upstream PresetHandler / PresetSequencer / PresetMapper so
+    # WebPresetHandler in al_playground_compat.hpp can subclass instead of
+    # reimplementing. PresetMIDI is NOT linked — it depends on RtMidi which
+    # has no Emscripten port; remains a compat-shim stub.
+    ${ALLOLIB_DIR}/src/ui/al_PresetHandler.cpp
+    ${ALLOLIB_DIR}/src/ui/al_PresetSequencer.cpp
+    ${ALLOLIB_DIR}/src/ui/al_PresetMapper.cpp
+
     # M5.1 prerequisite: VariantValue stream + DiscreteParameterValues are
     # used by ParameterServer's bundle dispatch logic.
     ${ALLOLIB_DIR}/src/ui/al_DiscreteParameterValues.cpp

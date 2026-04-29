@@ -169,251 +169,96 @@ using ControlGUI = WebControlGUI;
 // can call mPresets.tick(dt) manually from onAnimate as a fallback.
 inline void (*gPlaygroundAnimateHook)(double dt) = nullptr;
 
+// ============================================================================
+// M5.2 — unify on upstream PresetHandler / PresetSequencer / PresetMapper.
+// Web-specific behaviors that used to live in our hand-rolled class move
+// into the WebPresetHandler subclass below:
+//   - auto-WebControlGUI mirror on `<<` / registerParameter
+//   - IDBFS syncfs(false) after every store, via registerStoreCallback
+//   - morph engine wired to gPlaygroundAnimateHook via stepMorphing
+//   - dumpFiles() diagnostic
+// The previous .arrangement.json sidecar and localStorage cache were
+// only-written, never-read auxiliaries — the upstream .preset file
+// format combined with the IDBFS persist now covers cross-session
+// reload, so the sidecars are dropped (not a regression: nothing in
+// the codebase consumed them).
+// ============================================================================
+#include "al/ui/al_PresetHandler.hpp"
+#include "al/ui/al_PresetSequencer.hpp"
+#include "al/ui/al_PresetMapper.hpp"
+
 namespace al {
 
-class PresetHandler {
+class WebPresetHandler : public PresetHandler {
 public:
-    PresetHandler(std::string name = "presets", bool = false) : mName(name) {
-        registerForTick();
+    // Web-friendly defaults: rooted at /presets (IDBFS mountpoint); ASYNC
+    // mode disables the upstream CPU-thread morph (Emscripten's pthread
+    // story is fragile; we tick stepMorphing from gPlaygroundAnimateHook).
+    explicit WebPresetHandler(std::string rootDirectory = "/presets",
+                              bool verbose = false)
+        : PresetHandler(TimeMasterMode::TIME_MASTER_ASYNC,
+                        rootDirectory, verbose) {
+        installWebHooks();
     }
-    PresetHandler(TimeMasterMode, std::string name = "presets", bool = false) : mName(name) {
-        registerForTick();
+    // Compat overload: caller supplies an explicit time-master mode. We
+    // route through it but warn (in Studio's log) if they ask for CPU
+    // mode, which spawns a thread that won't behave reliably under
+    // Emscripten.
+    WebPresetHandler(TimeMasterMode mode, std::string rootDirectory = "/presets",
+                     bool verbose = false)
+        : PresetHandler(mode, rootDirectory, verbose) {
+        if (mode == TimeMasterMode::TIME_MASTER_CPU) {
+            printf("[WebPresetHandler] TIME_MASTER_CPU is unreliable on web; "
+                   "TIME_MASTER_ASYNC is recommended.\n");
+        }
+        installWebHooks();
     }
-    ~PresetHandler() {
+    ~WebPresetHandler() {
         auto& v = activeHandlers();
         v.erase(std::remove(v.begin(), v.end(), this), v.end());
     }
 
-    // ── Registration ──────────────────────────────────────────────────────
-    // Registering a parameter with PresetHandler also forwards it to the
-    // active WebControlGUI so it shows up in the parameter panel — saves
-    // users from writing both `mPresets << p` and `gui << p`. If no panel
-    // exists yet, a default one is lazily created on first call.
-    PresetHandler& registerParameter(ParameterMeta& p) {
-        mParams.push_back(&p);
-        auto* gui = WebControlGUI::getActiveInstance();
-        if (!gui) {
-            // Lazy default panel — first PresetHandler::registerParameter
-            // call constructs it, registering itself as sActiveInstance via
-            // WebControlGUI's ctor. Lives until program exit.
-            static WebControlGUI sDefaultPanel;
-            gui = WebControlGUI::getActiveInstance();
-            if (!gui) gui = &sDefaultPanel;
-        }
-        gui->registerParameterMeta(p);
-        // printf so the message lands in Studio's log panel (Module.print
-        // pipe), not just the browser devtools console.
-        printf("[PresetHandler] auto-registered \"%s\" with WebControlGUI (panel total: %d)\n",
-               p.getName().c_str(), (int)gui->parameterCount());
+    // ── Auto-mirror to the active WebControlGUI ──────────────────────────
+    // Hides upstream's non-virtual operator<< / registerParameter so user
+    // code's `mPresets << gain` registers with both upstream's preset
+    // bookkeeping AND the Studio Params panel. Without this hide-by-name
+    // shadow, the base operator's static dispatch would resolve to the
+    // base's registerParameter and skip the panel mirror.
+    WebPresetHandler& registerParameter(ParameterMeta& p) {
+        PresetHandler::registerParameter(p);
+        mirrorToActiveGui(p);
         return *this;
     }
-    PresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
-    PresetHandler& registerParameterBundle(ParameterBundle& b) {
-        for (auto* p : b.parameters()) {
-            if (p) registerParameter(*p);
-        }
+    WebPresetHandler& registerParameterBundle(ParameterBundle& b) {
+        PresetHandler::registerParameterBundle(b);
+        for (auto* p : b.parameters()) if (p) mirrorToActiveGui(*p);
         return *this;
     }
-    PresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
+    WebPresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
+    WebPresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
 
-    // ── Store / recall ────────────────────────────────────────────────────
-    // Stores a preset in three forms in parallel:
-    //   1. localStorage JSON (legacy / quick reload across page refreshes)
-    //   2. <rootDir>/<name>.preset           (native AlloLib OSC-text format)
-    //   3. <rootDir>/<name>.arrangement.json (extended JSON metadata)
-    // The folder is created in MEMFS if it doesn't exist (same setup the
-    // export-to-native flow can later zip up).
-    void storePreset(std::string name) {
-        nlohmann::json root = nlohmann::json::object();
-        std::ostringstream presetText;
-        presetText << "::" << name << "\n";
+    // ── Compat aliases for the previous custom API ───────────────────────
+    // The hand-rolled compat PresetHandler exposed `tick(dt)` (called from
+    // gPlaygroundAnimateHook) and `recallPreset(name, morphTime)` /
+    // `stopMorph()` overloads that don't exist upstream. We bridge them
+    // here so any pre-existing user code keeps compiling.
+    void tick(double dt)            { stepMorphing(dt); }
+    void tick(float dt)             { stepMorphing(static_cast<double>(dt)); }
+    void recallPreset(std::string name, float morphTime) { morphTo(name, morphTime); }
+    void recallPreset(int index, float morphTime)        { morphTo(getPresetName(index), morphTime); }
+    using PresetHandler::recallPreset;  // unhide base recallPreset(name)/recallPreset(int)
+    void stopMorph()                { stopMorphing(); }
 
-        for (auto* p : mParams) {
-            std::vector<VariantValue> fields;
-            p->getFields(fields);
-            // Some parameter types (e.g. al::Trigger) inherit
-            // ParameterWrapper<bool> without overriding getFields/setFields,
-            // which makes the base class log a "not implemented" warning
-            // and return an empty fields vector. Triggers have no
-            // persisted state by design — skip them silently rather than
-            // spamming the log on every store + morph tick.
-            if (fields.empty()) continue;
-            root[p->getName()] = serializeFields(fields);
-            // Native .preset line: /address typeChars value(s)
-            std::string types, vals;
-            for (auto& f : fields) appendNativeField(types, vals, f);
-            presetText << p->getFullAddress() << " " << types << " " << vals << "\n";
-        }
-        presetText << "::\n";
-
-        std::string jsonStr = root.dump(2);
-
-        // 1. localStorage
-        EM_ASM({
-            try {
-                localStorage.setItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1), UTF8ToString($2));
-            } catch(e) { console.warn('[PresetHandler] localStorage full', e); }
-        }, mName.c_str(), name.c_str(), jsonStr.c_str());
-
-        // 2 + 3. MEMFS files in <rootDir>/  — normalize to absolute path so
-        // it doesn't depend on Emscripten's CWD (which is "/" but a leading
-        // "./" or no slash creates ambiguity).
-        const std::string dir = absPresetDir();
-        ensureDirectory(dir);
-        const std::string presetPath = dir + "/" + name + ".preset";
-        const std::string jsonPath   = dir + "/" + name + ".arrangement.json";
-        if (std::ofstream f{presetPath}; f) f << presetText.str();
-        if (std::ofstream f{jsonPath};   f) f << jsonStr;
-        printf("[PresetHandler] wrote %s and %s\n", presetPath.c_str(), jsonPath.c_str());
-
-        // Flush IDBFS to IndexedDB so the files survive a page reload.
-        // Async / fire-and-forget; the next storePreset within the same
-        // session is fine even if this hasn't finished yet because IDBFS
-        // serializes sync calls internally.
-        EM_ASM({
-            if (typeof FS !== 'undefined' && FS.syncfs) {
-                FS.syncfs(false, function(err) {
-                    if (err) console.warn('[IDBFS] persist failed:', err);
-                });
-            }
-        });
-
-        mCurrentPreset = name;
-    }
-    void storePreset(int index, std::string name = "", bool = true) {
-        if (name.empty()) name = std::to_string(index);
-        storePreset(name);
-    }
-
-    void recallPreset(std::string name) {
-        nlohmann::json root;
-        if (!loadPresetJson(name, root)) return;
-        for (auto* p : mParams) {
-            auto it = root.find(p->getName());
-            if (it == root.end()) continue;
-            std::vector<VariantValue> fields;
-            p->getFields(fields);  // get type schema for the parameter
-            if (fields.empty()) continue;  // skip Trigger/no-field params
-            applyJsonToFields(*it, fields);
-            p->setFields(fields);
-        }
-        mCurrentPreset = name;
-        mMorphElapsed = mMorphDuration;  // cancel any in-flight morph
-    }
-    void recallPreset(int index) { recallPreset(std::to_string(index)); }
-    void recallPresetSynchronous(std::string name) { recallPreset(name); }
-    void recallPresetSynchronous(int index) { recallPreset(index); }
-
-    // ── Morph ─────────────────────────────────────────────────────────────
-    // Same semantics as native: snapshot current values and interpolate
-    // toward the target preset over `morphTime` seconds. Numeric fields
-    // are linearly interpolated; non-numeric (string/bool) snap at the
-    // midpoint. Caller must invoke tick(dt) periodically for the morph
-    // to advance (we tick from the audio loop in WebApp).
-    void recallPreset(std::string name, float morphTime) {
-        if (morphTime <= 0.0f) { recallPreset(name); return; }
-        nlohmann::json root;
-        if (!loadPresetJson(name, root)) return;
-        mMorphFromFields.clear();
-        mMorphToFields.clear();
-        mMorphParams.clear();
-        for (auto* p : mParams) {
-            auto it = root.find(p->getName());
-            if (it == root.end()) continue;
-            std::vector<VariantValue> fromF, toF;
-            p->getFields(fromF);
-            if (fromF.empty()) continue;  // skip Trigger/no-field params
-            toF = fromF;  // copy schema
-            applyJsonToFields(*it, toF);
-            mMorphParams.push_back(p);
-            mMorphFromFields.push_back(std::move(fromF));
-            mMorphToFields.push_back(std::move(toF));
-        }
-        mMorphDuration = morphTime;
-        mMorphElapsed  = 0.0f;
-        mCurrentPreset = name;
-    }
-    void recallPreset(int i, float morphTime) { recallPreset(std::to_string(i), morphTime); }
-
-    void setMorphTime(float t) { mMorphTime = t; }
-    float getMorphTime() const { return mMorphTime; }
-    void morphTo(std::string name, float t) { recallPreset(name, t); }
-    void morphTo(int i, float t)            { recallPreset(i, t); }
-    void stopMorph() { mMorphElapsed = mMorphDuration; }
-
-    // Advance the active morph by dt seconds. Safe to call when no morph
-    // is in progress (no-op).
-    void tick(float dt) {
-        if (mMorphElapsed >= mMorphDuration) return;
-        mMorphElapsed += dt;
-        float t = mMorphElapsed / mMorphDuration;
-        if (t >= 1.0f) t = 1.0f;
-        for (size_t i = 0; i < mMorphParams.size(); ++i) {
-            std::vector<VariantValue> blended = mMorphFromFields[i];
-            for (size_t k = 0; k < blended.size() && k < mMorphToFields[i].size(); ++k) {
-                blended[k] = lerpVariant(mMorphFromFields[i][k], mMorphToFields[i][k], t);
-            }
-            mMorphParams[i]->setFields(blended);
-        }
-    }
-
-    // ── Paths / metadata ──────────────────────────────────────────────────
-    void setRootPath(std::string) {}
-    std::string getRootPath() const { return ""; }
-    void setSubDirectory(std::string) {}
-    std::string getSubDirectory() const { return ""; }
-    std::string getCurrentPath() const { return ""; }
-
-    std::vector<std::string> availablePresets() const {
-        std::vector<std::string> result;
-        char* listPtr = (char*)EM_ASM_PTR({
-            var prefix = 'allolib_preset_' + UTF8ToString($0) + '_';
-            var keys = [];
-            for (var i = 0; i < localStorage.length; i++) {
-                var k = localStorage.key(i);
-                if (k && k.indexOf(prefix) === 0) keys.push(k.substring(prefix.length));
-            }
-            var s = keys.join(',');
-            var lengthBytes = lengthBytesUTF8(s) + 1;
-            var ptr = _malloc(lengthBytes);
-            stringToUTF8(s, ptr, lengthBytes);
-            return ptr;
-        }, mName.c_str());
-        if (listPtr) {
-            std::string list(listPtr);
-            free(listPtr);
-            size_t start = 0;
-            while (start < list.size()) {
-                size_t end = list.find(',', start);
-                if (end == std::string::npos) end = list.size();
-                if (end > start) result.push_back(list.substr(start, end - start));
-                start = end + 1;
-            }
-        }
-        return result;
-    }
-    std::vector<std::string> availablePresetMaps() const { return {}; }
-    int getCurrentPresetIndex() const { return 0; }
-    std::string getCurrentPresetName() const { return mCurrentPreset; }
-
-    // ── Callbacks (no-op for now; future: dispatch on store/recall) ───────
-    void registerPresetCallback(std::function<void(int, void*)>, void* = nullptr) {}
-    void registerMorphTimeCallback(std::function<void(float, void*)>, void* = nullptr) {}
-
-    void verbose(bool) {}
-
-    // Diagnostic — prints the resolved MEMFS path and lists files there.
-    // Useful when a save appears to "go to the wrong folder". Call from
-    // C++ via `mPresets.dumpFiles()`.
+    // ── Diagnostic: list /presets contents in the JS console ─────────────
     void dumpFiles() const {
-        const std::string dir = absPresetDir();
+        const std::string dir = getCurrentPath();
         EM_ASM({
             var path = UTF8ToString($0);
             try {
                 var entries = FS.readdir(path).filter(function(n) {
                     return n !== '.' && n !== '..';
                 });
-                console.log('[PresetHandler] ' + path + ' contains '
+                console.log('[WebPresetHandler] ' + path + ' contains '
                     + entries.length + ' file(s):', entries);
                 entries.forEach(function(name) {
                     try {
@@ -422,200 +267,70 @@ public:
                     } catch(e) { console.warn('  could not read ' + name, e); }
                 });
             } catch(e) {
-                console.warn('[PresetHandler] cannot list ' + path, e);
+                console.warn('[WebPresetHandler] cannot list ' + path, e);
             }
         }, dir.c_str());
     }
 
 private:
-    // ── Helpers ───────────────────────────────────────────────────────────
-    static nlohmann::json variantToJson(const VariantValue& v) {
-        switch (v.type()) {
-            case VariantType::VARIANT_FLOAT:  return v.get<float>();
-            case VariantType::VARIANT_DOUBLE: return v.get<double>();
-            case VariantType::VARIANT_INT8:   return v.get<int8_t>();
-            case VariantType::VARIANT_INT16:  return v.get<int16_t>();
-            case VariantType::VARIANT_INT32:  return v.get<int32_t>();
-            case VariantType::VARIANT_INT64:  return v.get<int64_t>();
-            case VariantType::VARIANT_UINT8:  return v.get<uint8_t>();
-            case VariantType::VARIANT_UINT16: return v.get<uint16_t>();
-            case VariantType::VARIANT_UINT32: return v.get<uint32_t>();
-            case VariantType::VARIANT_UINT64: return v.get<uint64_t>();
-            case VariantType::VARIANT_BOOL:   return v.get<bool>();
-            case VariantType::VARIANT_STRING: return v.get<std::string>();
-            case VariantType::VARIANT_CHAR:   return std::string(1, v.get<char>());
-            default: return nullptr;
+    // ── Setup ────────────────────────────────────────────────────────────
+    void installWebHooks() {
+        registerForMorphTick();
+        // Persist to IndexedDB after every successful store so .preset
+        // files survive a page reload through the IDBFS mountpoint.
+        registerStoreCallback([](int /*index*/, std::string /*name*/, void* /*ud*/) {
+            EM_ASM({
+                if (typeof FS !== 'undefined' && FS.syncfs) {
+                    FS.syncfs(false, function(err) {
+                        if (err) console.warn('[IDBFS] preset persist failed:', err);
+                    });
+                }
+            });
+        });
+    }
+
+    static void mirrorToActiveGui(ParameterMeta& p) {
+        auto* gui = WebControlGUI::getActiveInstance();
+        if (!gui) {
+            // Lazy default panel — same convention used in v0.4.5's
+            // parameterServer mirror.
+            static WebControlGUI sDefaultPanel;
+            gui = WebControlGUI::getActiveInstance();
+            if (!gui) gui = &sDefaultPanel;
         }
+        gui->registerParameterMeta(p);
     }
 
-    static nlohmann::json serializeFields(const std::vector<VariantValue>& fields) {
-        if (fields.size() == 1) return variantToJson(fields[0]);
-        nlohmann::json arr = nlohmann::json::array();
-        for (auto& f : fields) arr.push_back(variantToJson(f));
-        return arr;
-    }
-
-    static VariantValue jsonToVariantOfType(const nlohmann::json& j, VariantType t) {
-        switch (t) {
-            case VariantType::VARIANT_FLOAT:
-                return VariantValue(j.is_number() ? j.get<float>() : 0.0f);
-            case VariantType::VARIANT_DOUBLE:
-                return VariantValue(j.is_number() ? j.get<double>() : 0.0);
-            case VariantType::VARIANT_INT32:
-                return VariantValue(j.is_number() ? j.get<int32_t>() : (int32_t)0);
-            case VariantType::VARIANT_INT64:
-                return VariantValue(j.is_number() ? j.get<int64_t>() : (int64_t)0);
-            case VariantType::VARIANT_BOOL:
-                return VariantValue(j.is_boolean() ? j.get<bool>() : (j.is_number() && j.get<int>() != 0));
-            case VariantType::VARIANT_STRING:
-                return VariantValue(j.is_string() ? j.get<std::string>() : std::string());
-            default:
-                return j.is_number() ? VariantValue((float)j.get<double>()) : VariantValue();
-        }
-    }
-
-    // Replace each entry in `fields` with the corresponding JSON value,
-    // preserving the original VariantType (so setFields gets the right
-    // schema even if JSON loses precision/type info).
-    static void applyJsonToFields(const nlohmann::json& v, std::vector<VariantValue>& fields) {
-        if (v.is_array()) {
-            size_t n = std::min(fields.size(), v.size());
-            for (size_t i = 0; i < n; ++i) {
-                fields[i] = jsonToVariantOfType(v[i], fields[i].type());
-            }
-        } else if (!fields.empty()) {
-            fields[0] = jsonToVariantOfType(v, fields[0].type());
-        }
-    }
-
-    // Append one VariantValue to the native AlloLib .preset wire format
-    // (type-char appended to `types`, stringified value appended to `vals`
-    // followed by a space). Bool is written as `i` (0/1), string as `s`,
-    // floats/doubles as `f`/`d`, integers as `i`. Matches upstream
-    // PresetHandler::savePresetValues so files are interchangeable.
-    static void appendNativeField(std::string& types, std::string& vals, const VariantValue& v) {
-        switch (v.type()) {
-            case VariantType::VARIANT_FLOAT:
-                types += 'f'; vals += std::to_string(v.get<float>())  + " "; break;
-            case VariantType::VARIANT_DOUBLE:
-                types += 'd'; vals += std::to_string(v.get<double>()) + " "; break;
-            case VariantType::VARIANT_INT8:
-            case VariantType::VARIANT_INT16:
-            case VariantType::VARIANT_INT32:
-                types += 'i'; vals += std::to_string(v.get<int32_t>()) + " "; break;
-            case VariantType::VARIANT_INT64:
-                types += 'i'; vals += std::to_string((int64_t)v.get<int64_t>()) + " "; break;
-            case VariantType::VARIANT_UINT8:
-            case VariantType::VARIANT_UINT16:
-            case VariantType::VARIANT_UINT32:
-                types += 'i'; vals += std::to_string(v.get<uint32_t>()) + " "; break;
-            case VariantType::VARIANT_UINT64:
-                types += 'i'; vals += std::to_string((uint64_t)v.get<uint64_t>()) + " "; break;
-            case VariantType::VARIANT_BOOL:
-                types += 'i'; vals += (v.get<bool>() ? "1 " : "0 "); break;
-            case VariantType::VARIANT_STRING:
-                types += 's'; vals += v.get<std::string>() + " "; break;
-            case VariantType::VARIANT_CHAR:
-                types += 's'; vals += std::string(1, v.get<char>()) + " "; break;
-            default:
-                types += '?'; vals += "0 "; break;
-        }
-    }
-
-    // Normalize the user-supplied root (e.g. "./presets", "presets",
-    // "/presets/songs") into a single absolute MEMFS path. Emscripten's
-    // CWD is "/" but a leading "./" creates a path like "/./presets"
-    // which mkdir -p handles inconsistently across browsers.
-    std::string absPresetDir() const {
-        std::string p = mName;
-        // Strip leading "./" if present
-        if (p.size() >= 2 && p[0] == '.' && p[1] == '/') p.erase(0, 2);
-        // Strip duplicate leading slashes
-        while (p.size() >= 2 && p[0] == '/' && p[1] == '/') p.erase(0, 1);
-        // Ensure leading "/"
-        if (p.empty()) p = "presets";
-        if (p[0] != '/') p = "/" + p;
-        return p;
-    }
-
-    // mkdir -p semantics on MEMFS so storePreset can drop files into a
-    // user-supplied path like "./presets" or "songs/scene1" without the
-    // user having to pre-create the directory.
-    static void ensureDirectory(const std::string& path) {
-        if (path.empty() || path == "." || path == "/") return;
-        std::string acc;
-        for (size_t i = 0; i < path.size(); ++i) {
-            char c = path[i];
-            if (c == '/' && !acc.empty() && acc != ".") {
-                ::mkdir(acc.c_str(), 0777);
-            }
-            acc += c;
-        }
-        if (!acc.empty() && acc != ".") {
-            ::mkdir(acc.c_str(), 0777);
-        }
-    }
-
-    bool loadPresetJson(const std::string& name, nlohmann::json& out) const {
-        char* jsonPtr = (char*)EM_ASM_PTR({
-            var v = localStorage.getItem('allolib_preset_' + UTF8ToString($0) + '_' + UTF8ToString($1));
-            if (!v) return 0;
-            var lengthBytes = lengthBytesUTF8(v) + 1;
-            var ptr = _malloc(lengthBytes);
-            stringToUTF8(v, ptr, lengthBytes);
-            return ptr;
-        }, mName.c_str(), name.c_str());
-        if (!jsonPtr) return false;
-        std::string json(jsonPtr);
-        free(jsonPtr);
-        out = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
-        return !out.is_discarded();
-    }
-
-    static VariantValue lerpVariant(const VariantValue& a, const VariantValue& b, float t) {
-        switch (a.type()) {
-            case VariantType::VARIANT_FLOAT:
-                return VariantValue(a.get<float>() + (b.get<float>() - a.get<float>()) * t);
-            case VariantType::VARIANT_DOUBLE:
-                return VariantValue(a.get<double>() + (b.get<double>() - a.get<double>()) * (double)t);
-            case VariantType::VARIANT_INT32:
-                return VariantValue((int32_t)(a.get<int32_t>() + (int32_t)((b.get<int32_t>() - a.get<int32_t>()) * t)));
-            case VariantType::VARIANT_INT64:
-                return VariantValue((int64_t)(a.get<int64_t>() + (int64_t)((b.get<int64_t>() - a.get<int64_t>()) * t)));
-            // Non-numeric: snap at the midpoint.
-            default:
-                return t < 0.5f ? a : b;
-        }
-    }
-
-    std::string mName;
-    std::string mCurrentPreset;
-    std::vector<ParameterMeta*> mParams;
-    float mMorphTime = 0.0f;
-
-    // Active morph state
-    float mMorphDuration = 0.0f;
-    float mMorphElapsed  = 0.0f;
-    std::vector<ParameterMeta*>           mMorphParams;
-    std::vector<std::vector<VariantValue>> mMorphFromFields;
-    std::vector<std::vector<VariantValue>> mMorphToFields;
-
-    // Static auto-tick registry — wired into WebApp::tick via the
-    // gPlaygroundAnimateHook function pointer at first construction.
-    static std::vector<PresetHandler*>& activeHandlers() {
-        static std::vector<PresetHandler*> v;
+    // ── Morph tick wiring ────────────────────────────────────────────────
+    static std::vector<WebPresetHandler*>& activeHandlers() {
+        static std::vector<WebPresetHandler*> v;
         return v;
     }
     static void tickAllFromAnimate(double dt) {
-        for (auto* h : activeHandlers()) h->tick((float)dt);
+        for (auto* h : activeHandlers()) h->stepMorphing(dt);
     }
-    void registerForTick() {
+    void registerForMorphTick() {
         if (gPlaygroundAnimateHook == nullptr) {
-            gPlaygroundAnimateHook = &PresetHandler::tickAllFromAnimate;
+            gPlaygroundAnimateHook = &WebPresetHandler::tickAllFromAnimate;
         }
         activeHandlers().push_back(this);
     }
 };
+
+// User-facing alias: existing example code that wrote `PresetHandler` keeps
+// compiling, but with web hooks attached automatically.
+//
+// CAREFUL: this `using` is intentionally NOT in `namespace al` (where
+// upstream's `class al::PresetHandler` already lives). Instead we leave
+// `al::PresetHandler` as upstream's class (so PresetSequencer.cpp's
+// internal references compile against the right ABI) and provide the
+// WebPresetHandler name for opt-in web behavior. Most user code should
+// write `WebPresetHandler` directly.
+//
+// (For a future refactor: a TU-local typedef in user code's main.cpp via
+// transpiler injection — `using PresetHandler = al::WebPresetHandler;`
+// at function scope — would let bare `PresetHandler` resolve to the
+// subclass without breaking upstream's ABI. Out of scope for this push.)
 
 } // namespace al
 
@@ -815,88 +530,9 @@ private:
 };
 } // namespace al
 
-// ============================================================================
-// PresetSequencer Stub (uses file system)
-// ============================================================================
-
-namespace al {
-
-class PresetSequencer {
-public:
-    // Native upstream uses TIME_MASTER_CPU which spawns a thread + needs
-    // osc::MessageConsumer (its base class). We can't provide either until
-    // M5 OSC scaffolding lands, so this stays a compile-compat stub that
-    // makes imports link without functional sequence playback.
-    PresetSequencer(TimeMasterMode = TimeMasterMode::TIME_MASTER_CPU) {}
-
-    void playSequence(std::string = "", double = 0.0) {}
-    void stopSequence() {}
-    bool running() const { return false; }
-
-    PresetSequencer& registerPresetHandler(PresetHandler& h) {
-        mPresetHandler = &h;
-        return *this;
-    }
-    PresetSequencer& operator<<(PresetHandler& h) { return registerPresetHandler(h); }
-    PresetHandler* presetHandler() { return mPresetHandler; }
-
-    void setDirectory(const std::string&) {}
-    std::string getDirectory() const { return ""; }
-    void setHandlerSubDirectory(const std::string& d) {
-        if (mPresetHandler) mPresetHandler->setSubDirectory(d);
-    }
-
-    void rewind() {}
-    void setTime(double) {}
-    double getSequenceTotalDuration(const std::string&) const { return 0.0; }
-    void registerBeginCallback(std::function<void(PresetSequencer*)>, void* = nullptr) {}
-    void registerEndCallback(std::function<void(bool, PresetSequencer*)>, void* = nullptr) {}
-    void registerTimeChangeCallback(std::function<void(float)>, float = 0.05f) {}
-    void enableBeginCallback(bool) {}
-    void enableEndCallback(bool) {}
-    void verbose(bool) {}
-
-    std::vector<std::string> getSequenceList() const { return {}; }
-    std::vector<std::string> getAvailableSequences() const { return {}; }
-
-    void appendStep(const std::string&, double = 0.0, double = 0.0) {}
-    void clearSteps() {}
-
-private:
-    PresetHandler* mPresetHandler = nullptr;
-};
-
-} // namespace al
-
-// ============================================================================
-// PresetMapper — preset-collection ("preset map") manager
-// Compile-compat stub; archive/restore is no-op until full impl in M5+.
-// ============================================================================
-
-namespace al {
-
-class PresetMapper {
-public:
-    PresetMapper(bool = false) {}
-
-    PresetMapper& registerPresetHandler(PresetHandler& h) { mPresetHandler = &h; return *this; }
-    PresetMapper& operator<<(PresetHandler& h) { return registerPresetHandler(h); }
-
-    void archive(std::string = "default", bool = true) {}
-    void restore(std::string = "default", bool = true) {}
-    bool load(std::string) { return false; }
-    bool store(std::string) { return false; }
-    void setVersion(double) {}
-
-    std::vector<std::string> listAvailableMaps(bool = false) { return {}; }
-    std::string currentMap() const { return ""; }
-    void verbose(bool) {}
-
-private:
-    PresetHandler* mPresetHandler = nullptr;
-};
-
-} // namespace al
+// PresetSequencer + PresetMapper come from upstream now (M5.2). They are
+// included near the top of this header alongside the WebPresetHandler
+// subclass; no compat shims live here anymore.
 
 // ============================================================================
 // PresetMIDI — MIDI control surface ↔ PresetHandler recall slot bindings
