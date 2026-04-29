@@ -460,6 +460,34 @@ void Recv::loop() {
 }
 
 } // namespace osc
+
+// ─── Web stubs for al::Socket / al::Thread ────────────────────────────────
+//
+// Upstream al_ParameterServer.cpp pulls in al::Socket::nameToIp() to resolve
+// hostnames before binding/sending. On the web we route OSC through the
+// WebSocket bridge, so the "IP" is just the host string verbatim. Identity
+// match is the Right Thing.
+//
+// osc::Recv carries an al::Thread mThread for native background polling. We
+// already no-op start()/stop() (events are pushed by the WebSocket callback),
+// so we just need the symbols to exist for the link. A trivial empty Thread
+// is the smallest correct stub — pthread linkage on Emscripten requires
+// SharedArrayBuffer + COOP/COEP, which is too heavy for what we'd never use.
+
+} // namespace al
+
+#include "al/io/al_Socket.hpp"
+#include "al/system/al_Thread.hpp"
+
+namespace al {
+
+std::string Socket::nameToIp(std::string name) { return name; }
+
+struct Thread::Impl {};
+
+Thread::Thread() : mImpl(nullptr), mJoinOnDestroy(true) {}
+Thread::~Thread() {}
+
 } // namespace al
 
 #endif // __EMSCRIPTEN__
