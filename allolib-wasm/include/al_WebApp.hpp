@@ -37,6 +37,10 @@
 #include "al/graphics/al_Viewpoint.hpp"
 #include "al/io/al_AudioIO.hpp"
 #include "al/io/al_AudioIOData.hpp"
+// M5.1: forward-declare osc::Message so onMessage(osc::Message&) compiles
+// without dragging the full OSC header (and oscpack) into every TU that
+// just wants WebApp.
+namespace al { namespace osc { class Message; } }
 #include "al/io/al_Window.hpp"
 #include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
@@ -105,6 +109,11 @@ public:
 
     /// Called when the application is about to exit
     virtual void onExit() {}
+
+    /// M5.1: OSC message dispatch. Wired by Recv when registered via
+    /// `recv.handler(*this)`. Native al::App declares the same hook;
+    /// imported code that overrides it Just Works.
+    virtual void onMessage(osc::Message& m) { (void)m; }
 
     /// Keyboard callbacks - return true to indicate event was handled
     virtual bool onKeyDown(const Keyboard& k) { (void)k; return false; }

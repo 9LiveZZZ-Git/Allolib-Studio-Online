@@ -59,6 +59,7 @@ EMCC_FLAGS=(
     -sSTACK_SIZE=524288
     -sASSERTIONS=1
     -lidbfs.js
+    -lwebsocket.js
     --bind
 )
 

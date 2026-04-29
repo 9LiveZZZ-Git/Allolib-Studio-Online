@@ -56,6 +56,7 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sASYNCIFY_STACK_SIZE=131072"
     "-sSTACK_SIZE=524288"
     "-lidbfs.js"
+    "-lwebsocket.js"
     "--bind"
 )
 
@@ -209,6 +210,14 @@ set(ALLOLIB_SOURCES
     # UI (minimal - no imgui for now)
     ${ALLOLIB_DIR}/src/ui/al_Parameter.cpp
     ${ALLOLIB_DIR}/src/ui/al_ParameterBundle.cpp
+
+    # M5.1: oscpack OSC binary serialization (pure C++, no socket deps).
+    # The transport layer is replaced by Emscripten WebSocket in
+    # al_OSC_Web.cpp.
+    ${ALLOLIB_DIR}/external/oscpack/osc/OscOutboundPacketStream.cpp
+    ${ALLOLIB_DIR}/external/oscpack/osc/OscReceivedElements.cpp
+    ${ALLOLIB_DIR}/external/oscpack/osc/OscTypes.cpp
+    ${ALLOLIB_DIR}/external/oscpack/osc/OscPrintReceivedElements.cpp
 )
 
 # Web-specific sources (replacing desktop-only implementations)
@@ -258,6 +267,7 @@ target_include_directories(al_web PUBLIC
     ${ALLOLIB_DIR}/external/glad/include
     ${ALLOLIB_DIR}/external/json/include
     ${ALLOLIB_DIR}/external/stb/stb
+    ${ALLOLIB_DIR}/external/oscpack       # M5.1: oscpack OSC binary serialization
     ${GAMMA_DIR}
 )
 

@@ -187,11 +187,12 @@ const nativeToWebPatterns: Array<{
     replacement: '#include "al_WebMIDI.hpp"',
     description: 'MIDI include'
   },
-  {
-    pattern: /#include\s*["<]al\/protocol\/al_OSC\.hpp[">]/g,
-    replacement: '#include "al_WebOSC.hpp"',
-    description: 'OSC include'
-  },
+  // M5.1: al/protocol/al_OSC.hpp now passes through to upstream. Our
+  // al_OSC_Web.cpp links the upstream header against an oscpack-backed
+  // impl with Emscripten WebSocket transport, so user code gets the
+  // full native osc::Send / osc::Recv / osc::PacketHandler API.
+  // (al_WebOSC.hpp remains as a separate, simpler browser-specific
+  // helper for code that prefers it.)
   {
     pattern: /#include\s*["<]al\/sound\/al_SoundFile\.hpp[">]/g,
     replacement: '#include "al_WebSamplePlayer.hpp"',
