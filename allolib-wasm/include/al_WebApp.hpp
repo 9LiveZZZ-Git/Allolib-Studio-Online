@@ -41,6 +41,11 @@
 // without dragging the full OSC header (and oscpack) into every TU that
 // just wants WebApp.
 namespace al { namespace osc { class Message; } }
+
+// M5.6: forward-declare ParameterServer so the parameterServer() accessor
+// doesn't require al/ui/al_ParameterServer.hpp at every WebApp include
+// site. Full type pulled in by the .cpp.
+namespace al { class ParameterServer; }
 #include "al/io/al_Window.hpp"
 #include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
@@ -193,6 +198,13 @@ public:
     /// configureAudio() (re-)initializes it.
     AudioIO& audioIO() { return mAudioIOReal; }
     const AudioIO& audioIO() const { return mAudioIOReal; }
+
+    /// M5.6: lazy-constructed ParameterServer. First call binds it to the
+    /// configured OSC port (default 9010 → ws://127.0.0.1:9010/osc via
+    /// our WebSocket-backed osc::Send/Recv). Subsequent calls return the
+    /// same instance, matching native al::App::parameterServer() shape.
+    ParameterServer& parameterServer();
+    const ParameterServer& parameterServer() const;
 
     /// Get/set the navigation pose (camera position) - compatible with al::App
     Nav& nav() { return mNav; }
@@ -388,6 +400,11 @@ private:
     // iterates appendees. See WebApp::audioCBThunk for the callback wiring.
     AudioIO mAudioIOReal;
     static void audioCBThunk(AudioIOData& io);
+
+    // M5.6: lazy-constructed ParameterServer; null until first
+    // parameterServer() call. unique_ptr so the forward declaration
+    // is enough at this header level.
+    mutable std::unique_ptr<ParameterServer> mParameterServer;
 
     // Navigation and view
     Nav mNav;

@@ -1,4 +1,7 @@
 #include "al_WebApp.hpp"
+// M5.6: full ParameterServer definition for the lazy-init member +
+// parameterServer() accessor. Header-side has only a forward decl.
+#include "al/ui/al_ParameterServer.hpp"
 
 // Conditionally include backends based on build configuration
 #if defined(ALLOLIB_WEBGL2)
@@ -681,6 +684,21 @@ void WebApp::initGraphics() {
     mWindow->create();
     mGraphics = std::make_unique<Graphics>();
 #endif
+}
+
+ParameterServer& WebApp::parameterServer() {
+    if (!mParameterServer) {
+        // Default OSC port 9010 — same as upstream al::App default. Web
+        // transport routes through ws://127.0.0.1:9010/osc via our
+        // WebSocket-backed osc::Recv (M5.1). autoStart=true so it
+        // begins listening immediately.
+        mParameterServer.reset(new ParameterServer("", 9010, true));
+    }
+    return *mParameterServer;
+}
+
+const ParameterServer& WebApp::parameterServer() const {
+    return const_cast<WebApp*>(this)->parameterServer();
 }
 
 void WebApp::audioCBThunk(AudioIOData& io) {

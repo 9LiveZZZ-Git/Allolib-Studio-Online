@@ -314,23 +314,15 @@ const nativeToWebPatterns: Array<{
     replacement: 'WebMIDI',
     description: 'MIDIOut type'
   },
-  {
-    pattern: /\bosc::Send\b/g,
-    replacement: 'WebOSC',
-    description: 'OSC Send type'
-  },
-  {
-    pattern: /\bosc::Recv\b/g,
-    replacement: 'WebOSC',
-    description: 'OSC Recv type'
-  },
-
-  // onMessage callback (OSC) - comment out
-  {
-    pattern: /void\s+onMessage\s*\(\s*osc::Message\s*&\s*\w+\s*\)\s*override\s*\{[^}]*\}/gs,
-    replacement: '// OSC onMessage not supported in web\n// $&',
-    description: 'onMessage callback'
-  },
+  // M5.1: osc::Send / osc::Recv now have real impl in al_OSC_Web.cpp
+  // (oscpack + Emscripten WebSocket). The pre-M5 rewrites that mapped
+  // them to WebOSC are obsolete — they'd point at a class that's no
+  // longer in scope post-v0.3.34. Pass through unchanged.
+  //
+  // Same story for the onMessage comment-out: WebApp now declares
+  // `virtual void onMessage(osc::Message&)`, so user overrides compile.
+  // The old [^}]* regex was buggy anyway (stopped at the first inner
+  // `}` of any if-block, leaving the remainder as dangling tokens).
 
   // Auto-LOD: Convert g.draw(mesh) to drawLOD(g, mesh) for automatic LOD
   // This makes LOD transparent - users don't need to change their code

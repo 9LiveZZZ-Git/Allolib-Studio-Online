@@ -210,6 +210,11 @@ set(ALLOLIB_SOURCES
     # UI (minimal - no imgui for now)
     ${ALLOLIB_DIR}/src/ui/al_Parameter.cpp
     ${ALLOLIB_DIR}/src/ui/al_ParameterBundle.cpp
+    ${ALLOLIB_DIR}/src/ui/al_ParameterServer.cpp  # M5.6: real upstream impl
+
+    # M5.1 prerequisite: VariantValue stream + DiscreteParameterValues are
+    # used by ParameterServer's bundle dispatch logic.
+    ${ALLOLIB_DIR}/src/ui/al_DiscreteParameterValues.cpp
 
     # M5.1: oscpack OSC binary serialization (pure C++, no socket deps).
     # The transport layer is replaced by Emscripten WebSocket in
