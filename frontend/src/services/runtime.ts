@@ -301,6 +301,12 @@ export class AllolibRuntime {
       // can rewrite /assets/... to the correct subdirectory on GitHub Pages.
       ;(window as any).__alloBasePath = import.meta.env.BASE_URL
 
+      // Version stamp so the user can verify the deployed bundle matches
+      // what's expected. The WASM lib prints its own version on start();
+      // when the two don't match, Railway's docker cache or GitHub Pages
+      // CDN is still serving an older artifact.
+      this.onPrint('[Studio] frontend bundle v' + (typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'))
+
       // M5.5 client side: derive the OSC relay base URL from the backend URL
       // (same origin we already use for /api/compile + /ws). The WASM
       // al::osc::Send/Recv check window.__alloOscRelayUrl on each open() and

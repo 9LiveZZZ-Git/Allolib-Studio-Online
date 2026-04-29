@@ -188,13 +188,19 @@ void WebApp::dimensions(int width, int height) {
     mHeight = height;
 }
 
+// Stamped into the WASM library at compile time. If the Railway docker cache
+// shipped a stale libal_web.a, this won't match the frontend version and the
+// user can see the mismatch immediately.
+#define ALLOLIB_WASM_LIB_VERSION "0.4.6"
+
 void WebApp::start() {
     if (mRunning) return;
 
 #ifdef __EMSCRIPTEN__
     EM_ASM({ console.log('[AlloLib] start() called'); });
 #endif
-    std::cout << "[AlloLib] Starting web application..." << std::endl;
+    std::cout << "[AlloLib] WASM lib v" << ALLOLIB_WASM_LIB_VERSION
+              << " Starting web application..." << std::endl;
 
     // Mount IDBFS at /presets BEFORE onInit so PresetHandler ctors
     // running there see any persisted .preset / .arrangement.json
