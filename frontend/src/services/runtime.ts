@@ -800,6 +800,11 @@ export class AllolibRuntime {
 
     this.module = null
     window.Module = null
+    // presetFiles.clearPresetFiles() checks __alloWasmModule before deciding
+    // FS-path vs IDB-fallback. Leaving the stale reference here makes it take
+    // the FS path on a destroyed module (silent no-op) and skip the IDB
+    // delete, so /presets rehydrates from IndexedDB on the next module init.
+    ;(window as any).__alloWasmModule = null
   }
 
   resize(): void {
@@ -902,6 +907,7 @@ export class AllolibRuntime {
     // event handlers that fire during teardown see an empty Module and bail early.
     this.module = null
     window.Module = null
+    ;(window as any).__alloWasmModule = null
 
     if (moduleRef?._allolib_destroy) {
       try {

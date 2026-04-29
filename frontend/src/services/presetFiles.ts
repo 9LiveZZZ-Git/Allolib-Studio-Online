@@ -59,18 +59,20 @@ export function listPresetFiles(path = '/presets'): PresetFileEntry[] {
  *     next syncfs(true) on app start would restore the old files. */
 export function clearPresetFiles(path = '/presets'): Promise<void> {
   const m = getModule()
-  if (m && typeof m._al_remove_dir === 'function') {
+  // Stale module references (window.__alloWasmModule sometimes survives
+  // teardown) wouldn't have FS anymore, so test for FS presence — not just
+  // module presence — before taking the FS path.
+  const hasLiveFS = !!(m && (m as any).FS && typeof m._al_remove_dir === 'function')
+  if (hasLiveFS) {
     return new Promise((resolve) => {
       try {
         if (m.ccall) m.ccall('al_remove_dir', null, ['string'], [path])
         else m._al_remove_dir(path)
         const FS = (m as any).FS
-        if (FS) {
-          try { FS.mkdir(path) } catch { /* exists */ }
-          if (FS.syncfs) {
-            FS.syncfs(false, () => resolve())
-            return
-          }
+        try { FS.mkdir(path) } catch { /* exists */ }
+        if (FS.syncfs) {
+          FS.syncfs(false, () => resolve())
+          return
         }
         resolve()
       } catch (err) {
