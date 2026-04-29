@@ -191,7 +191,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.5.3"
+#define ALLOLIB_WASM_LIB_VERSION "0.5.4"
 
 void WebApp::start() {
     if (mRunning) return;
@@ -202,25 +202,12 @@ void WebApp::start() {
     std::cout << "[AlloLib] WASM lib v" << ALLOLIB_WASM_LIB_VERSION
               << " Starting web application..." << std::endl;
 
-    // Mount IDBFS at /presets BEFORE onInit so PresetHandler ctors
-    // running there see any persisted .preset / .arrangement.json
-    // files from a prior session. syncfs(true) is fire-and-forget;
-    // by the time the user actually calls recallPreset (in onCreate
-    // or later) the IDB load has completed.
-#ifdef __EMSCRIPTEN__
-    EM_ASM({
-        try { FS.mkdir('/presets'); } catch (e) { /* exists */ }
-        try {
-            FS.mount(IDBFS, {}, '/presets');
-            FS.syncfs(true, function(err) {
-                if (err) console.warn('[IDBFS] load /presets failed:', err);
-                else console.log('[IDBFS] /presets restored from IndexedDB');
-            });
-        } catch (e) {
-            console.warn('[IDBFS] mount failed (non-fatal):', e);
-        }
-    });
-#endif
+    // M5.2 fix: IDBFS at /presets is now mounted from runtime.ts'
+    // Module.preRun hook, BEFORE the user's MyApp constructor runs (which
+    // happens during allolib_create() — long before this start()). Doing
+    // the mount here was too late: PresetHandler member ctors fired during
+    // MyApp construction, hit mkdir('/presets') before the mount, and the
+    // upstream readDir() failure aborted the module.
 
     // Native al::App lifecycle: onInit() runs FIRST so user code can
     // register parameters / presets / configure audio + backend before

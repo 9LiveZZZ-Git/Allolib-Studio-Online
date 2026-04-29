@@ -256,6 +256,7 @@ export class AllolibRuntime {
         postMainLoop?: () => void
         preinitializedWebGLContext?: WebGL2RenderingContext | null
         preinitializedWebGPUDevice?: GPUDevice
+        preRun?: Array<(mod: any) => void>
       } = {
         canvas: this.canvas,
         print: (text: string) => this.onPrint(text),
@@ -270,6 +271,29 @@ export class AllolibRuntime {
           }
           return `${baseUrl}/${path}`
         },
+        // Mount IDBFS at /presets BEFORE the user's MyApp constructor runs.
+        // Emscripten preRun fires after wasm instantiation but before main()
+        // and before allolib_create() — so any PresetHandler member ctors
+        // that hit mkdir('/presets') at user-app construction time see a
+        // valid mountpoint. Without this, M5.2's WebPresetHandler member of
+        // an App subclass aborted the module on construction (mkdir 28).
+        preRun: [function(mod: any) {
+          try {
+            const FS = mod.FS
+            try { FS.mkdir('/presets') } catch (_e) { /* exists */ }
+            try {
+              FS.mount(mod.IDBFS, {}, '/presets')
+              FS.syncfs(true, function(err: unknown) {
+                if (err) console.warn('[IDBFS] /presets restore failed:', err)
+                else console.log('[IDBFS] /presets restored from IndexedDB')
+              })
+            } catch (e) {
+              console.warn('[IDBFS] /presets mount failed (non-fatal):', e)
+            }
+          } catch (e) {
+            console.warn('[preRun] FS setup failed:', e)
+          }
+        }],
       }
 
       // Configure backend-specific options
