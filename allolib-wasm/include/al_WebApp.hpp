@@ -37,10 +37,11 @@
 #include "al/graphics/al_Viewpoint.hpp"
 #include "al/io/al_AudioIO.hpp"
 #include "al/io/al_AudioIOData.hpp"
-// M5.1: forward-declare osc::Message so onMessage(osc::Message&) compiles
-// without dragging the full OSC header (and oscpack) into every TU that
-// just wants WebApp.
-namespace al { namespace osc { class Message; } }
+// M5.1: full include needed because WebApp inherits from osc::PacketHandler.
+// User code does `mReceiver.handler(*this)` with `*this` being a WebApp
+// subclass — the implicit cast to PacketHandler& only works if the base
+// class is complete here.
+#include "al/protocol/al_OSC.hpp"
 
 // M5.6: forward-declare ParameterServer so the parameterServer() accessor
 // doesn't require al/ui/al_ParameterServer.hpp at every WebApp include
@@ -87,7 +88,13 @@ struct WebAudioConfig {
  * - onKeyDown(k), onKeyUp(k): Keyboard handling
  * - onMouseDown(m), etc.: Mouse handling
  */
-class WebApp {
+// Inherits osc::PacketHandler so user code can pass a WebApp subclass to
+// `osc::Recv::handler(PacketHandler&)` directly, matching upstream
+// AlloLib examples that use `mReceiver.handler(*this)` from inside the
+// app subclass. The PacketHandler::onMessage pure virtual is satisfied
+// by our default no-op `onMessage(osc::Message&)` below; user overrides
+// dispatch as expected.
+class WebApp : public osc::PacketHandler {
 public:
     WebApp();
     virtual ~WebApp();
@@ -116,9 +123,11 @@ public:
     virtual void onExit() {}
 
     /// M5.1: OSC message dispatch. Wired by Recv when registered via
-    /// `recv.handler(*this)`. Native al::App declares the same hook;
-    /// imported code that overrides it Just Works.
-    virtual void onMessage(osc::Message& m) { (void)m; }
+    /// `recv.handler(*this)`. Overrides osc::PacketHandler's pure virtual
+    /// so concrete subclasses don't have to implement it; native al::App
+    /// declares the same hook (without inheriting from PacketHandler),
+    /// so imported code that overrides this Just Works.
+    void onMessage(osc::Message& m) override { (void)m; }
 
     /// Keyboard callbacks - return true to indicate event was handled
     virtual bool onKeyDown(const Keyboard& k) { (void)k; return false; }
