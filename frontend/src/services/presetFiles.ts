@@ -48,28 +48,57 @@ export function listPresetFiles(path = '/presets'): PresetFileEntry[] {
 /** Recursively remove /presets and persist the empty FS to IndexedDB.
  * Called when the user starts a new project or loads an example so the
  * previous session's presets don't bleed into the new one. Returns a
- * promise that resolves once the persist sync completes. */
+ * promise that resolves once the persist sync completes.
+ *
+ * Two paths:
+ *   - If the WASM module is currently loaded, delete via FS + syncfs(false).
+ *   - If the module is between sessions (the common case for "File → New"
+ *     when nothing is running), delete the IDBFS-backing IndexedDB
+ *     database directly. Emscripten IDBFS names its DB after the mount
+ *     point ("/presets"), with object store "FILE_DATA". Otherwise the
+ *     next syncfs(true) on app start would restore the old files. */
 export function clearPresetFiles(path = '/presets'): Promise<void> {
   const m = getModule()
-  if (!m || typeof m._al_remove_dir !== 'function') return Promise.resolve()
+  if (m && typeof m._al_remove_dir === 'function') {
+    return new Promise((resolve) => {
+      try {
+        if (m.ccall) m.ccall('al_remove_dir', null, ['string'], [path])
+        else m._al_remove_dir(path)
+        const FS = (m as any).FS
+        if (FS) {
+          try { FS.mkdir(path) } catch { /* exists */ }
+          if (FS.syncfs) {
+            FS.syncfs(false, () => resolve())
+            return
+          }
+        }
+        resolve()
+      } catch (err) {
+        console.warn('[presetFiles] clearPresetFiles (live module) failed:', err)
+        resolve()
+      }
+    })
+  }
+
+  // Fallback: nuke the IDBFS-backed IndexedDB directly.
+  if (typeof indexedDB === 'undefined') return Promise.resolve()
   return new Promise((resolve) => {
     try {
-      if (m.ccall) m.ccall('al_remove_dir', null, ['string'], [path])
-      else m._al_remove_dir(path)
-      // Recreate the dir + persist the deletion to IndexedDB.
-      // Without the syncfs(false) the next session's syncfs(true) would
-      // restore the old contents from IDB.
-      const FS = (m as any).FS
-      if (FS) {
-        try { FS.mkdir(path) } catch { /* exists */ }
-        if (FS.syncfs) {
-          FS.syncfs(false, () => resolve())
-          return
-        }
+      const req = indexedDB.deleteDatabase(path)
+      req.onsuccess = () => resolve()
+      req.onerror = () => {
+        console.warn('[presetFiles] indexedDB.deleteDatabase error', req.error)
+        resolve()
       }
-      resolve()
+      req.onblocked = () => {
+        // Another tab/connection holds it. Best-effort: resolve anyway.
+        // A subsequent app start will rehydrate but the next clear will
+        // succeed once the other connection closes.
+        console.warn('[presetFiles] indexedDB delete blocked for', path)
+        resolve()
+      }
     } catch (err) {
-      console.warn('[presetFiles] clearPresetFiles failed:', err)
+      console.warn('[presetFiles] clearPresetFiles (idb fallback) failed:', err)
       resolve()
     }
   })
