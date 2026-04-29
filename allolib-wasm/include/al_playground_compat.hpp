@@ -202,19 +202,41 @@ public:
     explicit WebPresetHandler(std::string rootDirectory = "/presets",
                               bool verbose = false)
         : PresetHandler(TimeMasterMode::TIME_MASTER_FREE,
-                        rootDirectory, verbose) {
+                        normalizeWebPath(rootDirectory), verbose) {
         installWebHooks();
     }
     // Compat overload: caller supplies an explicit time-master mode.
     WebPresetHandler(TimeMasterMode mode, std::string rootDirectory = "/presets",
                      bool verbose = false)
-        : PresetHandler(mode, rootDirectory, verbose) {
+        : PresetHandler(mode, normalizeWebPath(rootDirectory), verbose) {
         if (mode == TimeMasterMode::TIME_MASTER_CPU) {
             printf("[WebPresetHandler] TIME_MASTER_CPU spawns a CPU thread; "
                    "TIME_MASTER_FREE is recommended on web.\n");
         }
         installWebHooks();
     }
+
+private:
+    // User code typically writes `PresetHandler mPresets;` or
+    // `PresetHandler mPresets("presets");`. The implicit/relative root
+    // resolves to `./presets` in upstream — but our IDBFS only mounts at
+    // /presets, so any relative path fails mkdir/readdir and aborts.
+    // Normalize: strip leading "./", prepend "/" if missing. Absolute
+    // paths pass through unchanged.
+    static std::string normalizeWebPath(const std::string& p) {
+        std::string s = p;
+        if (s.empty()) return "/presets";
+        // Strip leading "./" or "."
+        if (s.size() >= 2 && s[0] == '.' && s[1] == '/') s.erase(0, 2);
+        else if (s.size() == 1 && s[0] == '.') s = "presets";
+        // Strip duplicate leading slashes
+        while (s.size() >= 2 && s[0] == '/' && s[1] == '/') s.erase(0, 1);
+        // Ensure leading "/"
+        if (s.empty()) s = "presets";
+        if (s[0] != '/') s = "/" + s;
+        return s;
+    }
+public:
     ~WebPresetHandler() {
         auto& v = activeHandlers();
         v.erase(std::remove(v.begin(), v.end(), this), v.end());
