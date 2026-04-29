@@ -17,6 +17,37 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #include <EGL/egl.h>
+
+// Mount IDBFS at /presets at __wasm_call_ctors time — BEFORE main(), and so
+// before any user-app member constructors fire. Upstream PresetHandler's ctor
+// (now reached via WebPresetHandler in al_playground_compat.hpp) calls
+// mkdir('/presets') and readDir('/presets/') in setCurrentPresetMap; without
+// a mount the readDir fails and the module aborts.
+//
+// The Module.preRun route in runtime.ts (v0.5.4) was unreliable under
+// MODULARIZE=1 + EXPORT_ES6=1 — the preRun functions get called with no
+// args, so `mod.FS` was undefined. Static-init via EM_ASM runs synchronously
+// at module instantiation and accesses FS via Emscripten's internal binding,
+// which doesn't depend on EXPORTED_RUNTIME_METHODS.
+namespace {
+struct PresetIDBFSInit {
+    PresetIDBFSInit() {
+        EM_ASM({
+            try { FS.mkdir('/presets'); } catch (e) { /* exists */ }
+            try {
+                FS.mount(IDBFS, {}, '/presets');
+                FS.syncfs(true, function(err) {
+                    if (err) console.warn('[IDBFS] /presets restore failed:', err);
+                    else      console.log('[IDBFS] /presets restored from IndexedDB');
+                });
+            } catch (e) {
+                console.warn('[IDBFS] mount failed:', e);
+            }
+        });
+    }
+};
+static PresetIDBFSInit gPresetIDBFSInit;
+}
 #endif
 
 // Forward declare GLAD loader
@@ -191,7 +222,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.6.0"
+#define ALLOLIB_WASM_LIB_VERSION "0.6.1"
 
 void WebApp::start() {
     if (mRunning) return;
