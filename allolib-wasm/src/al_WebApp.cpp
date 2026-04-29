@@ -2,6 +2,7 @@
 // M5.6: full ParameterServer definition for the lazy-init member +
 // parameterServer() accessor. Header-side has only a forward decl.
 #include "al/ui/al_ParameterServer.hpp"
+#include "al_WebControlGUI.hpp"
 
 // Conditionally include backends based on build configuration
 #if defined(ALLOLIB_WEBGL2)
@@ -252,6 +253,26 @@ void WebApp::start() {
     EM_ASM({ console.log('[AlloLib] About to call onCreate()'); });
 #endif
     onCreate();
+
+    // Mirror any parameters registered with the ParameterServer (e.g.
+    // `parameterServer() << gain` in onInit) into the active WebControlGUI
+    // so they appear in the Studio Params panel. Native al::App users get
+    // OSC + GUI for free via ControlGUI; we replicate that affordance here
+    // since otherwise `parameterServer() << p` registers for OSC only and
+    // the panel stays empty.
+    if (mParameterServer) {
+        auto* gui = WebControlGUI::getActiveInstance();
+        if (!gui) {
+            static WebControlGUI sDefaultPanel;
+            gui = WebControlGUI::getActiveInstance();
+            if (!gui) gui = &sDefaultPanel;
+        }
+        for (auto* p : mParameterServer->parameters())        gui->registerParameterMeta(*p);
+        for (auto* p : mParameterServer->stringParameters())  gui->registerParameterMeta(*p);
+        for (auto* p : mParameterServer->vec3Parameters())    gui->registerParameterMeta(*p);
+        for (auto* p : mParameterServer->vec4Parameters())    gui->registerParameterMeta(*p);
+        for (auto* p : mParameterServer->poseParameters())    gui->registerParameterMeta(*p);
+    }
 
     mRunning = true;
 
