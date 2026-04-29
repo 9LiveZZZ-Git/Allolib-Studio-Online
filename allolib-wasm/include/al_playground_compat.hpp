@@ -912,4 +912,32 @@ public:
 };
 } // namespace al
 
+// ============================================================================
+// User-code-only macro: rewrite bare `PresetHandler` to `WebPresetHandler`
+// in everything parsed AFTER this point. This is intentionally placed at the
+// VERY END of the compat header so all upstream `class al::PresetHandler`
+// declarations are fully parsed first. After this point, user code's
+// `PresetHandler mPresets;` constructs WebPresetHandler — picking up the
+// auto-WebControlGUI mirror, IDBFS persist callback, FREE-mode morph, and
+// the legacy `tick(dt)` / `recallPreset(name, morphTime)` aliases.
+//
+// SAFETY:
+//   - Upstream .cpp files (PresetHandler.cpp, PresetSequencer.cpp,
+//     PresetMapper.cpp) are compiled into libal_web.a separately and never
+//     include al_playground_compat.hpp; the macro doesn't reach them.
+//   - Inside this header we already finished all uses of the bare
+//     `PresetHandler` name (the WebPresetHandler subclass body refers to
+//     `PresetHandler::` explicitly, which the macro would mangle into
+//     `WebPresetHandler::` — but those references happen BEFORE this
+//     #define, so they're already textually resolved).
+//   - User code that needs the upstream class explicitly can write
+//     `al::PresetHandler` (qualified — also rewritten — undefine first
+//     if needed) or use the equivalent `(WebPresetHandler::)` base ref.
+//
+// Done with `#define` rather than `using PresetHandler = WebPresetHandler;`
+// because the using-alias would conflict with upstream's `class al::PresetHandler`
+// already in scope.
+// ============================================================================
+#define PresetHandler WebPresetHandler
+
 #endif // AL_PLAYGROUND_COMPAT_HPP
