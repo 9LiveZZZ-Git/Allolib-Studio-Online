@@ -5,7 +5,7 @@
 **Write, compile, and run AlloLib C++ code directly in your browser — no installation required.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.9.6-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
+[![Version](https://img.shields.io/badge/version-0.9.7-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
 [![WebGL2](https://img.shields.io/badge/WebGL2-supported-success.svg)]()
 [![WebGPU](https://img.shields.io/badge/WebGPU-known%20issue-yellow.svg)]()
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)

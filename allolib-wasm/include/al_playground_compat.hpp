@@ -839,14 +839,23 @@ public:
         EM_ASM({ console.log('[SynthGUIManager] Control voice initialized with %d trigger parameters'); },
                (int)mControlVoice.triggerParameters().size());
 
-        // NOTE: We do NOT register trigger parameters with WebControlGUI here.
-        // Trigger parameters are for per-voice control during sequencing, not for
-        // the main UI panel. The app should register its own ControlGUI parameters
-        // (e.g., gui << amplitude << attackTime) which control the values used
-        // when triggering new voices.
-        //
-        // This avoids duplicate parameters in the UI panel - one set from the
-        // voice's createInternalTriggerParameter() and one from the app's ControlGUI.
+        // v0.9.7: feed the control voice's trigger parameters into the
+        // canonical ParameterRegistry so they show up in the Vue Params
+        // panel automatically. Vanilla AlloLib examples that use the
+        // tutorials/audiovisual/* pattern (e.g. 04_FMVib_wavetable_visual)
+        // call createInternalTriggerParameter() in the voice's init() and
+        // expect ImGui to display those parameters via SynthGUIManager —
+        // no separate `gui << p` step. Pre-v0.9.7 we deliberately skipped
+        // this auto-registration to avoid duplicate panel rows when the
+        // user ALSO did `gui << p`. That concern is obsolete: the
+        // registry's pointer-dedup (v0.7.0+) collapses duplicates, so
+        // registering both routes is harmless. Net result: ANY parameter
+        // owned by the control voice — whether registered via
+        // createInternalTriggerParameter, gui<<, mPresets<<, or
+        // parameterServer()<< — appears once in the panel.
+        for (auto* p : mControlVoice.triggerParameters()) {
+            if (p) ParameterRegistry::global().add(p);
+        }
 #endif
 
         // Pre-allocate voices
