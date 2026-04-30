@@ -21,6 +21,61 @@ export interface TranspileResult {
   code: string
   warnings: string[]
   errors: string[]
+  /// Asset references detected in the source — populated by scanAssetReferences
+  /// before/during transpileToWeb. Each entry is the literal string the user
+  /// wrote (e.g. "/assets/meshes/Box.glb", "Duck.glb", "../sounds/bell.wav").
+  /// The Import Native modal cross-references these against project files
+  /// + bundled /assets/ and surfaces an Upload button for any that are
+  /// missing — uploaded files land in the project's assets/ folder and
+  /// show up in the FileExplorer.
+  referencedAssets?: string[]
+}
+
+/**
+ * Scan source code for asset file references.
+ *
+ * Looks for string literals containing common asset file extensions and
+ * returns the unique list of referenced paths. Used by the Import Native
+ * flow (M8.x+) to warn the user about external file dependencies before
+ * they hit a runtime "404" or "no Box.glb found" message.
+ *
+ * Recognised extensions: .glb, .gltf, .obj, .mtl, .hdr, .exr, .png, .jpg,
+ * .jpeg, .bmp, .ktx, .ktx2, .wav, .mp3, .ogg, .flac, .ttf, .otf, .csv,
+ * .txt, .json, .synthSequence, .preset, .presetMap.
+ *
+ * Pattern matches both forms:
+ *   - Double-quoted string literals: "..."
+ *   - String literal at member access:    .load("...")
+ *
+ * Skips matches inside C/C++ comments (line and block) so demo URLs in
+ * documentation comments don't pollute the warning list.
+ */
+const ASSET_EXTENSIONS = [
+  'glb', 'gltf', 'obj', 'mtl',
+  'hdr', 'exr', 'png', 'jpg', 'jpeg', 'bmp', 'ktx', 'ktx2',
+  'wav', 'mp3', 'ogg', 'flac', 'aiff',
+  'ttf', 'otf', 'csv', 'json', 'txt',
+  'synthSequence', 'preset', 'presetMap',
+]
+const ASSET_REF_REGEX = new RegExp(
+  String.raw`"([^"\n]+\.(?:${ASSET_EXTENSIONS.join('|')}))"`,
+  'gi',
+)
+
+export function scanAssetReferences(code: string): string[] {
+  // Strip comments first so doc-comment URLs don't get flagged.
+  const stripped = code
+    .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
+    .replace(/\/\/[^\n]*/g, '')          // line comments
+
+  const seen = new Set<string>()
+  let m: RegExpExecArray | null
+  ASSET_REF_REGEX.lastIndex = 0
+  while ((m = ASSET_REF_REGEX.exec(stripped)) !== null) {
+    const ref = m[1].trim()
+    if (ref) seen.add(ref)
+  }
+  return Array.from(seen)
 }
 
 /**
@@ -684,6 +739,10 @@ export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
 export function transpileToWeb(code: string): TranspileResult {
   const warnings: string[] = []
   const errors: string[] = []
+  // Scan referenced assets BEFORE rewrites — so the original user string
+  // literals are surfaced (rewriting includes shouldn't touch asset paths,
+  // but scanning early future-proofs against rewrites that ever do).
+  const referencedAssets = scanAssetReferences(code)
   let result = code
 
   // M6 — scan for browser-impossible APIs and emit line-anchored errors
@@ -713,10 +772,10 @@ export function transpileToWeb(code: string): TranspileResult {
 
   if (codeType === 'web' && !mainMatch) {
     warnings.push('Code appears to already be in AlloLib Online format')
-    return { code: result, warnings, errors }
+    return { code: result, warnings, errors, referencedAssets }
   } else if (codeType === 'web') {
     // Code was web format but we converted main() - still return early for other transforms
-    return { code: result, warnings, errors }
+    return { code: result, warnings, errors, referencedAssets }
   }
 
   // Apply transformations
@@ -818,7 +877,7 @@ export function transpileToWeb(code: string): TranspileResult {
     warnings.push('No main function or ALLOLIB_WEB_MAIN macro found. You may need to add one.')
   }
 
-  return { code: result, warnings, errors }
+  return { code: result, warnings, errors, referencedAssets }
 }
 
 /**
@@ -833,7 +892,7 @@ export function transpileToNative(code: string): TranspileResult {
   const codeType = detectCodeType(code)
   if (codeType === 'native') {
     warnings.push('Code appears to already be in native AlloLib format')
-    return { code: result, warnings, errors }
+    return { code: result, warnings, errors, referencedAssets }
   }
 
   // Apply transformations
@@ -889,7 +948,7 @@ export function transpileToNative(code: string): TranspileResult {
     result = '#include "al/app/al_App.hpp"\n' + result
   }
 
-  return { code: result, warnings, errors }
+  return { code: result, warnings, errors, referencedAssets }
 }
 
 /**

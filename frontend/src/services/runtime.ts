@@ -7,6 +7,7 @@
 
 import { parameterSystem } from '@/utils/parameter-system'
 import { useSettingsStore } from '@/stores/settings'
+import { useProjectStore } from '@/stores/project'
 import { objectManagerBridge } from '@/services/objectManager'
 
 export interface RuntimeConfig {
@@ -73,6 +74,40 @@ declare global {
   }
 }
 
+// ── User asset fetch override (M8.5) ────────────────────────────────────────
+// WebFile::loadFromURL ultimately hits window.fetch(url). To make
+// user-uploaded assets work without rebuilding libal_web.a, we wrap
+// fetch once and resolve known basenames against window.__alloUserAssets
+// before falling through to the network. Idempotent — re-installs are
+// no-ops (the wrapper checks for its own marker).
+function installUserAssetFetchOverlay(): void {
+  if ((window as any).__alloFetchOverlayInstalled) return
+  const originalFetch = window.fetch.bind(window)
+  ;(window as any).__alloFetchOverlayInstalled = true
+  window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    try {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url)
+      const overlay: Map<string, Uint8Array> | undefined = (window as any).__alloUserAssets
+      if (overlay && overlay.size > 0) {
+        // Try exact url, then path without leading "/", then basename.
+        const candidates: string[] = [url]
+        if (url.startsWith('/')) candidates.push(url.slice(1))
+        if (url.includes('/')) candidates.push(url.substring(url.lastIndexOf('/') + 1))
+        for (const key of candidates) {
+          const bytes = overlay.get(key)
+          if (bytes) {
+            return Promise.resolve(new Response(bytes, {
+              status: 200,
+              headers: { 'Content-Type': 'application/octet-stream' },
+            }))
+          }
+        }
+      }
+    } catch (_e) { /* fall through to network */ }
+    return originalFetch(input, init)
+  }
+}
+
 // Generates a tanh-shaped soft clipping lookup table for WaveShaperNode.
 // tanh approaches ±1 asymptotically, providing smooth saturation without hard clipping.
 function createSoftClipCurve(drive: number = 1.5, samples: number = 8192): Float32Array {
@@ -118,6 +153,11 @@ export class AllolibRuntime {
 
     // Clean up any previous module
     this.cleanup()
+
+    // Wrap window.fetch so user-uploaded assets (projectStore.binaryAssets,
+    // staged into window.__alloUserAssets at preRun) resolve before the
+    // network. Idempotent across reloads.
+    installUserAssetFetchOverlay()
 
     try {
       // Get the base URL for loading related files
@@ -285,6 +325,45 @@ export class AllolibRuntime {
         // dependency calls from there — so the function arg is irrelevant
         // and the v0.5.4 'mod.FS undefined' problem doesn't apply.
         preRun: [function(mod: any) {
+          // ── User-uploaded asset overlay (M8.5) ──────────────────────
+          // Walk projectStore.binaryAssets and stage each file into:
+          //   1. Emscripten FS at /<path> so std::ifstream / FS APIs see it.
+          //   2. window.__alloUserAssets (Map<basename|path, Uint8Array>)
+          //      for the fetch-override below to resolve URLs against.
+          //
+          // Done before the IDBFS mount so missing dirs ("/assets/meshes")
+          // are created via mkdirpath; FS.mkdir failures on an existing dir
+          // are swallowed.
+          try {
+            const FS = mod.FS
+            const project = useProjectStore()
+            const overlay: Map<string, Uint8Array> = new Map()
+            for (const { path, bytes } of project.listBinaryAssets()) {
+              const u8 = new Uint8Array(bytes)
+              overlay.set(path, u8)
+              const basename = path.includes('/')
+                ? path.substring(path.lastIndexOf('/') + 1)
+                : path
+              if (basename !== path) overlay.set(basename, u8)
+              // mkdirpath each segment of the FS path
+              const segs = path.split('/').filter(Boolean)
+              let cur = ''
+              for (let i = 0; i < segs.length - 1; ++i) {
+                cur += '/' + segs[i]
+                try { FS.mkdir(cur) } catch (_e) { /* exists */ }
+              }
+              try { FS.writeFile('/' + path, u8) } catch (e) {
+                console.warn('[asset overlay] FS.writeFile failed for', path, e)
+              }
+            }
+            ;(window as any).__alloUserAssets = overlay
+            if (overlay.size > 0) {
+              console.log('[asset overlay] staged', overlay.size, 'user assets in MEMFS')
+            }
+          } catch (e) {
+            console.warn('[asset overlay] preRun setup failed:', e)
+          }
+
           try {
             const FS = mod.FS
             const addDep = mod.addRunDependency

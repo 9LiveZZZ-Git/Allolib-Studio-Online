@@ -51,6 +51,44 @@ const transpileResult = ref<TranspileResult | null>(null)
 const transpileTarget = ref<'native' | 'web'>('native')
 const pendingTranspiledCode = ref('')
 
+// Per-asset status for the import-native modal (M8.5).
+// Refreshed when transpileResult changes — cross-references each
+// referenced asset against project files + bundled studio assets.
+type AssetStatus = { ref: string; source: 'project' | 'bundled' | 'missing'; resolvedPath?: string }
+const assetStatuses = computed<AssetStatus[]>(() => {
+  if (!transpileResult.value?.referencedAssets?.length) return []
+  return transpileResult.value.referencedAssets.map((ref) => {
+    const found = projectStore.findAssetByName(ref)
+    return { ref, source: found.source, resolvedPath: found.path }
+  })
+})
+
+// Upload handler — turns a missing asset into a project asset.
+// Reads the picked file as ArrayBuffer (preserves binary integrity for
+// .glb / .png / .wav / etc.) and pushes into projectStore. The
+// FileExplorer picks it up automatically (the placeholder text in the
+// FileExplorer is "[binary asset: N bytes]"; the actual bytes live in
+// projectStore.binaryAssets).
+const uploadAssetForRef = (ref: string) => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  // Suggest the basename so the OS file picker filters by extension when possible.
+  const basename = ref.includes('/') ? ref.substring(ref.lastIndexOf('/') + 1) : ref
+  const ext = basename.includes('.') ? basename.substring(basename.lastIndexOf('.')) : ''
+  if (ext) input.accept = ext
+  input.onchange = async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    const bytes = await file.arrayBuffer()
+    // Preserve the user's reference path inside the project (so the runtime
+    // overlay below resolves the same string the source uses), but ALSO
+    // alias by basename for cases like "Box.glb" vs "/assets/meshes/Box.glb".
+    projectStore.addBinaryAsset(ref, bytes)
+    appStore.log(`[INFO] Uploaded asset: ${file.name} (${bytes.byteLength} bytes) -> ${ref}`)
+  }
+  input.click()
+}
+
 // Native export/import dialog state
 const showExportNativeDialog = ref(false)
 const showImportNativeDialog = ref(false)
@@ -282,11 +320,14 @@ const handleImportNative = () => {
         transpileTarget.value = 'web'
         pendingTranspiledCode.value = result.code
 
-        if (result.warnings.length > 0 || result.errors.length > 0) {
-          // Show modal with warnings/errors
+        // Whenever the source references external assets, always show the
+        // modal so the user can audit availability + upload missing files
+        // before compile. (Pre-M8.5 the modal only appeared on warnings/
+        // errors, leaving asset gaps invisible until runtime.)
+        const hasAssetRefs = (result.referencedAssets?.length ?? 0) > 0
+        if (result.warnings.length > 0 || result.errors.length > 0 || hasAssetRefs) {
           showTranspileModal.value = true
         } else {
-          // No issues, apply directly
           editorRef.value?.setCode(result.code)
           currentFileName.value = file.name.replace(/\.cpp$/, '_web.cpp')
           appStore.log(`[INFO] Imported and converted to web: ${file.name}`)
@@ -556,6 +597,47 @@ watch(() => appStore.consoleOutput.length, (newLen) => {
                 {{ warning }}
               </li>
             </ul>
+          </div>
+
+          <!-- Asset references (M8.5) — import flow only -->
+          <div v-if="transpileTarget === 'web' && assetStatuses.length" class="mb-4">
+            <h4 class="text-blue-300 font-medium mb-2 flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Referenced Assets ({{ assetStatuses.length }})
+            </h4>
+            <ul class="text-sm space-y-1">
+              <li
+                v-for="(asset, i) in assetStatuses"
+                :key="i"
+                class="flex items-center gap-2 px-3 py-2 rounded"
+                :class="{
+                  'bg-green-900/30 text-green-200': asset.source !== 'missing',
+                  'bg-yellow-900/30 text-yellow-200': asset.source === 'missing',
+                }"
+              >
+                <span class="text-xs font-medium w-16 shrink-0">
+                  <template v-if="asset.source === 'project'">PROJECT</template>
+                  <template v-else-if="asset.source === 'bundled'">BUNDLED</template>
+                  <template v-else>MISSING</template>
+                </span>
+                <span class="font-mono text-xs flex-1 truncate" :title="asset.ref">{{ asset.ref }}</span>
+                <button
+                  v-if="asset.source === 'missing'"
+                  @click="uploadAssetForRef(asset.ref)"
+                  class="px-2 py-0.5 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded shrink-0"
+                >
+                  Upload
+                </button>
+              </li>
+            </ul>
+            <p class="text-xs text-gray-500 mt-2">
+              Project assets appear in the Explorer under <code class="text-gray-400">assets/</code>.
+              Bundled assets are served from <code class="text-gray-400">/assets/...</code> on
+              the studio. Missing files become 404s at runtime — upload now or compile and pick
+              up the gap from the console.
+            </p>
           </div>
 
           <!-- Info message -->

@@ -44,6 +44,23 @@ const STORAGE_KEY = 'allolib-project'
 const LEGACY_CODE_KEY = 'allolib-code'
 const LEGACY_FILENAME_KEY = 'allolib-filename'
 
+// Mirrors frontend/public/assets/. Maps basename → bundled URL path.
+// Update when adding to the static asset library so the Import Native
+// modal correctly marks references as "bundled" instead of "missing".
+const BUNDLED_ASSETS = new Map<string, string>([
+  // Meshes
+  ['Box.glb',     '/assets/meshes/Box.glb'],
+  ['Duck.glb',    '/assets/meshes/Duck.glb'],
+  ['bunny.obj',   '/assets/meshes/bunny.obj'],
+  ['spot.obj',    '/assets/meshes/spot.obj'],
+  ['suzanne.obj', '/assets/meshes/suzanne.obj'],
+  ['teapot.obj',  '/assets/meshes/teapot.obj'],
+  // Environments (HDR maps — common ones; partial list is fine, missing
+  // entries just fall through to "missing" UX which is acceptable.)
+  ['kloofendal_48d_partly_cloudy_puresky_1k.hdr',
+    '/assets/environments/kloofendal_48d_partly_cloudy_puresky_1k.hdr'],
+])
+
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2)
 }
@@ -252,6 +269,78 @@ export const useProjectStore = defineStore('project', () => {
       file.updatedAt = Date.now()
       project.value.updatedAt = Date.now()
     }
+  }
+
+  /**
+   * Asset file lookup helpers (M8.5+).
+   *
+   * The Import Native flow scans user source for asset path literals
+   * (.glb, .obj, .hdr, .wav, ...) and cross-references them against:
+   *   1. Project files (anything under assets/ in the FileExplorer)
+   *   2. Bundled studio assets at /assets/... (frontend/public/assets/)
+   *
+   * For (1) we do basename matching since users write asset paths with
+   * varied prefixes ("Box.glb", "./Box.glb", "/uploaded/Box.glb"). For
+   * (2) we keep a small registry that mirrors what's actually shipped
+   * with the studio bundle.
+   *
+   * Binary uploads (.glb / images / audio) live in the project's
+   * binaryAssets map. The runtime preRun walks this map and writes each
+   * asset into Emscripten's FS so WebFile::loadFromURL can fetch them
+   * via an in-WASM-FS overlay before falling through to the network.
+   */
+  const binaryAssets = ref<Map<string, ArrayBuffer>>(new Map())
+
+  function findAssetByName(name: string): { source: 'project' | 'bundled' | 'missing'; path?: string } {
+    const basename = name.includes('/') ? name.substring(name.lastIndexOf('/') + 1) : name
+
+    // 1. Project text files (anything in assets/ folder, or matching basename anywhere)
+    for (const f of project.value.files) {
+      const fileBasename = f.name
+      if (fileBasename === basename || f.path === name) {
+        return { source: 'project', path: f.path }
+      }
+    }
+    // 2. Project binary uploads
+    for (const path of binaryAssets.value.keys()) {
+      const assetBasename = path.includes('/') ? path.substring(path.lastIndexOf('/') + 1) : path
+      if (assetBasename === basename || path === name) {
+        return { source: 'project', path }
+      }
+    }
+    // 3. Bundled studio assets — small fixed registry that matches what
+    //    ships under frontend/public/assets/. Updated as the asset library
+    //    grows; missing entries are marked as 'missing' rather than
+    //    HEAD-requested every time.
+    if (BUNDLED_ASSETS.has(basename)) {
+      return { source: 'bundled', path: BUNDLED_ASSETS.get(basename) }
+    }
+    return { source: 'missing' }
+  }
+
+  function addBinaryAsset(path: string, bytes: ArrayBuffer): void {
+    // Normalize: drop leading slashes, ensure assets/ prefix so it appears
+    // in the FileExplorer under a single canonical folder.
+    let normPath = path.replace(/^\/+/, '')
+    if (!normPath.startsWith('assets/')) {
+      normPath = 'assets/' + (normPath.includes('/') ? normPath.substring(normPath.lastIndexOf('/') + 1) : normPath)
+    }
+    binaryAssets.value.set(normPath, bytes)
+
+    // Mirror into project.files as a placeholder marker so the FileExplorer
+    // shows the upload (the content stays empty in the text store; the
+    // bytes live in binaryAssets). Tag with [binary:N bytes] so the user
+    // can see it without us trying to render the bytes as text.
+    const placeholder = `[binary asset: ${bytes.byteLength} bytes]`
+    addOrUpdateFile(normPath, placeholder)
+  }
+
+  function getBinaryAsset(path: string): ArrayBuffer | undefined {
+    return binaryAssets.value.get(path)
+  }
+
+  function listBinaryAssets(): Array<{ path: string; bytes: ArrayBuffer }> {
+    return Array.from(binaryAssets.value.entries()).map(([path, bytes]) => ({ path, bytes }))
   }
 
   /**
@@ -691,6 +780,13 @@ f 1 2 3
     fileNames,
     filePaths,
     fileTree,
+
+    // Asset helpers (M8.5)
+    binaryAssets,
+    findAssetByName,
+    addBinaryAsset,
+    getBinaryAsset,
+    listBinaryAssets,
 
     // Actions
     setActiveFile,
