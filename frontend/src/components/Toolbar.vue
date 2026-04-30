@@ -372,7 +372,7 @@ function getPlatformBadgeClass(platform: string) {
       <!-- Project Menu Dropdown -->
       <div
         v-if="showFileMenu"
-        class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1"
+        class="absolute left-0 top-full mt-1 w-56 bg-editor-bg border border-editor-border rounded-lg shadow-xl z-50 py-1 max-h-[80vh] overflow-y-auto overflow-x-hidden"
         @click.stop
       >
         <button
