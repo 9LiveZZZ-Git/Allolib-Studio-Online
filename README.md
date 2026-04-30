@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.7.5-green.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/releases)
 [![WebGL2](https://img.shields.io/badge/WebGL2-supported-success.svg)]()
-[![WebGPU](https://img.shields.io/badge/WebGPU-supported-success.svg)]()
+[![WebGPU](https://img.shields.io/badge/WebGPU-known%20issue-yellow.svg)]()
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki)
 
 [**Launch App**](https://9livezzz-git.github.io/Allolib-Studio-Online/) · [**Documentation**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki) · [**Examples**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/wiki/Examples-Guide) · [**Report Bug**](https://github.com/9LiveZZZ-Git/Allolib-Studio-Online/issues) · [**Security**](SECURITY.md)
