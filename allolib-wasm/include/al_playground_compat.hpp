@@ -206,9 +206,15 @@ public:
         installWebHooks();
     }
     // Compat overload: caller supplies an explicit time-master mode.
+    // v0.7.11: switched from normalizeWebPath to prepareWebPath so this ctor
+    // does the same stub-presetMap pre-creation as the default ctor. Without
+    // it, M4_preset_full.cpp (and any user code that picks TimeMasterMode +
+    // path explicitly) skipped the pre-creation, hit upstream's auto-create
+    // branch in setCurrentPresetMap, and aborted on the IDBFS race. See
+    // docs/M4_PRESET_ABORT_AUDIT.md for the full trace.
     WebPresetHandler(TimeMasterMode mode, std::string rootDirectory = "/presets",
                      bool verbose = false)
-        : PresetHandler(mode, normalizeWebPath(rootDirectory), verbose) {
+        : PresetHandler(mode, prepareWebPath(rootDirectory), verbose) {
         if (mode == TimeMasterMode::TIME_MASTER_CPU) {
             printf("[WebPresetHandler] TIME_MASTER_CPU spawns a CPU thread; "
                    "TIME_MASTER_FREE is recommended on web.\n");
