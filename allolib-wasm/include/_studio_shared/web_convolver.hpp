@@ -58,7 +58,14 @@
 #include <memory>
 #include <vector>
 
-namespace al {
+// v0.10.2: dropped the surrounding `namespace al { ... }` so this helper
+// lives in `::studio` (matching the eight other _studio_shared/ headers).
+// Pre-fix, web_convolver was nested as `::al::studio` which collided with
+// the others when both got included by the same TU — `using namespace al;`
+// surfaced both `::studio` and `::al::studio` and every reference to
+// `studio::Foo` was ambiguous (clang emitted "candidate found by name
+// lookup is `studio`" alongside "candidate found by name lookup is
+// `al::studio`"). Phase 1 acceptance demo failed to build because of it.
 namespace studio {
 
 class WebConvolver {
@@ -333,4 +340,3 @@ private:
 };
 
 }  // namespace studio
-}  // namespace al

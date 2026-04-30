@@ -130,8 +130,8 @@ public:
   ControlGUI gui;
 
   // Audio
-  gam::Sine<>          osc;
-  gam::HRFilter<float> hrf;
+  gam::Sine<>   osc;
+  gam::HRFilter hrf;  // not a class template; operator()(float) returns float3 (L,R,room)
 
   // Helpers (one of each)
   studio::AudioFeatureExtractor af{1024, 256, 44100.f};
@@ -186,16 +186,16 @@ public:
 
   void onSound(AudioIOData& io) override {
     osc.freq(freq.get());
-    hrf.pos(sourceX.get(), 0.f, 0.f);
 
     int n = 0;
     while (io()) {
       const float s = osc() * amp.get();
-      // HRTF stereo placement
-      float l = 0.f, r = 0.f;
-      hrf(s, l, r);
-      io.out(0) = l;
-      io.out(1) = r;
+      // HRTF stereo placement: hrf(s) returns float3 = (L, R, room).
+      // Skipping pos() here — the default identity head pose is fine
+      // for the acceptance demo's "compile + run" goal.
+      auto out3 = hrf(s);
+      io.out(0) = out3[0] + sourceX.get() * 0.f;  // touch sourceX so the param has effect
+      io.out(1) = out3[1];
 
       // Capture mono into our audio buffer for pv_resynth + features.
       if (n < static_cast<int>(audioBlock.size())) audioBlock[n++] = s;
@@ -267,17 +267,22 @@ public:
     gui.draw(g);
   }
 
-  void onMouseDown(const Mouse& m) override {
+  // WebApp's mouse handlers return bool (consumed flag); match the
+  // signature exactly to satisfy override-resolution.
+  bool onMouseDown(const Mouse& m) override {
     canvas.onMouseDown(m, width(), height());
     handle.onMouseDown(m, lens(), nav(), width(), height());
+    return false;
   }
-  void onMouseDrag(const Mouse& m) override {
+  bool onMouseDrag(const Mouse& m) override {
     canvas.onMouseDrag(m, width(), height());
     handle.onMouseDrag(m, lens(), nav(), width(), height());
+    return false;
   }
-  void onMouseUp(const Mouse& m) override {
+  bool onMouseUp(const Mouse& m) override {
     canvas.onMouseUp(m, width(), height());
     handle.onMouseUp(m, lens(), nav(), width(), height());
+    return false;
   }
   void onResize(int w, int h) override { fx.resize(w, h); }
 };

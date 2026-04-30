@@ -138,16 +138,13 @@ void smoke_web_convolver() {
 void smoke_hrfilter() {
   // gam::HRFilter is the parametric (Iida 2007/2018) head-shadow + pinna
   // model. Header-only, transitive deps all on the WASM Gamma include
-  // path per _hrfilter_notes.md. Instantiating + calling the operator
-  // forces the linker to resolve every transitive symbol; if any
-  // excluded Gamma .cpp creeps in (SoundFile/Recorder/AudioIO), this
-  // catches it at compile time.
-  gam::HRFilter<float> hrf;
-  hrf.pos(1.f, 0.f, 0.f);
-  float in = 0.f;
-  float l = 0.f, r = 0.f;
-  hrf(in, l, r);
-  (void)l; (void)r;
+  // path per _hrfilter_notes.md. Not a class template; operator()(float)
+  // returns float3 = (L, R, room). pos() needs (sourceVec3, headPoseMat4)
+  // — skipped here (default identity is fine for compile validation).
+  gam::HRFilter hrf;
+  hrf.earDist(0.09f);
+  auto out3 = hrf(0.f);
+  (void)out3[0]; (void)out3[1]; (void)out3[2];
 }
 
 // Aggregator so the linker doesn't dead-strip individual smoke fns.
