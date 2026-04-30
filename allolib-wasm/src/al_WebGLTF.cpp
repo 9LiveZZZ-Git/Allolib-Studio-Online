@@ -400,8 +400,10 @@ bool WebGLTF::parseAndRetain(const uint8_t* data, size_t size) {
     mImages.clear();
     mAnimations.clear();
     mSkins.clear();
+    mCache.clear();
     bool ok = extractAllPrimitives(mData, mCombined, &mPrimitives, &mMaterials);
     extractImages(mData, mImages);
+    buildSkinCache();
 
     // M8.3 — extract animation + skin metadata. Channel sampler buffers are
     // walked at sampleAnimation() time so we don't pay the cost on assets
@@ -614,17 +616,269 @@ void WebGLTF::sampleAnimation(size_t animIdx, float time) {
         node->has_matrix = 0; // T/R/S now drives transform_local
     }
 
-    // 2. Re-extract the mesh with the updated node transforms. cgltf's
-    //    cgltf_node_transform_world reads the updated TRS automatically,
-    //    so the same extraction path produces the animated pose.
-    //    (Skinning attributes per-vertex aren't implemented yet — for assets
-    //    with skins, the rigid node transform is the dominant motion, which
-    //    handles RiggedSimple's single-joint test correctly because its mesh
-    //    is parented to the moving joint node. True skin-weighted blending
-    //    is a phase 8.3b follow-up.)
+    // 2. Rebuild mAnimated using the bind-pose cache: skinned primitives
+    //    walk JOINTS_0/WEIGHTS_0 against per-skin joint matrices; rigid
+    //    primitives just transform by their owning node's world matrix.
+    rebuildAnimatedMesh();
+}
+
+// ─── M8.3b — skin-weighted vertex blending ────────────────────────────────
+
+namespace {
+
+// Walk the scene populating the bind-pose cache. Mirrors the geometry
+// extraction in extractPrimitive but records vertex streams pre-transform
+// and additionally captures JOINTS_0 / WEIGHTS_0 when present. The owning
+// node pointer is stashed so non-skinned primitives can be re-transformed
+// by their world matrix without re-walking the scene every frame.
+void cacheNode(const cgltf_node* node, std::vector<WebGLTF::SkinnedPrim>& out) {
+    if (node->mesh) {
+        for (cgltf_size i = 0; i < node->mesh->primitives_count; ++i) {
+            const cgltf_primitive* prim = &node->mesh->primitives[i];
+            if (prim->type != cgltf_primitive_type_triangles &&
+                prim->type != cgltf_primitive_type_triangle_strip &&
+                prim->type != cgltf_primitive_type_triangle_fan) continue;
+
+            WebGLTF::SkinnedPrim sp;
+            sp.node = const_cast<cgltf_node*>(node);
+            sp.skin = node->skin;
+            sp.type = prim->type;
+
+            const cgltf_accessor *posAcc=nullptr, *nrmAcc=nullptr,
+                                 *uvAcc=nullptr, *colAcc=nullptr,
+                                 *jntAcc=nullptr, *wgtAcc=nullptr;
+            for (cgltf_size a = 0; a < prim->attributes_count; ++a) {
+                const auto* at = &prim->attributes[a];
+                switch (at->type) {
+                    case cgltf_attribute_type_position: if (!posAcc) posAcc = at->data; break;
+                    case cgltf_attribute_type_normal:   if (!nrmAcc) nrmAcc = at->data; break;
+                    case cgltf_attribute_type_texcoord: if (!uvAcc)  uvAcc  = at->data; break;
+                    case cgltf_attribute_type_color:    if (!colAcc) colAcc = at->data; break;
+                    case cgltf_attribute_type_joints:   if (!jntAcc) jntAcc = at->data; break;
+                    case cgltf_attribute_type_weights:  if (!wgtAcc) wgtAcc = at->data; break;
+                    default: break;
+                }
+            }
+            if (!posAcc) continue;
+            const cgltf_size n = posAcc->count;
+
+            sp.positions.resize(n);
+            {
+                std::vector<float> tmp(n * 3);
+                cgltf_accessor_unpack_floats(posAcc, tmp.data(), tmp.size());
+                for (cgltf_size k = 0; k < n; ++k)
+                    sp.positions[k] = Vec3f(tmp[k*3], tmp[k*3+1], tmp[k*3+2]);
+            }
+            if (nrmAcc && nrmAcc->count == n) {
+                sp.normals.resize(n);
+                std::vector<float> tmp(n * 3);
+                cgltf_accessor_unpack_floats(nrmAcc, tmp.data(), tmp.size());
+                for (cgltf_size k = 0; k < n; ++k)
+                    sp.normals[k] = Vec3f(tmp[k*3], tmp[k*3+1], tmp[k*3+2]);
+            }
+            if (uvAcc && uvAcc->count == n) {
+                sp.uvs.resize(n);
+                std::vector<float> tmp(n * 2);
+                cgltf_accessor_unpack_floats(uvAcc, tmp.data(), tmp.size());
+                for (cgltf_size k = 0; k < n; ++k)
+                    sp.uvs[k] = Vec2f(tmp[k*2], tmp[k*2+1]);
+            }
+            if (colAcc && colAcc->count == n) {
+                sp.colors.resize(n);
+                const cgltf_size comps = cgltf_num_components(colAcc->type);
+                std::vector<float> tmp(n * comps);
+                cgltf_accessor_unpack_floats(colAcc, tmp.data(), tmp.size());
+                for (cgltf_size k = 0; k < n; ++k) {
+                    Color c(1, 1, 1, 1);
+                    c.r = tmp[k*comps + 0];
+                    if (comps > 1) c.g = tmp[k*comps + 1];
+                    if (comps > 2) c.b = tmp[k*comps + 2];
+                    if (comps > 3) c.a = tmp[k*comps + 3];
+                    sp.colors[k] = c;
+                }
+            }
+            if (jntAcc && wgtAcc && jntAcc->count == n && wgtAcc->count == n) {
+                sp.joints.resize(n * 4);
+                sp.weights.resize(n * 4);
+                for (cgltf_size k = 0; k < n; ++k) {
+                    cgltf_uint j[4] = {0, 0, 0, 0};
+                    cgltf_accessor_read_uint(jntAcc, k, j, 4);
+                    sp.joints[k*4 + 0] = static_cast<uint16_t>(j[0]);
+                    sp.joints[k*4 + 1] = static_cast<uint16_t>(j[1]);
+                    sp.joints[k*4 + 2] = static_cast<uint16_t>(j[2]);
+                    sp.joints[k*4 + 3] = static_cast<uint16_t>(j[3]);
+                    cgltf_accessor_read_float(wgtAcc, k, &sp.weights[k*4], 4);
+                }
+            }
+
+            // Resolve indices once (or fill 0..n-1 for non-indexed). Lets
+            // rebuildAnimatedMesh skip the per-frame index lookup overhead.
+            const cgltf_size idxCount = prim->indices ? prim->indices->count : n;
+            sp.indices.resize(idxCount);
+            for (cgltf_size k = 0; k < idxCount; ++k) {
+                sp.indices[k] = prim->indices
+                    ? static_cast<uint32_t>(cgltf_accessor_read_index(prim->indices, k))
+                    : static_cast<uint32_t>(k);
+            }
+
+            out.push_back(std::move(sp));
+        }
+    }
+    for (cgltf_size i = 0; i < node->children_count; ++i) {
+        cacheNode(node->children[i], out);
+    }
+}
+
+// 4x4 column-major (cgltf convention). row[i][j] = m[i*4 + j] would be
+// transposed; we follow cgltf which uses column-major float[16].
+void mat4MulCM(const float a[16], const float b[16], float r[16]) {
+    float t[16];
+    for (int c = 0; c < 4; ++c) {
+        for (int row = 0; row < 4; ++row) {
+            t[c*4 + row] = a[0*4 + row]*b[c*4 + 0]
+                         + a[1*4 + row]*b[c*4 + 1]
+                         + a[2*4 + row]*b[c*4 + 2]
+                         + a[3*4 + row]*b[c*4 + 3];
+        }
+    }
+    for (int i = 0; i < 16; ++i) r[i] = t[i];
+}
+void mat4ApplyPosCM(const float m[16], const Vec3f& p, Vec3f& out) {
+    out.x = m[0]*p.x + m[4]*p.y + m[8] *p.z + m[12];
+    out.y = m[1]*p.x + m[5]*p.y + m[9] *p.z + m[13];
+    out.z = m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14];
+}
+void mat4ApplyNrmCM(const float m[16], const Vec3f& n, Vec3f& out) {
+    // For correct non-uniform-scale normal transform we'd want the
+    // inverse-transpose of the upper-left 3x3. For uniform scale and
+    // pure rigid joints (the common rigging case) the upper-left 3x3
+    // is what we want. Renormalise after.
+    out.x = m[0]*n.x + m[4]*n.y + m[8] *n.z;
+    out.y = m[1]*n.x + m[5]*n.y + m[9] *n.z;
+    out.z = m[2]*n.x + m[6]*n.y + m[10]*n.z;
+    out.normalize();
+}
+
+} // anonymous namespace
+
+void WebGLTF::buildSkinCache() {
+    mCache.clear();
+    if (!mData) return;
+    const cgltf_scene* scene = mData->scene
+        ? mData->scene
+        : (mData->scenes_count > 0 ? &mData->scenes[0] : nullptr);
+    if (scene) {
+        for (cgltf_size i = 0; i < scene->nodes_count; ++i)
+            cacheNode(scene->nodes[i], mCache);
+    } else {
+        for (cgltf_size i = 0; i < mData->nodes_count; ++i)
+            if (mData->nodes[i].parent == nullptr)
+                cacheNode(&mData->nodes[i], mCache);
+    }
+}
+
+void WebGLTF::rebuildAnimatedMesh() {
     mAnimated.reset();
     mAnimated.primitive(Mesh::TRIANGLES);
-    extractAllPrimitives(mData, mAnimated, nullptr, nullptr);
+    if (!mData) return;
+
+    // Per-skin joint matrix table. jointMatrices[s][j*16..j*16+15] holds
+    // the column-major joint matrix used to skin a vertex bound to that
+    // joint of skin s. Computed once per frame, walked per vertex.
+    std::vector<std::vector<float>> jointMatrices(mData->skins_count);
+    for (cgltf_size s = 0; s < mData->skins_count; ++s) {
+        const cgltf_skin* sk = &mData->skins[s];
+        jointMatrices[s].resize(sk->joints_count * 16);
+        // Read inverse-bind matrices once. If the accessor is missing the
+        // glTF spec says use identity for each joint.
+        std::vector<float> ibm(sk->joints_count * 16, 0.f);
+        for (cgltf_size j = 0; j < sk->joints_count; ++j) {
+            ibm[j*16 + 0] = ibm[j*16 + 5] = ibm[j*16 + 10] = ibm[j*16 + 15] = 1.f;
+        }
+        if (sk->inverse_bind_matrices) {
+            cgltf_accessor_unpack_floats(sk->inverse_bind_matrices, ibm.data(), ibm.size());
+        }
+        for (cgltf_size j = 0; j < sk->joints_count; ++j) {
+            float jw[16];
+            cgltf_node_transform_world(sk->joints[j], jw);
+            mat4MulCM(jw, &ibm[j*16], &jointMatrices[s][j*16]);
+        }
+    }
+
+    // For each cached primitive, emit transformed/skinned triangles into
+    // mAnimated. Skin-weighted vertices blend up to 4 joint matrices.
+    auto append = [&](const Vec3f& p, const Vec3f* n, const Vec2f* uv, const Color* c) {
+        mAnimated.vertex(p);
+        if (n)  mAnimated.normal(*n);
+        if (uv) mAnimated.texCoord(uv->x, uv->y);
+        if (c)  mAnimated.color(*c);
+    };
+
+    for (const auto& sp : mCache) {
+        const bool skinned = sp.skin && !sp.joints.empty() && !sp.weights.empty();
+        // Find which skin this primitive uses (linear search over skins_count
+        // is fine — typical assets have <5 skins).
+        int skinIdx = -1;
+        if (skinned) {
+            for (cgltf_size s = 0; s < mData->skins_count; ++s) {
+                if (&mData->skins[s] == sp.skin) { skinIdx = static_cast<int>(s); break; }
+            }
+        }
+
+        // Transform helper for this primitive.
+        auto transformVertex = [&](size_t v, Vec3f& outP, Vec3f& outN) {
+            if (skinned && skinIdx >= 0) {
+                // Weighted sum of joint matrices applied to bind-pose vertex.
+                float blend[16] = {0};
+                const float* w = &sp.weights[v * 4];
+                const uint16_t* j = &sp.joints[v * 4];
+                for (int k = 0; k < 4; ++k) {
+                    if (w[k] <= 0.f) continue;
+                    if (j[k] >= mData->skins[skinIdx].joints_count) continue;
+                    const float* jm = &jointMatrices[skinIdx][j[k] * 16];
+                    for (int i = 0; i < 16; ++i) blend[i] += jm[i] * w[k];
+                }
+                mat4ApplyPosCM(blend, sp.positions[v], outP);
+                if (!sp.normals.empty()) mat4ApplyNrmCM(blend, sp.normals[v], outN);
+            } else {
+                // Rigid: apply owning node's world transform.
+                float xform[16];
+                cgltf_node_transform_world(sp.node, xform);
+                mat4ApplyPosCM(xform, sp.positions[v], outP);
+                if (!sp.normals.empty()) mat4ApplyNrmCM(xform, sp.normals[v], outN);
+            }
+        };
+
+        // Walk indices, emit triangles. We triangulate strip/fan into
+        // independent triangles to keep the al::Mesh primitive uniform.
+        const auto& idx = sp.indices;
+        const size_t idxCount = idx.size();
+        auto emit = [&](uint32_t v) {
+            Vec3f p, n;
+            transformVertex(v, p, n);
+            const Vec3f* np = sp.normals.empty() ? nullptr : &n;
+            const Vec2f* up = sp.uvs.empty()     ? nullptr : &sp.uvs[v];
+            const Color* cp = sp.colors.empty()  ? nullptr : &sp.colors[v];
+            append(p, np, up, cp);
+        };
+
+        if (sp.type == cgltf_primitive_type_triangles) {
+            for (size_t i = 0; i + 2 < idxCount; i += 3) {
+                emit(idx[i]); emit(idx[i + 1]); emit(idx[i + 2]);
+            }
+        } else if (sp.type == cgltf_primitive_type_triangle_strip) {
+            for (size_t i = 0; i + 2 < idxCount; ++i) {
+                if (i % 2 == 0) { emit(idx[i]);     emit(idx[i + 1]); emit(idx[i + 2]); }
+                else            { emit(idx[i + 1]); emit(idx[i]);     emit(idx[i + 2]); }
+            }
+        } else if (sp.type == cgltf_primitive_type_triangle_fan) {
+            if (idxCount >= 3) {
+                for (size_t i = 1; i + 1 < idxCount; ++i) {
+                    emit(idx[0]); emit(idx[i]); emit(idx[i + 1]);
+                }
+            }
+        }
+    }
 }
 
 void WebGLTF::load(const std::string& url) {

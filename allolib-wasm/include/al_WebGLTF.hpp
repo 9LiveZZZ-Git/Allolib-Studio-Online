@@ -183,6 +183,27 @@ private:
                                      std::vector<WebGLTFMaterial>* perMat);
     static void extractImages(const cgltf_data* data,
                               std::vector<WebGLTFImage>& out);
+    void buildSkinCache();
+    void rebuildAnimatedMesh();
+
+    /// Per-primitive bind-pose cache used for skin-weighted vertex
+    /// blending in sampleAnimation (M8.3b). Populated at parseAndRetain;
+    /// each entry holds the bind-pose vertex stream PLUS the JOINTS_0 /
+    /// WEIGHTS_0 attribute streams when the primitive is skinned.
+    /// Non-skinned primitives use `node` to apply the rigid world
+    /// transform; skinned primitives walk the joint-matrix table.
+    struct SkinnedPrim {
+        cgltf_node*       node = nullptr;
+        const cgltf_skin* skin = nullptr;
+        std::vector<Vec3f>    positions;
+        std::vector<Vec3f>    normals;
+        std::vector<Vec2f>    uvs;
+        std::vector<Color>    colors;
+        std::vector<uint16_t> joints;   // 4 per vertex (flattened)
+        std::vector<float>    weights;  // 4 per vertex (flattened)
+        std::vector<uint32_t> indices;  // empty if non-indexed
+        cgltf_primitive_type  type = cgltf_primitive_type_triangles;
+    };
 
     std::string                  mUrl;
     Mesh                         mCombined;
@@ -192,6 +213,7 @@ private:
     std::vector<WebGLTFImage>    mImages;
     std::vector<WebGLTFAnimation> mAnimations;  // M8.3 metadata
     std::vector<WebGLTFSkinInfo>  mSkins;       // M8.3 metadata
+    std::vector<SkinnedPrim>     mCache;        // M8.3b — bind-pose + skin attrs
     bool                         mReady = false;
     LoadCallback                 mCallback;
 
