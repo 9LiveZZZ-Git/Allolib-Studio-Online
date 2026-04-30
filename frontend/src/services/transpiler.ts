@@ -679,8 +679,27 @@ const webToNativePatterns: Array<{
 
 /**
  * Detect if code is native AlloLib or AlloLib Online
+ *
+ * Operates on a comment-stripped copy of the source so that marker
+ * strings inside doc comments (e.g. a comment that explains "→
+ * al_playground_compat.hpp provides WebControlGUI") don't push the
+ * code-type detector into the wrong branch. Without stripping, a
+ * vanilla AlloLib file with explanatory comments could be misclassified
+ * as "web", silently skipping the transpile step on Import Native and
+ * then failing to compile because al/ui/al_ControlGUI.hpp resolves to
+ * the upstream ImGui-dependent header.
  */
 export function detectCodeType(code: string): 'native' | 'web' | 'unknown' {
+  // Strip block + line comments before classification — same idea as
+  // scanAssetReferences. Doc-comment strings are not load-bearing.
+  const stripped = code
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+  // Reassign to the stripped form so all the includes() checks below
+  // operate on real code, not commentary.
+  // (Renamed locally to keep the rest of the function legible.)
+  // eslint-disable-next-line no-param-reassign
+  code = stripped
   // Check for web-specific markers
   if (code.includes('al_WebApp.hpp') ||
       code.includes('al_compat.hpp') ||
