@@ -43,12 +43,13 @@
 // class is complete here.
 #include "al/protocol/al_OSC.hpp"
 
-// M5.6 / phase 4: forward-declare WebParameterServer (ParameterServer
-// subclass that feeds ParameterRegistry — see al_web_parameter_server.hpp).
-// The parameterServer() accessor returns WebParameterServer& so user code's
-// `parameterServer() << p` finds the subclass's templated operator<<,
-// which mirrors into the registry.
-namespace al { class WebParameterServer; }
+// M5.6 / phase 4: WebParameterServer (ParameterServer subclass that feeds
+// ParameterRegistry). Full include rather than forward decl — user code's
+// `parameterServer() << p` requires the complete type for templated
+// operator<< overload resolution, and `parameterServer().print()` requires
+// member access. v0.7.4's forward-decl-only approach made user code that
+// did either fail to compile (M5/M5.4 hit this).
+#include "al_web_parameter_server.hpp"
 #include "al/io/al_Window.hpp"
 #include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
