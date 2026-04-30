@@ -215,7 +215,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.7.9"
+#define ALLOLIB_WASM_LIB_VERSION "0.7.10"
 
 void WebApp::start() {
     if (mRunning) return;

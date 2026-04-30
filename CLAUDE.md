@@ -126,6 +126,20 @@ The codebase is stable and comprehensively tested. All major features are comple
 
 ## Important Patterns
 
+### Parameter Pipeline Overview
+
+**`al::ParameterRegistry::global()`** (in `allolib-wasm/include/al_parameter_registry.hpp`) is the single source of truth for what shows up in the Vue Params panel. Three public APIs feed it — pick whichever matches the parameter's purpose:
+
+- `gui << p` — `WebControlGUI` route (display + Studio panel only).
+- `mPresets << p` — `WebPresetHandler` route (display + preset save/load).
+- `parameterServer() << p` — `WebParameterServer` route (display + OSC routing).
+
+All three call `ParameterRegistry::global().add(&p)` at registration time; the JS bridge (`al_webgui_*` C exports) reads only from the registry. The `ParameterRegistry::global()` API is **internal** — examples and helpers MUST use one of the three operator paths so the same source compiles unmodified against vanilla AlloLib.
+
+Native source pasted into the editor (`#include "al/ui/al_PresetHandler.hpp"` + bare `PresetHandler mPresets`) is auto-transpiled at compile time (see `frontend/src/stores/app.ts:preprocessForWasm`) so the `#define PresetHandler WebPresetHandler` macro fires and the registry is fed regardless of how the source landed.
+
+The registry clears on `WebApp::~WebApp()` so re-running an example doesn't show ghost parameters from the previous run. See `docs/PARAMETER_PIPELINE_PLAN.md` for the migration history (v0.7.0–v0.7.11) and rationale.
+
 ### Include Order (Critical)
 `allolib-wasm/include/` must come BEFORE `allolib/include/` to override headers.
 

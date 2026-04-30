@@ -3226,6 +3226,21 @@ presets << bundle;`,
     relatedTerms: ['Parameter', 'PresetHandler', 'BundleGUIManager'],
   },
   {
+    term: 'Parameter Registry',
+    category: 'concepts',
+    definition: 'Studio-Online-only singleton (`al::ParameterRegistry::global()`) that holds the canonical list of parameters shown in the Vue Params panel. Any of `gui << p`, `mPresets << p`, or `parameterServer() << p` registers `p` with the registry — pick the path that matches your parameter\'s purpose; all three work and feed the same list. The registry is **internal**: examples and helpers must use the three operator paths, not direct registry access, so the same source compiles unmodified against vanilla AlloLib. Cleared on `WebApp::~WebApp()` so re-running an example never shows ghost parameters.',
+    syntax: '// internal — use gui<<, mPresets<<, or parameterServer()<<',
+    example: `// All three paths register with the same ParameterRegistry:
+ControlGUI gui;            gui << amp;            // GUI display + panel
+PresetHandler mPresets;    mPresets << amp;       // preset save/load + panel
+parameterServer() << amp;                         // OSC + panel
+// Mix and match freely; pointer-dedup means the same Parameter*
+// added twice still shows up once in the panel.`,
+    platforms: ['web'],
+    webAlternative: 'Native AlloLib has no equivalent — each upstream registration path keeps its own list. The registry is the web-only unification that makes the Studio Params panel work regardless of which path the user chose.',
+    relatedTerms: ['Parameter', 'ControlGUI', 'PresetHandler', 'ParameterServer'],
+  },
+  {
     term: 'Composition',
     category: 'types',
     definition: 'Sequence of timed preset steps that plays back automatically. Pairs with PresetHandler to create scripted performances.',

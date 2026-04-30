@@ -297,10 +297,34 @@ export class AllolibRuntime {
               return
             }
             addDep('idbfs-presets-restore')
+            // v0.7.10: when the previous module's IndexedDB connection
+            // is still held (project-switch without page reload), a fresh
+            // syncfs(true) on the new module can hang indefinitely waiting
+            // for IDB. Without a safety timeout, Emscripten parks main()
+            // forever ("still waiting on run dependencies"). Bound the
+            // wait at 3s and proceed with an empty /presets — IDBFS
+            // overlay will catch up the next time the user stores a
+            // preset (writePresetMap → syncfs(false)). UX-wise this means
+            // the very first run after a project switch may not see
+            // restored preset files; subsequent runs are fine.
+            let resolved = false
+            const finish = (label: string) => {
+              if (resolved) return
+              resolved = true
+              try { removeDep('idbfs-presets-restore') } catch (_e) { /* already gone */ }
+              if (label) console.warn('[IDBFS] ' + label)
+            }
+            const timeoutId = setTimeout(() => {
+              finish('/presets restore timed out after 3s; proceeding without IDB overlay')
+            }, 3000)
             FS.syncfs(true, function(err: unknown) {
-              if (err) console.warn('[IDBFS] /presets restore failed:', err)
-              else console.log('[IDBFS] /presets restored from IndexedDB')
-              removeDep('idbfs-presets-restore')
+              clearTimeout(timeoutId)
+              if (err) {
+                finish('/presets restore failed: ' + String(err))
+              } else {
+                if (!resolved) console.log('[IDBFS] /presets restored from IndexedDB')
+                finish('')
+              }
             })
           } catch (e) {
             console.warn('[preRun] /presets setup failed:', e)

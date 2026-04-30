@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { submitCompilation, pollJobCompletion, cleanupJob, type ProjectFile, type BackendType } from '@/services/compiler'
+import { detectCodeType, transpileToWeb } from '@/services/transpiler'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
 function toAbsoluteUrl(url: string): string {
@@ -48,14 +49,38 @@ const autoLODPatterns: Array<{ pattern: RegExp; replacement: string | ((match: s
  * Preprocess code to ensure WebApp classes use ALLOLIB_WEB_MAIN macro
  * and apply Auto-LOD transformations for mesh draw calls.
  * This is required for WASM exports and automatic LOD to work correctly.
+ *
+ * v0.7.10 — auto-transpile native AlloLib source. Without this, pasting
+ * a native test file (M4_preset_full, etc.) with `#include
+ * "al/ui/al_PresetHandler.hpp"` + `PresetHandler mPresets` resolves to
+ * upstream's al::PresetHandler (base class, non-virtual operator<<),
+ * skipping WebPresetHandler's ParameterRegistry feed entirely. Result:
+ * the Vue panel sees zero params even though `mPresets << gain << ...`
+ * "succeeded" — it just push_back'd into upstream's mParameters and
+ * never touched our registry. Fixed by running transpileToWeb() at the
+ * compile boundary so every code path (paste, drag-in, examples menu,
+ * imported native) gets the al_playground_compat.hpp include + the
+ * `PresetHandler` macro before it hits Emscripten.
  */
 function preprocessForWasm(content: string): string {
-  // Check if this file uses WebApp
-  if (!content.includes('WebApp') && !content.includes('al_WebApp.hpp')) {
-    return content
+  let result = content
+
+  // v0.7.10: auto-transpile native code to web equivalents. Idempotent
+  // for code that's already web-form (transpileToWeb early-returns when
+  // detectCodeType is 'web' and main is already a macro). The editor
+  // source the user sees stays untouched — we transpile a copy on the
+  // way to the backend so round-trip with native is preserved at the
+  // editor level.
+  if (detectCodeType(result) === 'native') {
+    const transpiled = transpileToWeb(result)
+    result = transpiled.code
   }
 
-  let result = content
+  // After transpile, code uses WebApp. Skip the rest only if neither
+  // marker is present (e.g. a header with no WebApp at all).
+  if (!result.includes('WebApp') && !result.includes('al_WebApp.hpp')) {
+    return result
+  }
 
   // Apply Auto-LOD transformations: g.draw(mesh) -> drawLOD(g, mesh)
   // This enables automatic LOD for all mesh draw calls when Auto-LOD is enabled
