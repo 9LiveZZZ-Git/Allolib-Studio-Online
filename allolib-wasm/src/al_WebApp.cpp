@@ -33,13 +33,29 @@ static void ensurePresetIDBFSMounted() {
         try { FS.mkdir('/presets'); } catch (e) { /* exists */ }
         try {
             FS.mount(IDBFS, {}, '/presets');
-            FS.syncfs(true, function(err) {
-                if (err) console.warn('[IDBFS] /presets restore failed:', err);
-                else      console.log('[IDBFS] /presets restored from IndexedDB');
-            });
         } catch (e) {
             console.warn('[IDBFS] mount failed:', e);
+            return;
         }
+        // Pre-create a stub default.presetMap synchronously, BEFORE the
+        // user's PresetHandler ctor calls setCurrentPresetMap. Upstream
+        // checks File::exists on this path; if absent, it tries to write
+        // a default — that write races with FS.syncfs(true) populate and
+        // aborts. With the stub in place, exists() returns true and the
+        // auto-create branch is skipped. The async syncfs(true) below
+        // then overlays whatever's in IndexedDB; if a real presetMap was
+        // stored last session, the empty stub gets replaced.
+        try {
+            if (!FS.analyzePath('/presets/default.presetMap').exists) {
+                FS.writeFile('/presets/default.presetMap', '');
+            }
+        } catch (e) {
+            console.warn('[IDBFS] presetMap stub failed:', e);
+        }
+        FS.syncfs(true, function(err) {
+            if (err) console.warn('[IDBFS] /presets restore failed:', err);
+            else      console.log('[IDBFS] /presets restored from IndexedDB');
+        });
     });
 }
 #endif
@@ -221,7 +237,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.6.2"
+#define ALLOLIB_WASM_LIB_VERSION "0.6.3"
 
 void WebApp::start() {
     if (mRunning) return;
