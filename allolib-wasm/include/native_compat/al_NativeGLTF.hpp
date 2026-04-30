@@ -34,6 +34,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -77,6 +78,18 @@ struct WebGLTFImage {
     std::vector<uint8_t> bytes;
     std::string mimeType;
     std::string name;
+};
+
+struct WebGLTFAnimation {
+    std::string name;
+    float duration = 0.0f;
+    size_t channelCount = 0;
+};
+
+struct WebGLTFSkinInfo {
+    std::string name;
+    size_t jointCount = 0;
+    int skeletonRoot = -1;
 };
 
 // ─── WebGLTF (native impl) ────────────────────────────────────────────────
@@ -127,11 +140,40 @@ public:
         mPrimitives.clear();
         mMaterials.clear();
         mImages.clear();
+        mAnimations.clear();
+        mSkins.clear();
         bool ok = extractAllPrimitives(mData, mCombined, &mPrimitives, &mMaterials);
         extractImages(mData, mImages);
+
+        for (cgltf_size i = 0; i < mData->animations_count; ++i) {
+            const cgltf_animation* a = &mData->animations[i];
+            WebGLTFAnimation info;
+            if (a->name) info.name = a->name;
+            info.channelCount = a->channels_count;
+            for (cgltf_size s = 0; s < a->samplers_count; ++s) {
+                const cgltf_accessor* in = a->samplers[s].input;
+                if (in && in->has_max && in->count > 0)
+                    info.duration = std::max(info.duration, in->max[0]);
+            }
+            mAnimations.push_back(std::move(info));
+        }
+        for (cgltf_size i = 0; i < mData->skins_count; ++i) {
+            const cgltf_skin* s = &mData->skins[i];
+            WebGLTFSkinInfo info;
+            if (s->name) info.name = s->name;
+            info.jointCount = s->joints_count;
+            info.skeletonRoot = s->skeleton ? static_cast<int>(s->skeleton - mData->nodes) : -1;
+            mSkins.push_back(std::move(info));
+        }
+
+        mAnimated.reset();
+        mAnimated.primitive(Mesh::TRIANGLES);
+        mAnimated.copy(mCombined);
+
         mReady = ok;
-        std::printf("[WebGLTF] extracted: %zu primitives, %zu materials, %zu images\n",
-                    mPrimitives.size(), mMaterials.size(), mImages.size());
+        std::printf("[WebGLTF] extracted: %zu primitives, %zu materials, %zu images, %zu animations, %zu skins\n",
+                    mPrimitives.size(), mMaterials.size(), mImages.size(),
+                    mAnimations.size(), mSkins.size());
         return ok;
     }
 
@@ -171,6 +213,92 @@ public:
 
     size_t imageCount() const { return mImages.size(); }
     const WebGLTFImage& image(size_t i) const { return mImages.at(i); }
+
+    size_t animationCount() const { return mAnimations.size(); }
+    const WebGLTFAnimation& animation(size_t i) const { return mAnimations.at(i); }
+    size_t skinCount() const { return mSkins.size(); }
+    const WebGLTFSkinInfo& skin(size_t i) const { return mSkins.at(i); }
+
+    void sampleAnimation(size_t animIdx, float time) {
+        if (!mData || animIdx >= mData->animations_count) return;
+        const cgltf_animation* anim = &mData->animations[animIdx];
+        if (mAnimations[animIdx].duration > 0.f) {
+            time = std::fmod(time, mAnimations[animIdx].duration);
+            if (time < 0.f) time += mAnimations[animIdx].duration;
+        }
+        for (cgltf_size c = 0; c < anim->channels_count; ++c) {
+            const cgltf_animation_channel* ch = &anim->channels[c];
+            if (!ch->target_node || !ch->sampler) continue;
+            const cgltf_animation_sampler* sampler = ch->sampler;
+            if (!sampler->input || !sampler->output) continue;
+            cgltf_size n = sampler->input->count;
+            if (n == 0) continue;
+            auto readT = [&](cgltf_size i) {
+                float v = 0.f; cgltf_accessor_read_float(sampler->input, i, &v, 1); return v;
+            };
+            cgltf_size i0 = 0, i1 = 0; float u = 0.f;
+            if (time <= readT(0))     { i0 = i1 = 0; }
+            else if (time >= readT(n - 1)) { i0 = i1 = n - 1; }
+            else {
+                for (cgltf_size i = 0; i + 1 < n; ++i) {
+                    float t0 = readT(i), t1 = readT(i + 1);
+                    if (time >= t0 && time <= t1) {
+                        float dt = t1 - t0;
+                        u = dt > 1e-9f ? (time - t0) / dt : 0.f;
+                        i0 = i; i1 = i + 1; break;
+                    }
+                }
+            }
+            cgltf_node* node = ch->target_node;
+            switch (ch->target_path) {
+                case cgltf_animation_path_type_translation: {
+                    float a[3], b[3];
+                    cgltf_accessor_read_float(sampler->output, i0, a, 3);
+                    cgltf_accessor_read_float(sampler->output, i1, b, 3);
+                    for (int k = 0; k < 3; ++k) node->translation[k] = a[k] + (b[k] - a[k]) * u;
+                    node->has_translation = 1;
+                    break;
+                }
+                case cgltf_animation_path_type_rotation: {
+                    float a[4], b[4];
+                    cgltf_accessor_read_float(sampler->output, i0, a, 4);
+                    cgltf_accessor_read_float(sampler->output, i1, b, 4);
+                    float dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+                    if (dot < 0.f) { for (int k = 0; k < 4; ++k) b[k] = -b[k]; dot = -dot; }
+                    float r[4];
+                    if (dot > 0.9995f) {
+                        for (int k = 0; k < 4; ++k) r[k] = a[k] + (b[k] - a[k]) * u;
+                    } else {
+                        float th = std::acos(dot);
+                        float s = std::sin(th);
+                        float wA = std::sin((1 - u) * th) / s;
+                        float wB = std::sin(u * th) / s;
+                        for (int k = 0; k < 4; ++k) r[k] = a[k] * wA + b[k] * wB;
+                    }
+                    float n2 = std::sqrt(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]+r[3]*r[3]);
+                    if (n2 > 1e-9f) for (int k = 0; k < 4; ++k) r[k] /= n2;
+                    for (int k = 0; k < 4; ++k) node->rotation[k] = r[k];
+                    node->has_rotation = 1;
+                    break;
+                }
+                case cgltf_animation_path_type_scale: {
+                    float a[3], b[3];
+                    cgltf_accessor_read_float(sampler->output, i0, a, 3);
+                    cgltf_accessor_read_float(sampler->output, i1, b, 3);
+                    for (int k = 0; k < 3; ++k) node->scale[k] = a[k] + (b[k] - a[k]) * u;
+                    node->has_scale = 1;
+                    break;
+                }
+                default: break;
+            }
+            node->has_matrix = 0;
+        }
+        mAnimated.reset();
+        mAnimated.primitive(Mesh::TRIANGLES);
+        extractAllPrimitives(mData, mAnimated, nullptr, nullptr);
+    }
+
+    const Mesh& animatedMesh() const { return mAnimated; }
 
 private:
     // ─── extraction helpers (mirror al_WebGLTF.cpp logic line-for-line) ───
@@ -408,9 +536,12 @@ private:
 
     std::string                  mUrl;
     Mesh                         mCombined;
+    Mesh                         mAnimated;
     std::vector<Mesh>            mPrimitives;
     std::vector<WebGLTFMaterial> mMaterials;
     std::vector<WebGLTFImage>    mImages;
+    std::vector<WebGLTFAnimation> mAnimations;
+    std::vector<WebGLTFSkinInfo>  mSkins;
     bool                         mReady = false;
     LoadCallback                 mCallback;
     cgltf_data*                  mData = nullptr;

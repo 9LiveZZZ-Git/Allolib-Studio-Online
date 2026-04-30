@@ -49,8 +49,9 @@ const LEGACY_FILENAME_KEY = 'allolib-filename'
 // modal correctly marks references as "bundled" instead of "missing".
 const BUNDLED_ASSETS = new Map<string, string>([
   // Meshes
-  ['Box.glb',     '/assets/meshes/Box.glb'],
-  ['Duck.glb',    '/assets/meshes/Duck.glb'],
+  ['Box.glb',           '/assets/meshes/Box.glb'],
+  ['Duck.glb',          '/assets/meshes/Duck.glb'],
+  ['RiggedSimple.glb',  '/assets/meshes/RiggedSimple.glb'],
   ['bunny.obj',   '/assets/meshes/bunny.obj'],
   ['spot.obj',    '/assets/meshes/spot.obj'],
   ['suzanne.obj', '/assets/meshes/suzanne.obj'],

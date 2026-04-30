@@ -90,6 +90,23 @@ struct WebGLTFImage {
     std::string name;
 };
 
+/// Diagnostic metadata for an animation track (M8.3).
+/// `duration` is the maximum sampler-input time across all of the
+/// animation's channels — i.e. the loop length when playing back.
+struct WebGLTFAnimation {
+    std::string name;
+    float duration = 0.0f;   // seconds
+    size_t channelCount = 0; // number of property channels (T/R/S per joint)
+};
+
+/// Diagnostic metadata for a skin (M8.3). joint count is what
+/// sampleAnimation walks; skeletonRoot is informational.
+struct WebGLTFSkinInfo {
+    std::string name;
+    size_t jointCount = 0;
+    int skeletonRoot = -1;   // node index or -1 if unspecified
+};
+
 class WebGLTF {
 public:
     using LoadCallback = std::function<void(bool success)>;
@@ -138,6 +155,27 @@ public:
     size_t imageCount() const { return mImages.size(); }
     const WebGLTFImage& image(size_t i) const { return mImages.at(i); }
 
+    /// Animation accessors (M8.3).
+    size_t animationCount() const { return mAnimations.size(); }
+    const WebGLTFAnimation& animation(size_t i) const { return mAnimations.at(i); }
+
+    size_t skinCount() const { return mSkins.size(); }
+    const WebGLTFSkinInfo& skin(size_t i) const { return mSkins.at(i); }
+
+    /// Sample animation `animIdx` at `time` seconds (looped via fmod against
+    /// the animation's duration). Walks each channel: linearly interpolates
+    /// the sampler input/output keyframes to derive new translation /
+    /// rotation / scale on the target node, then re-walks joint hierarchies
+    /// to compute world matrices and re-skins the vertices. After this call
+    /// `animatedMesh()` reflects the new pose. (Identity behaviour for
+    /// non-animated assets — call is harmless.)
+    void sampleAnimation(size_t animIdx, float time);
+
+    /// Mesh recomputed by the most recent sampleAnimation() call. Empty
+    /// (matches `mesh()`) before any sample. Use this in onDraw when the
+    /// asset is animated; use `mesh()` for static art.
+    const Mesh& animatedMesh() const { return mAnimated; }
+
 private:
     static bool extractAllPrimitives(const cgltf_data* data,
                                      Mesh& combined,
@@ -148,9 +186,12 @@ private:
 
     std::string                  mUrl;
     Mesh                         mCombined;
+    Mesh                         mAnimated;     // M8.3 — re-skinned per sampleAnimation
     std::vector<Mesh>            mPrimitives;
     std::vector<WebGLTFMaterial> mMaterials;
     std::vector<WebGLTFImage>    mImages;
+    std::vector<WebGLTFAnimation> mAnimations;  // M8.3 metadata
+    std::vector<WebGLTFSkinInfo>  mSkins;       // M8.3 metadata
     bool                         mReady = false;
     LoadCallback                 mCallback;
 

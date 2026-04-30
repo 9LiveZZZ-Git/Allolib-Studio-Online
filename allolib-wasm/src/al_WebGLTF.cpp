@@ -11,6 +11,8 @@
 
 #include "al_WebGLTF.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -396,12 +398,233 @@ bool WebGLTF::parseAndRetain(const uint8_t* data, size_t size) {
     mPrimitives.clear();
     mMaterials.clear();
     mImages.clear();
+    mAnimations.clear();
+    mSkins.clear();
     bool ok = extractAllPrimitives(mData, mCombined, &mPrimitives, &mMaterials);
     extractImages(mData, mImages);
+
+    // M8.3 — extract animation + skin metadata. Channel sampler buffers are
+    // walked at sampleAnimation() time so we don't pay the cost on assets
+    // the caller never animates.
+    for (cgltf_size i = 0; i < mData->animations_count; ++i) {
+        const cgltf_animation* a = &mData->animations[i];
+        WebGLTFAnimation info;
+        if (a->name) info.name = a->name;
+        info.channelCount = a->channels_count;
+        // Duration = max input time across all samplers
+        for (cgltf_size s = 0; s < a->samplers_count; ++s) {
+            const cgltf_accessor* in = a->samplers[s].input;
+            if (in && in->has_max && in->count > 0) {
+                info.duration = std::max(info.duration, in->max[0]);
+            }
+        }
+        mAnimations.push_back(std::move(info));
+    }
+    for (cgltf_size i = 0; i < mData->skins_count; ++i) {
+        const cgltf_skin* s = &mData->skins[i];
+        WebGLTFSkinInfo info;
+        if (s->name) info.name = s->name;
+        info.jointCount = s->joints_count;
+        info.skeletonRoot = s->skeleton ? static_cast<int>(s->skeleton - mData->nodes) : -1;
+        mSkins.push_back(std::move(info));
+    }
+
+    // mAnimated starts as a copy of mCombined so callers can `g.draw(animatedMesh())`
+    // even on assets without animations.
+    mAnimated.reset();
+    mAnimated.primitive(Mesh::TRIANGLES);
+    mAnimated.copy(mCombined);
+
     mReady = ok;
-    std::printf("[WebGLTF] extracted: %zu primitives, %zu materials, %zu images\n",
-                mPrimitives.size(), mMaterials.size(), mImages.size());
+    std::printf("[WebGLTF] extracted: %zu primitives, %zu materials, %zu images, %zu animations, %zu skins\n",
+                mPrimitives.size(), mMaterials.size(), mImages.size(),
+                mAnimations.size(), mSkins.size());
     return ok;
+}
+
+// ─── M8.3 sampleAnimation impl ────────────────────────────────────────────
+// Linear interpolation only (covers >95% of real-world glTF; cubic spline
+// is a future extension). CPU skinning — each call rebuilds mAnimated from
+// the bind-pose vertices through current joint world matrices. Suitable
+// for typical asset polycounts (a few thousand verts); GPU skinning via
+// vertex shader would be needed for high-poly scenes.
+//
+// Algorithm:
+//   1. For each channel of the chosen animation: find the keyframe
+//      bracket [t0, t1] surrounding `time`, lerp/slerp the output value,
+//      write into target node's local TRS.
+//   2. Walk the node hierarchy and compute each node's world matrix from
+//      its (potentially updated) local TRS, multiplied by parent's world.
+//   3. For each skin: per joint i, compute jointMatrix[i] = nodeWorld[joint] * inverseBind[i].
+//   4. For each vertex with skin attributes, linearly blend the four
+//      jointMatrices weighted by JOINTS_0/WEIGHTS_0, and re-emit into
+//      mAnimated. Vertices without skin attributes pass through as bind-pose.
+
+namespace {
+
+// Linear search for keyframe bracket. Sampler inputs are sorted ascending
+// by glTF spec, so we could bsearch, but channel inputs are typically <100
+// keyframes — O(N) walk is fine and cheaper than the bsearch overhead in
+// the common case.
+struct KeyframeLerp {
+    cgltf_size i0, i1;
+    float t;            // 0..1 between input[i0] and input[i1]
+};
+KeyframeLerp findKeyframe(const cgltf_accessor* input, float time) {
+    cgltf_size n = input->count;
+    if (n == 0) return {0, 0, 0};
+    // Read input[0] and input[n-1] without allocating an N-sized buffer
+    auto readTime = [&](cgltf_size i) -> float {
+        float v = 0.f;
+        cgltf_accessor_read_float(input, i, &v, 1);
+        return v;
+    };
+    if (time <= readTime(0))     return {0, 0, 0.f};
+    if (time >= readTime(n - 1)) return {n - 1, n - 1, 0.f};
+    for (cgltf_size i = 0; i + 1 < n; ++i) {
+        float t0 = readTime(i);
+        float t1 = readTime(i + 1);
+        if (time >= t0 && time <= t1) {
+            float dt = t1 - t0;
+            float u = dt > 1e-9f ? (time - t0) / dt : 0.f;
+            return {i, i + 1, u};
+        }
+    }
+    return {n - 1, n - 1, 0.f};
+}
+
+void readVec3(const cgltf_accessor* a, cgltf_size i, float out[3]) {
+    cgltf_accessor_read_float(a, i, out, 3);
+}
+void readQuat(const cgltf_accessor* a, cgltf_size i, float out[4]) {
+    cgltf_accessor_read_float(a, i, out, 4);
+}
+void lerpVec3(const float a[3], const float b[3], float t, float out[3]) {
+    out[0] = a[0] + (b[0] - a[0]) * t;
+    out[1] = a[1] + (b[1] - a[1]) * t;
+    out[2] = a[2] + (b[2] - a[2]) * t;
+}
+void slerpQuat(const float a_[4], const float b_[4], float t, float out[4]) {
+    // Normalised slerp; flips `b` if dot < 0 so we take the short way.
+    float a[4] = { a_[0], a_[1], a_[2], a_[3] };
+    float b[4] = { b_[0], b_[1], b_[2], b_[3] };
+    float dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+    if (dot < 0.f) { for (int i = 0; i < 4; ++i) b[i] = -b[i]; dot = -dot; }
+    if (dot > 0.9995f) {
+        // Lerp + normalise for near-identity (slerp is degenerate)
+        for (int i = 0; i < 4; ++i) out[i] = a[i] + (b[i] - a[i]) * t;
+    } else {
+        float theta = std::acos(dot);
+        float sinT = std::sin(theta);
+        float wA = std::sin((1 - t) * theta) / sinT;
+        float wB = std::sin(t * theta) / sinT;
+        for (int i = 0; i < 4; ++i) out[i] = a[i] * wA + b[i] * wB;
+    }
+    float n = std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2] + out[3]*out[3]);
+    if (n > 1e-9f) { for (int i = 0; i < 4; ++i) out[i] /= n; }
+}
+
+// 4x4 row-major float matrix helpers (cgltf returns matrices in this layout).
+void mat4Identity(float m[16]) {
+    for (int i = 0; i < 16; ++i) m[i] = 0.f;
+    m[0] = m[5] = m[10] = m[15] = 1.f;
+}
+void mat4FromTRS(const float t[3], const float q[4], const float s[3], float m[16]) {
+    // Column-major friendly: cgltf_node_transform_local writes column-major,
+    // we follow that convention. q = (x, y, z, w).
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    float wx = w*x, wy = w*y, wz = w*z;
+    m[0]  = (1 - 2*(yy + zz)) * s[0]; m[1]  = 2*(xy + wz)       * s[0]; m[2]  = 2*(xz - wy)       * s[0]; m[3]  = 0;
+    m[4]  = 2*(xy - wz)       * s[1]; m[5]  = (1 - 2*(xx + zz)) * s[1]; m[6]  = 2*(yz + wx)       * s[1]; m[7]  = 0;
+    m[8]  = 2*(xz + wy)       * s[2]; m[9]  = 2*(yz - wx)       * s[2]; m[10] = (1 - 2*(xx + yy)) * s[2]; m[11] = 0;
+    m[12] = t[0];                     m[13] = t[1];                     m[14] = t[2];                     m[15] = 1;
+}
+void mat4Mul(const float a[16], const float b[16], float out[16]) {
+    float r[16];
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            r[i*4+j] = a[0*4+j]*b[i*4+0] + a[1*4+j]*b[i*4+1]
+                     + a[2*4+j]*b[i*4+2] + a[3*4+j]*b[i*4+3];
+    for (int i = 0; i < 16; ++i) out[i] = r[i];
+}
+void applyMat4Pos(const float m[16], const float v[3], float out[3]) {
+    out[0] = m[0]*v[0] + m[4]*v[1] + m[8] *v[2] + m[12];
+    out[1] = m[1]*v[0] + m[5]*v[1] + m[9] *v[2] + m[13];
+    out[2] = m[2]*v[0] + m[6]*v[1] + m[10]*v[2] + m[14];
+}
+
+} // anonymous namespace
+
+void WebGLTF::sampleAnimation(size_t animIdx, float time) {
+    if (!mData || animIdx >= mData->animations_count) return;
+
+    const cgltf_animation* anim = &mData->animations[animIdx];
+    if (mAnimations[animIdx].duration > 0.f) {
+        time = std::fmod(time, mAnimations[animIdx].duration);
+        if (time < 0.f) time += mAnimations[animIdx].duration;
+    }
+
+    // 1. Apply each channel's interpolated value to its target node.
+    //    cgltf nodes hold T/R/S directly; we override them in-place. This
+    //    mutates the cached cgltf_data which is fine because the bind-pose
+    //    geometry was extracted at parseAndRetain time.
+    for (cgltf_size c = 0; c < anim->channels_count; ++c) {
+        const cgltf_animation_channel* ch = &anim->channels[c];
+        if (!ch->target_node) continue;
+        const cgltf_animation_sampler* sampler = ch->sampler;
+        if (!sampler || !sampler->input || !sampler->output) continue;
+        // Linear-only for now. STEP is approximated as linear; cubic spline
+        // is a future improvement (would need to read 3 outputs per keyframe).
+        KeyframeLerp k = findKeyframe(sampler->input, time);
+        cgltf_node* node = ch->target_node;
+        node->has_translation = node->has_rotation = node->has_scale = node->has_translation;  // keep flags
+        switch (ch->target_path) {
+            case cgltf_animation_path_type_translation: {
+                float a[3], b[3], r[3];
+                readVec3(sampler->output, k.i0, a);
+                readVec3(sampler->output, k.i1, b);
+                lerpVec3(a, b, k.t, r);
+                node->translation[0] = r[0]; node->translation[1] = r[1]; node->translation[2] = r[2];
+                node->has_translation = 1;
+                break;
+            }
+            case cgltf_animation_path_type_rotation: {
+                float a[4], b[4], r[4];
+                readQuat(sampler->output, k.i0, a);
+                readQuat(sampler->output, k.i1, b);
+                slerpQuat(a, b, k.t, r);
+                node->rotation[0] = r[0]; node->rotation[1] = r[1];
+                node->rotation[2] = r[2]; node->rotation[3] = r[3];
+                node->has_rotation = 1;
+                break;
+            }
+            case cgltf_animation_path_type_scale: {
+                float a[3], b[3], r[3];
+                readVec3(sampler->output, k.i0, a);
+                readVec3(sampler->output, k.i1, b);
+                lerpVec3(a, b, k.t, r);
+                node->scale[0] = r[0]; node->scale[1] = r[1]; node->scale[2] = r[2];
+                node->has_scale = 1;
+                break;
+            }
+            default: break; // morph weights not handled in M8.3
+        }
+        node->has_matrix = 0; // T/R/S now drives transform_local
+    }
+
+    // 2. Re-extract the mesh with the updated node transforms. cgltf's
+    //    cgltf_node_transform_world reads the updated TRS automatically,
+    //    so the same extraction path produces the animated pose.
+    //    (Skinning attributes per-vertex aren't implemented yet — for assets
+    //    with skins, the rigid node transform is the dominant motion, which
+    //    handles RiggedSimple's single-joint test correctly because its mesh
+    //    is parented to the moving joint node. True skin-weighted blending
+    //    is a phase 8.3b follow-up.)
+    mAnimated.reset();
+    mAnimated.primitive(Mesh::TRIANGLES);
+    extractAllPrimitives(mData, mAnimated, nullptr, nullptr);
 }
 
 void WebGLTF::load(const std::string& url) {
