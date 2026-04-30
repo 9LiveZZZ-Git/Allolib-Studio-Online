@@ -62,8 +62,371 @@ export const mat200bCategories: ExampleCategory[] = [
   },
 ]
 
-// Phase 2 fills this with real C++ entries. Skeleton remains empty.
-export const mat200bExamples: Example[] = []
+// Phase 2 fills this with real C++ entries.
+export const mat200bExamples: Example[] = [
+  // ──────────────────────────────────────────────────────────────────────────
+  //  Phase 1 acceptance test (per MAT200B_EXAMPLES_PLAN.md § 5 Phase 1):
+  //  one binary that exercises every helper in `_studio_shared/` plus
+  //  `gam::HRFilter`. Validates that all nine headers compile cleanly
+  //  through compile.sh + libal_web.a and run at 60 FPS @ 1280x800.
+  //  Visual coherence is secondary; coverage is the point.
+  // ──────────────────────────────────────────────────────────────────────────
+  {
+    id: 'mat-phase1-acceptance',
+    title: 'MAT200B Phase 1 — Helper Acceptance Demo',
+    description:
+      'Kitchen-sink validator: instantiates every cross-cutting helper (audio_features, automation, draw_canvas, param_graph, pickable, pixel_audio_bridge, post_fx, pv_resynth, web_convolver) plus gam::HRFilter in one App. If this builds + runs at 60 FPS, Phase 1 is acceptance-tested.',
+    category: 'mat-visualmusic',
+    subcategory: 'mappers',
+    code: `/**
+ * MAT200B Phase 1 — Helper Acceptance Demo
+ *
+ * One App, all nine helpers + gam::HRFilter referenced and exercised
+ * each frame. Not pretty — coverage is the point.
+ *
+ *   audio_features    -> RMS / centroid meter (top-left numeric overlay)
+ *   automation        -> lane recording the synth freq parameter
+ *   draw_canvas       -> mouse-driven scribble canvas
+ *   param_graph       -> tick() each frame (graph empty by default)
+ *   pickable          -> one draggable sphere handle
+ *   pixel_audio_bridge-> RMS written as a pixel; row read back
+ *   post_fx           -> phosphor + vignette on the whole frame
+ *   pv_resynth        -> analyze + resynth a chunk of synth audio
+ *   web_convolver     -> identity-IR convolution (passthrough sanity)
+ *   gam::HRFilter     -> stereo placement of the synth voice
+ *
+ * Watching for: compile clean, no GL errors, frame budget under 16.6 ms
+ * at 1280x800 (60 FPS gate).
+ */
+
+#include "al_playground_compat.hpp"
+
+#include "_studio_shared/audio_features.hpp"
+#include "_studio_shared/automation.hpp"
+#include "_studio_shared/draw_canvas.hpp"
+#include "_studio_shared/param_graph.hpp"
+#include "_studio_shared/pickable.hpp"
+#include "_studio_shared/pixel_audio_bridge.hpp"
+#include "_studio_shared/post_fx.hpp"
+#include "_studio_shared/pv_resynth.hpp"
+#include "_studio_shared/web_convolver.hpp"
+
+#include "Gamma/HRFilter.h"
+#include "Gamma/Oscillator.h"
+
+#include <atomic>
+#include <vector>
+
+using namespace al;
+
+class Phase1Demo : public App {
+public:
+  Parameter freq      {"freq",      "", 440.f, 50.f, 2000.f};
+  Parameter amp       {"amp",       "", 0.20f, 0.f, 1.f};
+  Parameter sourceX   {"sourceX",   "", 1.0f, -3.f, 3.f};
+  Parameter persist   {"persistence","", 0.90f, 0.5f, 0.99f};
+  Trigger   recAuto   {"recordAutomation", ""};
+
+  ControlGUI gui;
+
+  // Audio
+  gam::Sine<>          osc;
+  gam::HRFilter<float> hrf;
+
+  // Helpers (one of each)
+  studio::AudioFeatureExtractor af{1024, 256, 44100.f};
+  studio::AutomationLane        autoLane{freq};
+  studio::DrawCanvas            canvas;
+  studio::ParamGraph            graph;
+  studio::Pickable              handle;
+  studio::PixelAudioBridge      pixBridge{64, 64};
+  studio::PostFXChain           fx;
+  studio::PVResynth             pv{1024, 256, 44100.f};
+  studio::WebConvolver          conv;
+
+  // Audio -> graphics handoff: one block of audio so pv_resynth has fuel.
+  std::vector<float>  audioBlock;
+  std::atomic<int>    blockReady{0};
+
+  // Latest features for the overlay
+  studio::FeatureFrame latest{};
+
+  // Identity IR for the convolver (1.f at sample 0, zeros elsewhere).
+  std::vector<float>  identityIR;
+
+  void onInit() override {
+    gui << freq << amp << sourceX << persist << recAuto;
+
+    // Identity IR: passthrough convolution sanity check.
+    identityIR.assign(64, 0.f);
+    identityIR[0] = 1.f;
+    conv.setBlockSize(128);
+    conv.loadIR(identityIR.data(), static_cast<int>(identityIR.size()));
+
+    // Plumb the trigger to the automation lane so a click toggles record.
+    recAuto.registerChangeCallback([this](float) {
+      if (autoLane.isRecording()) autoLane.stopRecording();
+      else                        autoLane.startRecording();
+    });
+
+    audioBlock.assign(256, 0.f);
+  }
+
+  void onCreate() override {
+    gui.init();
+    fx.init(width(), height());
+    fx.push(studio::FX::Phosphor, 0.90f);
+    fx.push(studio::FX::Vignette, 0.35f);
+
+    canvas.clear();
+    handle.setPose(Pose(Vec3f(0.6f, 0.f, 0.f)));
+
+    nav().pos(0, 0, 3.5f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    osc.freq(freq.get());
+    hrf.pos(sourceX.get(), 0.f, 0.f);
+
+    int n = 0;
+    while (io()) {
+      const float s = osc() * amp.get();
+      // HRTF stereo placement
+      float l = 0.f, r = 0.f;
+      hrf(s, l, r);
+      io.out(0) = l;
+      io.out(1) = r;
+
+      // Capture mono into our audio buffer for pv_resynth + features.
+      if (n < static_cast<int>(audioBlock.size())) audioBlock[n++] = s;
+    }
+    af.processBlock(audioBlock.data(), n);
+    blockReady.store(1, std::memory_order_release);
+  }
+
+  void onAnimate(double dt) override {
+    fx.setUniform(studio::FX::Phosphor, "uDecay", persist.get());
+
+    // Drain the latest features each frame.
+    af.latest(latest);
+
+    // pv_resynth: analyze + resynth one block (we don't render it, just
+    // exercise the path so any latent gam::STFT issue surfaces).
+    if (blockReady.exchange(0, std::memory_order_acquire)) {
+      std::vector<float> tmp(audioBlock.size(), 0.f);
+      pv.analyze(audioBlock.data(),  static_cast<int>(audioBlock.size()));
+      pv.resynthesize(tmp.data(),    static_cast<int>(tmp.size()));
+
+      // Feed through the identity convolver — output should match input.
+      std::vector<float> convOut(audioBlock.size(), 0.f);
+      conv.process(audioBlock.data(), convOut.data(),
+                   static_cast<int>(audioBlock.size()));
+
+      // pixel_audio_bridge: encode RMS as a pixel; round-trip via readRow.
+      const uint8_t v = static_cast<uint8_t>(latest.rms * 255.f);
+      pixBridge.writePixel(0, 0, v, v, v, 255);
+      std::vector<uint8_t> row(64 * 4);
+      pixBridge.readRow(0, row.data());
+    }
+
+    // automation lane tick — records freq's live value or plays it back.
+    autoLane.tick(static_cast<float>(dt));
+
+    // param_graph tick (empty graph, no-op but exercises the helper).
+    graph.tick(static_cast<float>(dt));
+  }
+
+  void onDraw(Graphics& g) override {
+    fx.beginCapture();
+      g.clear(0.04f, 0.04f, 0.06f);
+
+      // Draw canvas strokes
+      g.color(0.6f, 0.9f, 1.0f);
+      canvas.draw(g);
+
+      // Pickable handle as a small marker
+      g.pushMatrix();
+        g.translate(handle.pose().pos());
+        g.color(1.0f, 0.5f, 0.2f);
+        Mesh m;
+        addSphere(m, 0.08f);
+        g.draw(m);
+      g.popMatrix();
+
+      // RMS bar (audio_features feedback)
+      g.pushMatrix();
+        g.translate(-1.4f, -0.9f, 0.f);
+        g.scale(0.05f + latest.rms * 2.5f, 0.05f, 1.f);
+        g.color(0.3f, 1.0f, 0.4f);
+        Mesh bar;
+        addRect(bar, 1.f, 1.f);
+        g.draw(bar);
+      g.popMatrix();
+    fx.endCaptureAndRender(g);
+
+    gui.draw(g);
+  }
+
+  void onMouseDown(const Mouse& m) override {
+    canvas.onMouseDown(m, width(), height());
+    handle.onMouseDown(m, lens(), nav(), width(), height());
+  }
+  void onMouseDrag(const Mouse& m) override {
+    canvas.onMouseDrag(m, width(), height());
+    handle.onMouseDrag(m, lens(), nav(), width(), height());
+  }
+  void onMouseUp(const Mouse& m) override {
+    canvas.onMouseUp(m, width(), height());
+    handle.onMouseUp(m, lens(), nav(), width(), height());
+  }
+  void onResize(int w, int h) override { fx.resize(w, h); }
+};
+
+ALLOLIB_WEB_MAIN(Phase1Demo)
+`,
+  },
+  {
+    id: 'mat-lissajous',
+    title: 'Lissajous Oscilloscope Synth',
+    description:
+      'Two-oscillator XY scope with phosphor decay. Drag freqX/freqY to draw classic Lissajous figures; the persistence param controls how long the trace lingers (CRT-style afterglow). Validates the audio→graphics ringbuffer + post_fx (phosphor / bloom / vignette) chain.',
+    category: 'mat-visualmusic',
+    subcategory: 'image-as-sound',
+    code: `/**
+ * Lissajous Oscilloscope Synth — MAT200B Phase 2 #1
+ *
+ * Two sine oscillators feed the stereo output AND a 4096-sample
+ * ringbuffer. Each frame the graphics thread snapshots the ring
+ * and rebuilds an al::Mesh of LINE_STRIP vertices in (X,Y) space.
+ * The PostFXChain applies CRT phosphor decay + bloom + vignette
+ * so the trace persists like an analog oscilloscope.
+ *
+ * Parameters appear in the Studio Params panel automatically via
+ * the unified parameter pipeline (gui << p feeds ParameterRegistry).
+ *
+ * Knobs:
+ *   freqX / freqY   - oscillator frequencies (50..2000 Hz)
+ *   amplitude       - output level (0..1)
+ *   persistence     - phosphor decay (0.5 = fast, 0.99 = ghosts forever)
+ *   glow            - bloom strength (0..2)
+ *   reset           - clear the ringbuffer trace
+ */
+
+#include "al_playground_compat.hpp"
+#include "_studio_shared/post_fx.hpp"
+
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+
+using namespace al;
+
+class Lissajous : public App {
+public:
+  // -- Parameters ---------------------------------------------------------
+  Parameter      freqX      {"freqX",       "", 220.0f, 50.0f,  2000.0f};
+  Parameter      freqY      {"freqY",       "", 330.0f, 50.0f,  2000.0f};
+  Parameter      amplitude  {"amplitude",   "", 0.30f,  0.0f,   1.0f};
+  Parameter      persistence{"persistence", "", 0.92f,  0.50f,  0.995f};
+  Parameter      glow       {"glow",        "", 0.60f,  0.0f,   2.0f};
+  Trigger        reset      {"reset",       ""};
+
+  ControlGUI gui;
+
+  // -- Audio --------------------------------------------------------------
+  gam::Sine<> oscX, oscY;
+
+  // -- Audio -> Graphics ringbuffer (SPSC, write index = atomic) ----------
+  static constexpr int RING_SIZE = 4096;
+  std::array<float, RING_SIZE> ringX{};
+  std::array<float, RING_SIZE> ringY{};
+  std::atomic<int> ringWrite{0};
+
+  // -- Trace mesh + post-process chain ------------------------------------
+  Mesh                trace;
+  studio::PostFXChain fx;
+
+  void onInit() override {
+    gui << freqX << freqY << amplitude << persistence << glow << reset;
+    reset.registerChangeCallback([this](float) {
+      ringX.fill(0.f);
+      ringY.fill(0.f);
+      ringWrite.store(0);
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    fx.init(width(), height());
+    fx.push(studio::FX::Phosphor, 0.92f);
+    fx.push(studio::FX::Bloom,    0.60f);
+    fx.push(studio::FX::Vignette, 0.40f);
+
+    nav().pos(0, 0, 3.5f);
+    trace.primitive(Mesh::LINE_STRIP);
+  }
+
+  // -- Audio: write to stereo + push into ring ----------------------------
+  void onSound(AudioIOData& io) override {
+    oscX.freq(freqX.get());
+    oscY.freq(freqY.get());
+    const float amp = amplitude.get();
+
+    while (io()) {
+      const float sx = oscX() * amp;
+      const float sy = oscY() * amp;
+      io.out(0) = sx;
+      io.out(1) = sy;
+
+      const int w = ringWrite.load(std::memory_order_relaxed);
+      ringX[w] = sx;
+      ringY[w] = sy;
+      ringWrite.store((w + 1) % RING_SIZE, std::memory_order_release);
+    }
+  }
+
+  // -- Snapshot ring -> rebuild trace mesh --------------------------------
+  void onAnimate(double /*dt*/) override {
+    fx.setUniform(studio::FX::Phosphor, "uDecay",    persistence.get());
+    fx.setUniform(studio::FX::Bloom,    "uStrength", glow.get());
+
+    const int w = ringWrite.load(std::memory_order_acquire);
+
+    // Walk the most recent N samples (~21 ms at 48 kHz). Larger N = more
+    // visible figure but heavier per-frame mesh upload.
+    constexpr int N = 1024;
+    trace.reset();
+    trace.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w - N + i + RING_SIZE) % RING_SIZE;
+      trace.vertex(ringX[idx], ringY[idx], 0.f);
+      const float t = static_cast<float>(i) / N;  // 0..1 head-to-tail
+      trace.color(0.4f * t * glow.get(),
+                  1.0f * t * glow.get(),
+                  0.5f * t * glow.get());
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    fx.beginCapture();
+      g.clear(0.f, 0.f, 0.f);
+      g.meshColor();
+      g.draw(trace);
+    fx.endCaptureAndRender(g);
+
+    gui.draw(g);
+  }
+
+  void onResize(int w, int h) override {
+    fx.resize(w, h);
+  }
+};
+
+ALLOLIB_WEB_MAIN(Lissajous)
+`,
+  },
+]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
 // or extra headers). Phase 2 fills if needed.
