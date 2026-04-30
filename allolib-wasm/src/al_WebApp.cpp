@@ -20,46 +20,18 @@
 #include <emscripten/html5.h>
 #include <EGL/egl.h>
 
-// IDBFS mount-once flag. The actual mount is performed lazily on first
-// WebApp construction — see WebApp::WebApp() — because that runs after
-// JS-side IDBFS module init (which lazy-loads from -lidbfs.js) but BEFORE
-// any subclass PresetHandler member ctor fires (C++ guarantees base ctor
-// runs before derived-class member subobject construction). Static-init
-// EM_ASM, Module.preRun, and a static initializer all proved unreliable
-// for this — the IDBFS JS module wasn't ready when they fired.
-static bool gPresetIDBFSMounted = false;
-static void ensurePresetIDBFSMounted() {
-    if (gPresetIDBFSMounted) return;
-    gPresetIDBFSMounted = true;
-    EM_ASM({
-        try { FS.mkdir('/presets'); } catch (e) { /* exists */ }
-        try {
-            FS.mount(IDBFS, {}, '/presets');
-        } catch (e) {
-            console.warn('[IDBFS] mount failed:', e);
-            return;
-        }
-        // Pre-create a stub default.presetMap synchronously, BEFORE the
-        // user's PresetHandler ctor calls setCurrentPresetMap. Upstream
-        // checks File::exists on this path; if absent, it tries to write
-        // a default — that write races with FS.syncfs(true) populate and
-        // aborts. With the stub in place, exists() returns true and the
-        // auto-create branch is skipped. The async syncfs(true) below
-        // then overlays whatever's in IndexedDB; if a real presetMap was
-        // stored last session, the empty stub gets replaced.
-        try {
-            if (!FS.analyzePath('/presets/default.presetMap').exists) {
-                FS.writeFile('/presets/default.presetMap', new Uint8Array());
-            }
-        } catch (e) {
-            console.warn('[IDBFS] presetMap stub failed:', e);
-        }
-        FS.syncfs(true, function(err) {
-            if (err) console.warn('[IDBFS] /presets restore failed:', err);
-            else      console.log('[IDBFS] /presets restored from IndexedDB');
-        });
-    });
-}
+// Phase 5 (v0.7.6): IDBFS /presets mount + sync moved to Module.preRun in
+// runtime.ts, gated on Emscripten's run-dependency counter so main() can't
+// fire until /presets is fully populated from IndexedDB. By the time any
+// C++ PresetHandler member ctor runs, the mountpoint exists, prior-session
+// presets are visible, and there's no syncfs(true)-vs-mkdir race.
+//
+// Per-rootDirectory directory creation + .presetMap stubbing happens in
+// WebPresetHandler::prepareWebPath (al_playground_compat.hpp) via a member-
+// init evaluation that runs BEFORE upstream PresetHandler's ctor body fires
+// its setCurrentPresetMap call. So both arbitrary roots
+// ("M5_2_test_presets" → /presets/M5_2_test_presets) and the default-map
+// auto-create race are handled before they can fail.
 #endif
 
 // Forward declare GLAD loader
@@ -195,11 +167,8 @@ static EM_BOOL wheelCallback(int eventType, const EmscriptenWheelEvent* e, void*
 WebApp::WebApp() {
 #ifdef __EMSCRIPTEN__
     EM_ASM({ console.log('[WebApp] Constructor start'); });
-    // Mount /presets BEFORE any subclass member subobjects construct.
-    // C++ guarantees base ctor (this) runs before derived-class members.
-    // User code's `class MyApp : public App { PresetHandler mPresets; }`
-    // is now safe — mPresets's ctor sees a mounted /presets.
-    ensurePresetIDBFSMounted();
+    // (Phase 5: /presets mount handled by Module.preRun before main();
+    // no per-WebApp-ctor mount needed.)
 #endif
     // Default navigation position (camera at z=5 looking at origin)
     mNav.pos(0, 0, 5);
@@ -239,7 +208,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.7.5"
+#define ALLOLIB_WASM_LIB_VERSION "0.7.6"
 
 void WebApp::start() {
     if (mRunning) return;

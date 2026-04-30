@@ -202,7 +202,7 @@ public:
     explicit WebPresetHandler(std::string rootDirectory = "/presets",
                               bool verbose = false)
         : PresetHandler(TimeMasterMode::TIME_MASTER_FREE,
-                        normalizeWebPath(rootDirectory), verbose) {
+                        prepareWebPath(rootDirectory), verbose) {
         installWebHooks();
     }
     // Compat overload: caller supplies an explicit time-master mode.
@@ -217,24 +217,73 @@ public:
     }
 
 private:
-    // User code typically writes `PresetHandler mPresets;` or
-    // `PresetHandler mPresets("presets");`. The implicit/relative root
-    // resolves to `./presets` in upstream — but our IDBFS only mounts at
-    // /presets, so any relative path fails mkdir/readdir and aborts.
-    // Normalize: strip leading "./", prepend "/" if missing. Absolute
-    // paths pass through unchanged.
+    // Phase 5: every user-supplied root is mapped under the single
+    // /presets IDBFS mountpoint. The previous strategy ("normalize to
+    // absolute, leave alone") meant `PresetHandler ph("M5_2_test_presets")`
+    // got an absolute /M5_2_test_presets path that lived OUTSIDE the
+    // mounted /presets — so mkdir/readdir failed (errno 28) and the
+    // upstream auto-create branch logged errors all the way through.
+    //
+    // Mapping:
+    //   ""                  → "/presets"
+    //   "."                 → "/presets"
+    //   "presets"           → "/presets"
+    //   "./presets"         → "/presets"
+    //   "/presets"          → "/presets"
+    //   "M5_2_test_presets" → "/presets/M5_2_test_presets"
+    //   "./songs/scene1"    → "/presets/songs/scene1"
+    //   "/foo/bar"          → "/presets/foo/bar"
+    //
+    // Native code's identical-source compile (no compat header) gets
+    // upstream's literal-string path semantics — disk-relative or
+    // disk-absolute. Web-only re-rooting; round-trip preserved.
     static std::string normalizeWebPath(const std::string& p) {
         std::string s = p;
-        if (s.empty()) return "/presets";
         // Strip leading "./" or "."
         if (s.size() >= 2 && s[0] == '.' && s[1] == '/') s.erase(0, 2);
-        else if (s.size() == 1 && s[0] == '.') s = "presets";
-        // Strip duplicate leading slashes
-        while (s.size() >= 2 && s[0] == '/' && s[1] == '/') s.erase(0, 1);
-        // Ensure leading "/"
-        if (s.empty()) s = "presets";
-        if (s[0] != '/') s = "/" + s;
-        return s;
+        else if (s.size() == 1 && s[0] == '.') s.clear();
+        // Strip leading "/"
+        while (!s.empty() && s[0] == '/') s.erase(0, 1);
+        if (s.empty() || s == "presets") return "/presets";
+        // Strip leading "presets/" if user already put it there
+        if (s.rfind("presets/", 0) == 0) s.erase(0, 8);
+        return "/presets/" + s;
+    }
+
+    // prepareWebPath runs in the BASE-CTOR member-init list (as the
+    // string argument's evaluation), so it executes BEFORE the upstream
+    // PresetHandler ctor body — which means it executes BEFORE upstream's
+    // setCurrentPresetMap() call. We use this window to:
+    //   1. mkdir each path component in IDBFS so File::exists succeeds.
+    //   2. Pre-create a stub `default.presetMap` file synchronously, so
+    //      upstream's `if (autoCreate && !File::exists(mapFullPath))`
+    //      check is false and the auto-create write — which has been
+    //      racing FS.syncfs(true) and aborting — is skipped entirely.
+    //
+    // The async syncfs(true) populate from preRun has already completed
+    // by main() time (gated via Emscripten's run-dependency counter), so
+    // any IDB-restored map files overlay the empty stub seamlessly.
+    static std::string prepareWebPath(const std::string& userRoot) {
+        std::string normalized = normalizeWebPath(userRoot);
+        EM_ASM({
+            var path = UTF8ToString($0);
+            // Recursive mkdir — split on '/' and create each segment.
+            var parts = path.split('/').filter(function(s){ return s.length > 0; });
+            var acc = '';
+            for (var i = 0; i < parts.length; ++i) {
+                acc += '/' + parts[i];
+                try { FS.mkdir(acc); } catch (e) { /* exists */ }
+            }
+            // Stub default.presetMap so upstream's auto-create branch
+            // sees the file and skips the racing write.
+            try {
+                var mapPath = path + '/default.presetMap';
+                if (!FS.analyzePath(mapPath).exists) {
+                    FS.writeFile(mapPath, new Uint8Array());
+                }
+            } catch (e) { console.warn('[WebPresetHandler] presetMap stub failed:', e); }
+        }, normalized.c_str());
+        return normalized;
     }
 public:
     ~WebPresetHandler() {
@@ -269,6 +318,30 @@ public:
     }
     WebPresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
     WebPresetHandler& operator<<(ParameterBundle& b) { return registerParameterBundle(b); }
+
+    // ── setCurrentPresetMap shadow ───────────────────────────────────────
+    // User code that calls mPresets.setCurrentPresetMap("scene1") would
+    // hit upstream's auto-create branch, which races FS.syncfs(true) and
+    // aborts. The hide-by-name shadow pre-creates the stub file so the
+    // auto-create branch is skipped, then forwards to base. Same surface
+    // upstream exposes; round-trip with native is preserved (native
+    // PresetHandler::setCurrentPresetMap auto-creates fine on a real
+    // filesystem with no async populate to race).
+    void setCurrentPresetMap(std::string mapName = "default",
+                             bool autoCreate = true) {
+        const std::string mapPath = getCurrentPath() + "/" + mapName + ".presetMap";
+        EM_ASM({
+            var p = UTF8ToString($0);
+            try {
+                if (!FS.analyzePath(p).exists) {
+                    FS.writeFile(p, new Uint8Array());
+                }
+            } catch (e) { console.warn('[WebPresetHandler] presetMap stub failed:', e); }
+        }, mapPath.c_str());
+        // Forward to base. autoCreate is irrelevant now (file exists), so
+        // upstream's `!File::exists(mapFullPath)` branch is dead either way.
+        PresetHandler::setCurrentPresetMap(mapName, autoCreate);
+    }
 
     // ── Compat aliases for the previous custom API ───────────────────────
     // The hand-rolled compat PresetHandler exposed `tick(dt)` (called from

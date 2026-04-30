@@ -256,6 +256,7 @@ export class AllolibRuntime {
         postMainLoop?: () => void
         preinitializedWebGLContext?: WebGL2RenderingContext | null
         preinitializedWebGPUDevice?: GPUDevice
+        preRun?: Array<(mod: any) => void>
       } = {
         canvas: this.canvas,
         print: (text: string) => this.onPrint(text),
@@ -270,11 +271,41 @@ export class AllolibRuntime {
           }
           return `${baseUrl}/${path}`
         },
-        // (v0.6.1: IDBFS /presets mount moved to a C++ static initializer
-        // in al_WebApp.cpp. Module.preRun under MODULARIZE+EXPORT_ES6 doesn't
-        // reliably pass the Module as the function arg, which made the JS
-        // path silently fail. Static init runs at __wasm_call_ctors, before
-        // main(), so any PresetHandler member ctors see a mounted /presets.)
+        // Phase 5: mount IDBFS at /presets and BLOCK main() on the
+        // syncfs(true) populate. Emscripten's runtime gates main() on
+        // the run-dependency counter; we increment before the async
+        // syncfs and decrement in its callback, so main() can't fire
+        // until /presets is fully populated from IndexedDB. By the
+        // time any C++ PresetHandler member ctor runs, the directory
+        // exists and prior-session presets are visible.
+        //
+        // The `addRunDependency` API is what Emscripten uses internally
+        // for image / asset preloading; we're piggybacking on it. Closure
+        // captures `this` (the Module) and accesses FS / IDBFS / the run-
+        // dependency calls from there — so the function arg is irrelevant
+        // and the v0.5.4 'mod.FS undefined' problem doesn't apply.
+        preRun: [function(mod: any) {
+          try {
+            const FS = mod.FS
+            const addDep = mod.addRunDependency
+            const removeDep = mod.removeRunDependency
+            try { FS.mkdir('/presets') } catch (_e) { /* exists */ }
+            try {
+              FS.mount(mod.IDBFS, {}, '/presets')
+            } catch (e) {
+              console.warn('[IDBFS] /presets mount failed:', e)
+              return
+            }
+            addDep('idbfs-presets-restore')
+            FS.syncfs(true, function(err: unknown) {
+              if (err) console.warn('[IDBFS] /presets restore failed:', err)
+              else console.log('[IDBFS] /presets restored from IndexedDB')
+              removeDep('idbfs-presets-restore')
+            })
+          } catch (e) {
+            console.warn('[preRun] /presets setup failed:', e)
+          }
+        }],
       }
 
       // Configure backend-specific options
