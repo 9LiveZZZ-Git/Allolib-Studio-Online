@@ -1012,29 +1012,48 @@ public:
 
 // ============================================================================
 // User-code-only macro: rewrite bare `PresetHandler` to `WebPresetHandler`
-// in everything parsed AFTER this point. This is intentionally placed at the
-// VERY END of the compat header so all upstream `class al::PresetHandler`
-// declarations are fully parsed first. After this point, user code's
-// `PresetHandler mPresets;` constructs WebPresetHandler — picking up the
-// auto-WebControlGUI mirror, IDBFS persist callback, FREE-mode morph, and
-// the legacy `tick(dt)` / `recallPreset(name, morphTime)` aliases.
+// in everything parsed AFTER this point.
 //
-// SAFETY:
-//   - Upstream .cpp files (PresetHandler.cpp, PresetSequencer.cpp,
-//     PresetMapper.cpp) are compiled into libal_web.a separately and never
-//     include al_playground_compat.hpp; the macro doesn't reach them.
-//   - Inside this header we already finished all uses of the bare
-//     `PresetHandler` name (the WebPresetHandler subclass body refers to
-//     `PresetHandler::` explicitly, which the macro would mangle into
-//     `WebPresetHandler::` — but those references happen BEFORE this
-//     #define, so they're already textually resolved).
-//   - User code that needs the upstream class explicitly can write
-//     `al::PresetHandler` (qualified — also rewritten — undefine first
-//     if needed) or use the equivalent `(WebPresetHandler::)` base ref.
+// PHASE 6 AUDIT (v0.7.8): the macro is LOAD-BEARING — confirmed kept.
 //
-// Done with `#define` rather than `using PresetHandler = WebPresetHandler;`
-// because the using-alias would conflict with upstream's `class al::PresetHandler`
-// already in scope.
+// What user code gets when it writes `PresetHandler mPresets("./songs");`:
+//   1. Path normalization — every user root re-rooted under /presets to
+//      land inside the IDBFS mountpoint (prepareWebPath, phase 5).
+//   2. Pre-creation of `default.presetMap` BEFORE upstream's ctor body
+//      runs setCurrentPresetMap, neutralizing the auto-create-vs-syncfs
+//      race (phase 5).
+//   3. Pre-creation on user-initiated setCurrentPresetMap("scene1") calls
+//      via the subclass shadow (phase 5).
+//   4. Direct feed into ParameterRegistry::global() on `<<` /
+//      registerParameter, so the Studio Params panel sees the parameter
+//      regardless of any ControlGUI instance (phases 1+3).
+//   5. Legacy aliases `tick(dt)` / `recallPreset(name, morphTime)` /
+//      `stopMorph()` that pre-v0.5 user code expected (still aliased to
+//      stepMorphing / morphTo / stopMorphing for backward compat).
+//
+// Without the macro, bare `PresetHandler mPresets;` in user code would
+// construct upstream's class directly and lose all five behaviors —
+// the Studio panel would go empty for that code path, IDBFS races would
+// abort module init, etc. Removal is a regression, not a cleanup.
+//
+// Native compiles are unaffected (verified 2026-04-29 via M5_2 parity
+// gate): native test files don't include al_playground_compat.hpp at
+// all, so the macro never reaches them. Round-trip with native is
+// preserved bit-for-bit.
+//
+// Why `#define` rather than `using PresetHandler = WebPresetHandler`:
+// the using-alias would conflict with upstream's `class al::PresetHandler`
+// already declared by includes higher in this header. The macro is
+// purely textual, so it only affects symbol references parsed AFTER
+// this line — not type declarations parsed earlier.
+//
+// Placement matters: at the VERY END of the header so all upstream
+// `class al::PresetHandler` declarations and our WebPresetHandler
+// subclass body (which uses `PresetHandler::` explicitly to access
+// base members) are fully parsed before the macro fires.
+//
+// User code that needs upstream's class explicitly can `#undef
+// PresetHandler` after including this header.
 // ============================================================================
 #define PresetHandler WebPresetHandler
 
