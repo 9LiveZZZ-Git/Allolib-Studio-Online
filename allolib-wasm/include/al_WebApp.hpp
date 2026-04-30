@@ -43,10 +43,12 @@
 // class is complete here.
 #include "al/protocol/al_OSC.hpp"
 
-// M5.6: forward-declare ParameterServer so the parameterServer() accessor
-// doesn't require al/ui/al_ParameterServer.hpp at every WebApp include
-// site. Full type pulled in by the .cpp.
-namespace al { class ParameterServer; }
+// M5.6 / phase 4: forward-declare WebParameterServer (ParameterServer
+// subclass that feeds ParameterRegistry — see al_web_parameter_server.hpp).
+// The parameterServer() accessor returns WebParameterServer& so user code's
+// `parameterServer() << p` finds the subclass's templated operator<<,
+// which mirrors into the registry.
+namespace al { class WebParameterServer; }
 #include "al/io/al_Window.hpp"
 #include "al/io/al_ControlNav.hpp"
 #include "al/math/al_Vec.hpp"
@@ -208,12 +210,15 @@ public:
     AudioIO& audioIO() { return mAudioIOReal; }
     const AudioIO& audioIO() const { return mAudioIOReal; }
 
-    /// M5.6: lazy-constructed ParameterServer. First call binds it to the
+    /// M5.6: lazy-constructed parameter server. First call binds it to the
     /// configured OSC port (default 9010 → ws://127.0.0.1:9010/osc via
     /// our WebSocket-backed osc::Send/Recv). Subsequent calls return the
     /// same instance, matching native al::App::parameterServer() shape.
-    ParameterServer& parameterServer();
-    const ParameterServer& parameterServer() const;
+    /// Phase 4 returns WebParameterServer& (a ParameterServer subclass)
+    /// so `parameterServer() << p` finds the subclass's operator<< —
+    /// which feeds ParameterRegistry alongside OSC.
+    WebParameterServer& parameterServer();
+    const WebParameterServer& parameterServer() const;
 
     /// Get/set the navigation pose (camera position) - compatible with al::App
     Nav& nav() { return mNav; }
@@ -413,7 +418,7 @@ private:
     // M5.6: lazy-constructed ParameterServer; null until first
     // parameterServer() call. unique_ptr so the forward declaration
     // is enough at this header level.
-    mutable std::unique_ptr<ParameterServer> mParameterServer;
+    mutable std::unique_ptr<WebParameterServer> mParameterServer;
 
     // Navigation and view
     Nav mNav;

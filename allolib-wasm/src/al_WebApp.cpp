@@ -1,7 +1,9 @@
 #include "al_WebApp.hpp"
 // M5.6: full ParameterServer definition for the lazy-init member +
 // parameterServer() accessor. Header-side has only a forward decl.
+// Phase 4: WebParameterServer subclass that feeds ParameterRegistry.
 #include "al/ui/al_ParameterServer.hpp"
+#include "al_web_parameter_server.hpp"
 #include "al_WebControlGUI.hpp"
 
 // Conditionally include backends based on build configuration
@@ -237,7 +239,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.7.3"
+#define ALLOLIB_WASM_LIB_VERSION "0.7.4"
 
 void WebApp::start() {
     if (mRunning) return;
@@ -293,25 +295,15 @@ void WebApp::start() {
 #endif
     onCreate();
 
-    // Mirror any parameters registered with the ParameterServer (e.g.
-    // `parameterServer() << gain` in onInit) into the active WebControlGUI
-    // so they appear in the Studio Params panel. Native al::App users get
-    // OSC + GUI for free via ControlGUI; we replicate that affordance here
-    // since otherwise `parameterServer() << p` registers for OSC only and
-    // the panel stays empty.
-    if (mParameterServer) {
-        auto* gui = WebControlGUI::getActiveInstance();
-        if (!gui) {
-            static WebControlGUI sDefaultPanel;
-            gui = WebControlGUI::getActiveInstance();
-            if (!gui) gui = &sDefaultPanel;
-        }
-        for (auto* p : mParameterServer->parameters())        gui->registerParameterMeta(*p);
-        for (auto* p : mParameterServer->stringParameters())  gui->registerParameterMeta(*p);
-        for (auto* p : mParameterServer->vec3Parameters())    gui->registerParameterMeta(*p);
-        for (auto* p : mParameterServer->vec4Parameters())    gui->registerParameterMeta(*p);
-        for (auto* p : mParameterServer->poseParameters())    gui->registerParameterMeta(*p);
-    }
+    // (v0.7.4 phase 4: dropped the partial mirror loop that walked five
+    // of ParameterServer's typed accessors and pushed pointers into
+    // a static WebControlGUI sDefaultPanel. The walk silently dropped
+    // int/bool/menu/choice/color/trigger types — the audit's smoking-gun
+    // bug. WebParameterServer's templated operator<< now feeds the
+    // canonical ParameterRegistry at registration time, type-agnostic,
+    // so the post-onCreate walk is unnecessary AND the second
+    // sDefaultPanel race that lived here is gone. The C exports in
+    // al_WebControlGUI.cpp read from the registry directly — see v0.7.1.)
 
     mRunning = true;
 
@@ -746,18 +738,20 @@ void WebApp::initGraphics() {
 #endif
 }
 
-ParameterServer& WebApp::parameterServer() {
+WebParameterServer& WebApp::parameterServer() {
     if (!mParameterServer) {
         // Default OSC port 9010 — same as upstream al::App default. Web
         // transport routes through ws://127.0.0.1:9010/osc via our
         // WebSocket-backed osc::Recv (M5.1). autoStart=true so it
         // begins listening immediately.
-        mParameterServer.reset(new ParameterServer("", 9010, true));
+        // WebParameterServer inherits ParameterServer's ctor; the (ip,
+        // port, autoStart) signature works unchanged.
+        mParameterServer.reset(new WebParameterServer("", 9010, true));
     }
     return *mParameterServer;
 }
 
-const ParameterServer& WebApp::parameterServer() const {
+const WebParameterServer& WebApp::parameterServer() const {
     return const_cast<WebApp*>(this)->parameterServer();
 }
 
