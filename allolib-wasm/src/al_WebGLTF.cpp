@@ -190,9 +190,72 @@ bool extractPrimitive(const cgltf_node* node,
     return true;
 }
 
-void walkSceneNode(const cgltf_node* node,
+// ─── Material extraction (M8.2) ────────────────────────────────────────────
+// Maps cgltf_material → WebGLTFMaterial. Unset texture references stay at
+// index -1 so callers can branch on (mat.baseColorTextureIndex >= 0).
+
+int materialImageIndex(const cgltf_data* data, const cgltf_texture* tex) {
+    if (!tex || !tex->image) return -1;
+    return static_cast<int>(tex->image - data->images);
+}
+
+WebGLTFMaterial extractMaterial(const cgltf_data* data,
+                                const cgltf_material* mat) {
+    WebGLTFMaterial m;
+    if (!mat) return m;
+
+    if (mat->name) m.name = mat->name;
+    m.doubleSided = mat->double_sided != 0;
+    m.alphaBlend = (mat->alpha_mode == cgltf_alpha_mode_blend);
+    m.unlit = mat->unlit != 0;
+
+    // glTF KHR_materials_emissive_strength multiplies the emissive factor;
+    // we fold the strength into the factor here so downstream sees one number.
+    const float emStrength = mat->has_emissive_strength
+        ? mat->emissive_strength.emissive_strength : 1.0f;
+    m.emissiveFactor = Vec3f(
+        mat->emissive_factor[0] * emStrength,
+        mat->emissive_factor[1] * emStrength,
+        mat->emissive_factor[2] * emStrength
+    );
+
+    if (mat->has_pbr_metallic_roughness) {
+        const auto& pbr = mat->pbr_metallic_roughness;
+        m.baseColorFactor = Color(
+            pbr.base_color_factor[0],
+            pbr.base_color_factor[1],
+            pbr.base_color_factor[2],
+            pbr.base_color_factor[3]);
+        m.metallicFactor  = pbr.metallic_factor;
+        m.roughnessFactor = pbr.roughness_factor;
+        m.baseColorTextureIndex = materialImageIndex(data, pbr.base_color_texture.texture);
+        m.metallicRoughnessTextureIndex =
+            materialImageIndex(data, pbr.metallic_roughness_texture.texture);
+
+        // KHR_texture_transform on the base color slot is the only one
+        // we surface here — covers the common atlas-tiling case.
+        if (pbr.base_color_texture.has_transform) {
+            m.baseColorUVScale  = Vec2f(pbr.base_color_texture.transform.scale[0],
+                                        pbr.base_color_texture.transform.scale[1]);
+            m.baseColorUVOffset = Vec2f(pbr.base_color_texture.transform.offset[0],
+                                        pbr.base_color_texture.transform.offset[1]);
+        }
+    }
+
+    m.normalTextureIndex    = materialImageIndex(data, mat->normal_texture.texture);
+    m.occlusionTextureIndex = materialImageIndex(data, mat->occlusion_texture.texture);
+    m.emissiveTextureIndex  = materialImageIndex(data, mat->emissive_texture.texture);
+    if (mat->normal_texture.texture)    m.normalScale       = mat->normal_texture.scale;
+    if (mat->occlusion_texture.texture) m.occlusionStrength = mat->occlusion_texture.scale;
+
+    return m;
+}
+
+void walkSceneNode(const cgltf_data* data,
+                   const cgltf_node* node,
                    Mesh& combined,
-                   std::vector<Mesh>* perPrim) {
+                   std::vector<Mesh>* perPrim,
+                   std::vector<WebGLTFMaterial>* perMat) {
     if (node->mesh) {
         for (cgltf_size i = 0; i < node->mesh->primitives_count; ++i) {
             const cgltf_primitive* prim = &node->mesh->primitives[i];
@@ -200,13 +263,14 @@ void walkSceneNode(const cgltf_node* node,
                 Mesh m;
                 if (extractPrimitive(node, prim, m)) {
                     perPrim->push_back(std::move(m));
+                    if (perMat) perMat->push_back(extractMaterial(data, prim->material));
                 }
             }
             extractPrimitive(node, prim, combined);
         }
     }
     for (cgltf_size i = 0; i < node->children_count; ++i) {
-        walkSceneNode(node->children[i], combined, perPrim);
+        walkSceneNode(data, node->children[i], combined, perPrim, perMat);
     }
 }
 
@@ -216,7 +280,8 @@ void walkSceneNode(const cgltf_node* node,
 
 bool WebGLTF::extractAllPrimitives(const cgltf_data* data,
                                    Mesh& combined,
-                                   std::vector<Mesh>* perPrim) {
+                                   std::vector<Mesh>* perPrim,
+                                   std::vector<WebGLTFMaterial>* perMat) {
     if (!data) return false;
 
     combined.reset();
@@ -230,18 +295,59 @@ bool WebGLTF::extractAllPrimitives(const cgltf_data* data,
 
     if (scene) {
         for (cgltf_size i = 0; i < scene->nodes_count; ++i) {
-            walkSceneNode(scene->nodes[i], combined, perPrim);
+            walkSceneNode(data, scene->nodes[i], combined, perPrim, perMat);
         }
     } else {
         // No scene block — walk every node, treating each as a root.
         for (cgltf_size i = 0; i < data->nodes_count; ++i) {
             if (data->nodes[i].parent == nullptr) {
-                walkSceneNode(&data->nodes[i], combined, perPrim);
+                walkSceneNode(data, &data->nodes[i], combined, perPrim, perMat);
             }
         }
     }
 
     return combined.vertices().size() > 0;
+}
+
+void WebGLTF::extractImages(const cgltf_data* data,
+                            std::vector<WebGLTFImage>& out) {
+    out.clear();
+    if (!data) return;
+    out.reserve(data->images_count);
+
+    for (cgltf_size i = 0; i < data->images_count; ++i) {
+        const cgltf_image* img = &data->images[i];
+        WebGLTFImage entry;
+        if (img->name)       entry.name     = img->name;
+        if (img->mime_type)  entry.mimeType = img->mime_type;
+
+        if (img->buffer_view) {
+            // GLB-embedded image: bytes live inside the binary chunk.
+            const cgltf_buffer_view* bv = img->buffer_view;
+            const uint8_t* base = static_cast<const uint8_t*>(bv->buffer->data);
+            if (base) {
+                const uint8_t* src = base + bv->offset;
+                entry.bytes.assign(src, src + bv->size);
+                if (entry.mimeType.empty()) {
+                    // Sniff PNG / JPEG magic if mime_type wasn't declared.
+                    if (bv->size >= 8 &&
+                        src[0]==0x89 && src[1]==0x50 && src[2]==0x4E && src[3]==0x47) {
+                        entry.mimeType = "image/png";
+                    } else if (bv->size >= 3 &&
+                               src[0]==0xFF && src[1]==0xD8 && src[2]==0xFF) {
+                        entry.mimeType = "image/jpeg";
+                    }
+                }
+            }
+        } else if (img->uri) {
+            // Non-GLB asset with separate image file. We don't fetch it
+            // from C++ — caller can read uri, which may be a base64
+            // data URI ("data:image/png;base64,...") or a relative path.
+            entry.name = std::string("uri:") + img->uri;
+            // Leave bytes empty; caller decides how to fetch.
+        }
+        out.push_back(std::move(entry));
+    }
 }
 
 bool WebGLTF::parse(const uint8_t* data, size_t size, Mesh& out) {
@@ -262,7 +368,7 @@ bool WebGLTF::parse(const uint8_t* data, size_t size, Mesh& out) {
         std::printf("[WebGLTF] cgltf_validate failed\n");
     }
 
-    bool ok = extractAllPrimitives(parsed, out, nullptr);
+    bool ok = extractAllPrimitives(parsed, out, nullptr, nullptr);
     cgltf_free(parsed);
     std::printf("[WebGLTF] parsed: %zu vertices, %zu normals, %zu texcoords\n",
                 out.vertices().size(), out.normals().size(),
@@ -288,8 +394,13 @@ bool WebGLTF::parseAndRetain(const uint8_t* data, size_t size) {
     cgltf_validate(mData); // log-only
 
     mPrimitives.clear();
-    bool ok = extractAllPrimitives(mData, mCombined, &mPrimitives);
+    mMaterials.clear();
+    mImages.clear();
+    bool ok = extractAllPrimitives(mData, mCombined, &mPrimitives, &mMaterials);
+    extractImages(mData, mImages);
     mReady = ok;
+    std::printf("[WebGLTF] extracted: %zu primitives, %zu materials, %zu images\n",
+                mPrimitives.size(), mMaterials.size(), mImages.size());
     return ok;
 }
 
@@ -298,6 +409,8 @@ void WebGLTF::load(const std::string& url) {
     mUrl = url;
     mCombined.reset();
     mPrimitives.clear();
+    mMaterials.clear();
+    mImages.clear();
     if (mData) { cgltf_free(mData); mData = nullptr; }
 
     WebFile::loadFromURL(url, [this](const UploadedFile& file) {

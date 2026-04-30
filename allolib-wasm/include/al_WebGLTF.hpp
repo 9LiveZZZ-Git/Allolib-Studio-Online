@@ -37,6 +37,7 @@
 
 #include "al/graphics/al_Mesh.hpp"
 #include "al/math/al_Vec.hpp"
+#include "al/types/al_Color.hpp"
 
 #include "al_WebFile.hpp"
 
@@ -46,6 +47,48 @@
 struct cgltf_data;
 
 namespace al {
+
+/// Per-primitive PBR material extracted from a glTF asset (M8.2).
+/// Mirrors glTF 2.0's metallic-roughness workflow plus optional emissive
+/// and normal maps. Texture indices are -1 when absent; otherwise they
+/// index into the WebGLTF instance's image table (see imageCount()).
+struct WebGLTFMaterial {
+    // Factors (glTF defaults baked in)
+    Color baseColorFactor{1.0f, 1.0f, 1.0f, 1.0f};
+    float metallicFactor   = 1.0f;
+    float roughnessFactor  = 1.0f;
+    Vec3f emissiveFactor   {0.0f, 0.0f, 0.0f};
+    float normalScale      = 1.0f;
+    float occlusionStrength = 1.0f;
+    bool  doubleSided      = false;
+    bool  alphaBlend       = false;
+    bool  unlit            = false;
+
+    // Texture indices into WebGLTF::imageCount() (-1 = not present)
+    int baseColorTextureIndex     = -1;
+    int metallicRoughnessTextureIndex = -1;
+    int normalTextureIndex        = -1;
+    int occlusionTextureIndex     = -1;
+    int emissiveTextureIndex      = -1;
+
+    // UV transforms (KHR_texture_transform; identity by default)
+    Vec2f baseColorUVScale {1.0f, 1.0f};
+    Vec2f baseColorUVOffset{0.0f, 0.0f};
+
+    // Human-readable name for diagnostics
+    std::string name;
+};
+
+/// Raw image bytes extracted from a glTF buffer view. mimeType is "image/png"
+/// or "image/jpeg" (the only types glTF 2.0 mandates support for). Decoded
+/// pixels live in a separate al::WebImage / al::Texture — this struct just
+/// holds the source bytes so callers can hand them to the browser decoder
+/// or a CPU decoder of their choice.
+struct WebGLTFImage {
+    std::vector<uint8_t> bytes;
+    std::string mimeType;
+    std::string name;
+};
 
 class WebGLTF {
 public:
@@ -84,16 +127,32 @@ public:
     size_t primitiveCount() const { return mPrimitives.size(); }
     const Mesh& primitiveMesh(size_t i) const { return mPrimitives.at(i); }
 
+    /// Per-primitive PBR material (M8.2). Index parallel to primitiveMesh(i).
+    /// If the primitive has no material, returns a default WebGLTFMaterial
+    /// (baseColor white, metallic=1, roughness=1, no textures).
+    const WebGLTFMaterial& primitiveMaterial(size_t i) const { return mMaterials.at(i); }
+
+    /// Embedded image table (M8.2). Each image's bytes are extracted from
+    /// the glTF buffer (or external URI in non-GLB assets) and held here
+    /// for the user to upload via WebImage / al::Texture.
+    size_t imageCount() const { return mImages.size(); }
+    const WebGLTFImage& image(size_t i) const { return mImages.at(i); }
+
 private:
     static bool extractAllPrimitives(const cgltf_data* data,
                                      Mesh& combined,
-                                     std::vector<Mesh>* perPrim);
+                                     std::vector<Mesh>* perPrim,
+                                     std::vector<WebGLTFMaterial>* perMat);
+    static void extractImages(const cgltf_data* data,
+                              std::vector<WebGLTFImage>& out);
 
-    std::string       mUrl;
-    Mesh              mCombined;
-    std::vector<Mesh> mPrimitives;
-    bool              mReady = false;
-    LoadCallback      mCallback;
+    std::string                  mUrl;
+    Mesh                         mCombined;
+    std::vector<Mesh>            mPrimitives;
+    std::vector<WebGLTFMaterial> mMaterials;
+    std::vector<WebGLTFImage>    mImages;
+    bool                         mReady = false;
+    LoadCallback                 mCallback;
 
     // Owned cgltf_data, freed in dtor. Held only when parseAndRetain was
     // used so per-primitive node hierarchies stay queryable. Static
