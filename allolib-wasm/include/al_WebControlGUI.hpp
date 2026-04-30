@@ -19,6 +19,7 @@
 
 #include "al/ui/al_Parameter.hpp"
 #include "al/ui/al_ParameterBundle.hpp"
+#include "al_parameter_registry.hpp"
 #include <vector>
 #include <string>
 #include <functional>
@@ -97,6 +98,14 @@ public:
         }
         mParameters.push_back(&param);
         notifyParameterAdded(param);
+        // v0.7.1 phase 2: also feed the canonical ParameterRegistry. The
+        // C exports in al_WebControlGUI.cpp now read from the registry
+        // (not from this instance's mParameters), so this call is what
+        // populates the Studio Params panel — independent of which
+        // WebControlGUI instance owns sActiveInstance. The registry's
+        // own pointer-dedup makes the call idempotent if PresetHandler
+        // and parameterServer mirror routes also feed it (phases 3/4).
+        ParameterRegistry::global().add(&param);
         return *this;
     }
 
@@ -194,6 +203,20 @@ public:
         }
         return nullptr;
     }
+
+    // v0.7.1 phase 2: static dispatchers — type-aware lookups that take a
+    // ParameterMeta* directly. The C exports in al_WebControlGUI.cpp now go
+    // through these (with the pointer fetched from ParameterRegistry), so
+    // the panel doesn't depend on which WebControlGUI instance is "active."
+    static WebParamInfo dispatchInfo(ParameterMeta* p, int index = 0);
+    static float        dispatchGetValue(ParameterMeta* p);
+    static void         dispatchSetValue(ParameterMeta* p, float value);
+    static void         dispatchSetString(ParameterMeta* p, const std::string& value);
+    static void         dispatchTrigger(ParameterMeta* p);
+    static void         dispatchSetVec3(ParameterMeta* p, float x, float y, float z);
+    static void         dispatchSetVec4(ParameterMeta* p, float x, float y, float z, float w);
+    static void         dispatchSetPose(ParameterMeta* p, float x, float y, float z,
+                                        float qw, float qx, float qy, float qz);
 
     // Get parameter info for JavaScript
     WebParamInfo getParameterInfo(size_t index) {
