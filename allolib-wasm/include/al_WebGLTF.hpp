@@ -41,10 +41,15 @@
 
 #include "al_WebFile.hpp"
 
-// cgltf is forward-declared via opaque pointers so this header doesn't
-// pull the 7k-line cgltf.h into every TU. Implementation lives in
-// al_WebGLTF.cpp where CGLTF_IMPLEMENTATION is defined.
+// cgltf forward declarations — keep the 7k-line cgltf.h out of every TU
+// that includes al_WebGLTF.hpp. Pointers to these types in SkinnedPrim
+// only need a forward decl. The cgltf_primitive_type enum can't be
+// forward-declared portably (C-style typedef enum has no fixed underlying
+// type), so we store the primitive type as a plain int and cast at use
+// sites in al_WebGLTF.cpp.
 struct cgltf_data;
+struct cgltf_node;
+struct cgltf_skin;
 
 namespace al {
 
@@ -176,6 +181,7 @@ public:
     /// asset is animated; use `mesh()` for static art.
     const Mesh& animatedMesh() const { return mAnimated; }
 
+private:
     /// Per-primitive bind-pose cache used for skin-weighted vertex
     /// blending in sampleAnimation (M8.3b). Populated at parseAndRetain;
     /// each entry holds the bind-pose vertex stream PLUS the JOINTS_0 /
@@ -183,10 +189,10 @@ public:
     /// Non-skinned primitives use `node` to apply the rigid world
     /// transform; skinned primitives walk the joint-matrix table.
     ///
-    /// (Public because the free helper function `cacheNode` in
-    /// al_WebGLTF.cpp populates a vector of these. Moving cacheNode into
-    /// the class would let this be private; left at file scope to keep
-    /// the .cpp's anonymous namespace organisation intact.)
+    /// Private because it references cgltf types directly. cacheNode is
+    /// a private static member (not an anonymous-namespace free function)
+    /// so it can construct these from inside the class without exposing
+    /// cgltf.h into user-include paths.
     struct SkinnedPrim {
         cgltf_node*       node = nullptr;
         const cgltf_skin* skin = nullptr;
@@ -197,10 +203,15 @@ public:
         std::vector<uint16_t> joints;   // 4 per vertex (flattened)
         std::vector<float>    weights;  // 4 per vertex (flattened)
         std::vector<uint32_t> indices;  // empty if non-indexed
-        cgltf_primitive_type  type = cgltf_primitive_type_triangles;
+        // Stored as int to avoid pulling cgltf.h into the public header.
+        // cast to cgltf_primitive_type in al_WebGLTF.cpp at use sites;
+        // 4 = cgltf_primitive_type_triangles per the enum order.
+        int                   type = 4;
     };
 
-private:
+    static void cacheNode(const cgltf_node* node,
+                          std::vector<SkinnedPrim>& out);
+
     static bool extractAllPrimitives(const cgltf_data* data,
                                      Mesh& combined,
                                      std::vector<Mesh>* perPrim,

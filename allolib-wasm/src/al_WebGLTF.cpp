@@ -624,14 +624,16 @@ void WebGLTF::sampleAnimation(size_t animIdx, float time) {
 
 // ─── M8.3b — skin-weighted vertex blending ────────────────────────────────
 
-namespace {
-
 // Walk the scene populating the bind-pose cache. Mirrors the geometry
 // extraction in extractPrimitive but records vertex streams pre-transform
 // and additionally captures JOINTS_0 / WEIGHTS_0 when present. The owning
 // node pointer is stashed so non-skinned primitives can be re-transformed
 // by their world matrix without re-walking the scene every frame.
-void cacheNode(const cgltf_node* node, std::vector<WebGLTF::SkinnedPrim>& out) {
+//
+// Defined as a private static member of WebGLTF so the SkinnedPrim struct
+// doesn't have to leak from the class header — keeps cgltf.h out of every
+// TU that includes al_WebGLTF.hpp.
+void WebGLTF::cacheNode(const cgltf_node* node, std::vector<SkinnedPrim>& out) {
     if (node->mesh) {
         for (cgltf_size i = 0; i < node->mesh->primitives_count; ++i) {
             const cgltf_primitive* prim = &node->mesh->primitives[i];
@@ -639,10 +641,10 @@ void cacheNode(const cgltf_node* node, std::vector<WebGLTF::SkinnedPrim>& out) {
                 prim->type != cgltf_primitive_type_triangle_strip &&
                 prim->type != cgltf_primitive_type_triangle_fan) continue;
 
-            WebGLTF::SkinnedPrim sp;
+            SkinnedPrim sp;
             sp.node = const_cast<cgltf_node*>(node);
             sp.skin = node->skin;
-            sp.type = prim->type;
+            sp.type = static_cast<int>(prim->type);
 
             const cgltf_accessor *posAcc=nullptr, *nrmAcc=nullptr,
                                  *uvAcc=nullptr, *colAcc=nullptr,
@@ -728,6 +730,8 @@ void cacheNode(const cgltf_node* node, std::vector<WebGLTF::SkinnedPrim>& out) {
         cacheNode(node->children[i], out);
     }
 }
+
+namespace {
 
 // 4x4 column-major (cgltf convention). row[i][j] = m[i*4 + j] would be
 // transposed; we follow cgltf which uses column-major float[16].
@@ -862,16 +866,19 @@ void WebGLTF::rebuildAnimatedMesh() {
             append(p, np, up, cp);
         };
 
-        if (sp.type == cgltf_primitive_type_triangles) {
+        // sp.type is stored as int (see SkinnedPrim definition); cast back
+        // to the cgltf enum here for the comparisons.
+        const cgltf_primitive_type spType = static_cast<cgltf_primitive_type>(sp.type);
+        if (spType == cgltf_primitive_type_triangles) {
             for (size_t i = 0; i + 2 < idxCount; i += 3) {
                 emit(idx[i]); emit(idx[i + 1]); emit(idx[i + 2]);
             }
-        } else if (sp.type == cgltf_primitive_type_triangle_strip) {
+        } else if (spType == cgltf_primitive_type_triangle_strip) {
             for (size_t i = 0; i + 2 < idxCount; ++i) {
                 if (i % 2 == 0) { emit(idx[i]);     emit(idx[i + 1]); emit(idx[i + 2]); }
                 else            { emit(idx[i + 1]); emit(idx[i]);     emit(idx[i + 2]); }
             }
-        } else if (sp.type == cgltf_primitive_type_triangle_fan) {
+        } else if (spType == cgltf_primitive_type_triangle_fan) {
             if (idxCount >= 3) {
                 for (size_t i = 1; i + 1 < idxCount; ++i) {
                     emit(idx[0]); emit(idx[i]); emit(idx[i + 1]);
