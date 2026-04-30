@@ -242,20 +242,29 @@ public:
         v.erase(std::remove(v.begin(), v.end(), this), v.end());
     }
 
-    // ── Auto-mirror to the active WebControlGUI ──────────────────────────
+    // ── Auto-feed the global ParameterRegistry ───────────────────────────
     // Hides upstream's non-virtual operator<< / registerParameter so user
-    // code's `mPresets << gain` registers with both upstream's preset
-    // bookkeeping AND the Studio Params panel. Without this hide-by-name
-    // shadow, the base operator's static dispatch would resolve to the
-    // base's registerParameter and skip the panel mirror.
+    // code's `mPresets << gain` registers BOTH with upstream's preset
+    // bookkeeping AND with the canonical ParameterRegistry that the
+    // Studio Params panel reads from. Without the hide-by-name shadow,
+    // base's operator<< would static-dispatch to base's registerParameter
+    // and skip our registry feed.
+    //
+    // v0.7.3 phase 3: route through ParameterRegistry::global().add(&p)
+    // instead of looking up an active WebControlGUI instance. The
+    // pre-v0.7 mirrorToActiveGui used a function-static `sDefaultPanel`
+    // that raced with WebApp::start's identical static for the
+    // sActiveInstance slot — fixed by routing through the singleton
+    // registry, which the C exports in al_WebControlGUI.cpp now read
+    // (per v0.7.1 phase 2).
     WebPresetHandler& registerParameter(ParameterMeta& p) {
         PresetHandler::registerParameter(p);
-        mirrorToActiveGui(p);
+        ParameterRegistry::global().add(&p);
         return *this;
     }
     WebPresetHandler& registerParameterBundle(ParameterBundle& b) {
         PresetHandler::registerParameterBundle(b);
-        for (auto* p : b.parameters()) if (p) mirrorToActiveGui(*p);
+        for (auto* p : b.parameters()) if (p) ParameterRegistry::global().add(p);
         return *this;
     }
     WebPresetHandler& operator<<(ParameterMeta& p) { return registerParameter(p); }
@@ -315,17 +324,11 @@ private:
         });
     }
 
-    static void mirrorToActiveGui(ParameterMeta& p) {
-        auto* gui = WebControlGUI::getActiveInstance();
-        if (!gui) {
-            // Lazy default panel — same convention used in v0.4.5's
-            // parameterServer mirror.
-            static WebControlGUI sDefaultPanel;
-            gui = WebControlGUI::getActiveInstance();
-            if (!gui) gui = &sDefaultPanel;
-        }
-        gui->registerParameterMeta(p);
-    }
+    // (v0.7.3: mirrorToActiveGui removed — it created a race between two
+    // function-static WebControlGUI instances competing for sActiveInstance.
+    // operator<< now feeds ParameterRegistry::global() directly, which the
+    // JS bridge reads via al_WebControlGUI.cpp's v0.7.1-rewritten C exports.
+    // No active-instance lookup, no race.)
 
     // ── Morph tick wiring ────────────────────────────────────────────────
     static std::vector<WebPresetHandler*>& activeHandlers() {
