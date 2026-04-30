@@ -1,7 +1,23 @@
 // Phase 1 unit test — verifies al::ParameterRegistry behaves correctly.
 //
-// Build (native AlloLib):
-//   ./run.sh registry_test.cpp
+// REQUIRES: studio-online fork (not upstream allolib)
+// ----------------------------------------------------
+// `al::ParameterRegistry` is the canonical-list singleton introduced in
+// v0.7.0 of the Studio Online fork (see PARAMETER_PIPELINE_PLAN.md).
+// Vanilla allolib has no equivalent; this test is run only against the
+// fork's `_studio_shared/` headers, NOT via `./run.sh` against upstream.
+//
+// COMPATIBILITY_REPORT.md (2026-04-29) confirmed this is fork-only.
+// The vanilla-parity gate for upstream PresetHandler/Sequencer/Mapper
+// API stays `M5_2_preset_unify.cpp`, which DOES compile cleanly against
+// vanilla allolib. New fork-only tests under this folder must include a
+// `REQUIRES: studio-online fork` tag in the header so the audit can
+// distinguish them from real native-parity tests.
+//
+// Run (Studio Online side, where ParameterRegistry exists):
+//   Load this file in Studio Online's editor, hit Run. The Studio
+//   build links allolib-wasm/include/al_parameter_registry.hpp.
+//   Expected output is captured in the Studio log panel.
 //
 // Expected output:
 //   [registry] count=0 (empty)

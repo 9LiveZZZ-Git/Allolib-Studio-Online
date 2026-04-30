@@ -10,6 +10,8 @@ This document is assembled from three parallel deep-dive passes:
 
 The intermediate files remain on disk for reference. The execution proceeds against this consolidated doc.
 
+**Native-parity-test honesty (per `COMPATIBILITY_REPORT.md`, 2026-04-29):** of the test files in `AlloLib Native Test Files/`, only `M0`/`M1`/`M2`/`M3`/`M5_2_preset_unify.cpp` actually compile against vanilla upstream allolib. Everything else (`M4`, `M5`, `M6`, `M7`, `M8`, `M9`, `registry_test`) targets the studio-online fork's compat layer and is **not** a vanilla-parity gate. The migration plan's "native parity preserved at every step" guarantee refers specifically to `M5_2` continuing to compile against vanilla; phase-by-phase tests like `M5_3`/`M5_4`/`M5_5` and `registry_test` are fork-only validators, tagged with `// REQUIRES: studio-online fork (not upstream allolib)` in their headers. Run them on the fork's WASM build (Studio Online editor → Run), not via vanilla `./run.sh`.
+
 ---
 
 ## Headline findings
