@@ -74,12 +74,25 @@ declare global {
   }
 }
 
-// ── User asset fetch override (M8.5) ────────────────────────────────────────
-// WebFile::loadFromURL ultimately hits window.fetch(url). To make
-// user-uploaded assets work without rebuilding libal_web.a, we wrap
-// fetch once and resolve known basenames against window.__alloUserAssets
-// before falling through to the network. Idempotent — re-installs are
-// no-ops (the wrapper checks for its own marker).
+// ── Asset fetch overlay (M8.5 + M8.6) ──────────────────────────────────────
+// WebFile::loadFromURL ultimately hits window.fetch(url). We wrap fetch
+// once and apply two layers of redirection before falling through to the
+// network:
+//
+//   1. window.__alloUserAssets — Map<key, Uint8Array> of user-uploaded
+//      asset bytes (M8.5). Synthesises a Response from in-memory bytes
+//      so the WASM-side fetch resolves without a round trip.
+//
+//   2. window.__alloBundledAssets — Map<basename, bundledUrl> covering
+//      every asset shipped under frontend/public/assets/. When user code
+//      does `WebScene::import("RiggedSimple.glb")` the resulting bare-
+//      filename fetch resolves against the studio page URL and 404s; we
+//      redirect it to the canonical /assets/meshes/RiggedSimple.glb.
+//      This is what makes the modal's "BUNDLED" status badge actually
+//      mean something — without the redirect, "BUNDLED" was a UI claim
+//      not a runtime guarantee.
+//
+// Idempotent — re-installs are no-ops (the wrapper checks for its own marker).
 function installUserAssetFetchOverlay(): void {
   if ((window as any).__alloFetchOverlayInstalled) return
   const originalFetch = window.fetch.bind(window)
@@ -87,12 +100,13 @@ function installUserAssetFetchOverlay(): void {
   window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     try {
       const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url)
+      const candidates: string[] = [url]
+      if (url.startsWith('/')) candidates.push(url.slice(1))
+      if (url.includes('/')) candidates.push(url.substring(url.lastIndexOf('/') + 1))
+
+      // Layer 1: user-uploaded bytes.
       const overlay: Map<string, Uint8Array> | undefined = (window as any).__alloUserAssets
       if (overlay && overlay.size > 0) {
-        // Try exact url, then path without leading "/", then basename.
-        const candidates: string[] = [url]
-        if (url.startsWith('/')) candidates.push(url.slice(1))
-        if (url.includes('/')) candidates.push(url.substring(url.lastIndexOf('/') + 1))
         for (const key of candidates) {
           const bytes = overlay.get(key)
           if (bytes) {
@@ -101,6 +115,24 @@ function installUserAssetFetchOverlay(): void {
               headers: { 'Content-Type': 'application/octet-stream' },
             }))
           }
+        }
+      }
+
+      // Layer 2: bundled studio assets — redirect bare filenames to the
+      // canonical /assets/<subdir>/<file> URL. Only fires for filenames
+      // (no slashes in original) so we don't accidentally redirect
+      // already-qualified URLs.
+      const bundled: Map<string, string> | undefined = (window as any).__alloBundledAssets
+      if (bundled && bundled.size > 0 && !url.includes('/')) {
+        const target = bundled.get(url)
+        if (target) {
+          // Resolve against window.__alloBasePath for GitHub-Pages-style
+          // subdirectory deploys; same logic the WebFile EM_ASM uses.
+          const basePath = (window as any).__alloBasePath || '/'
+          const resolved = target.startsWith('/')
+            ? basePath + target.slice(1)
+            : target
+          return originalFetch(resolved, init)
         }
       }
     } catch (_e) { /* fall through to network */ }
@@ -360,6 +392,10 @@ export class AllolibRuntime {
             if (overlay.size > 0) {
               console.log('[asset overlay] staged', overlay.size, 'user assets in MEMFS')
             }
+            // Bundled-asset basename → URL map. Lets the fetch wrapper
+            // redirect bare-filename fetches (e.g. fetch("RiggedSimple.glb"))
+            // to the canonical /assets/meshes/RiggedSimple.glb path.
+            ;(window as any).__alloBundledAssets = project.getBundledAssetMap()
           } catch (e) {
             console.warn('[asset overlay] preRun setup failed:', e)
           }

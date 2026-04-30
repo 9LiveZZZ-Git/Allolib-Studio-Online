@@ -616,6 +616,12 @@ _al_obj_delete(const char* id)
 | embind over wasm-bindgen | Better C++ class/method exposure to JS |
 | Unified timeline (4 categories) | Single playhead syncs audio + visual + events |
 | Sequencer owns playhead | Audio timing is authoritative; timeline reads from it |
+| Single ParameterRegistry singleton | One source of truth for the Vue Params panel; replaces three competing registration paths (v0.7.0–v0.7.11 unification) |
+| Auto-transpile at compile boundary | Native source pasted into the editor is rewritten on the way to Emscripten so the `PresetHandler→WebPresetHandler` macro fires; editor shows original source, round-trip with native preserved |
+
+### Parameter Pipeline
+
+`al::ParameterRegistry::global()` (`allolib-wasm/include/al_parameter_registry.hpp`) is the single source of truth for what shows up in the Vue Params panel. Three public APIs feed it: `gui << p` (`WebControlGUI`), `mPresets << p` (`WebPresetHandler`), `parameterServer() << p` (`WebParameterServer`). Each path's `operator<<` calls `ParameterRegistry::global().add(&p)` at registration; the JS bridge (`al_webgui_*` C exports in `al_WebControlGUI.cpp`) reads the registry directly. The Pinia parameter store polls the WASM module every 100 ms (cheap — list is short, single-threaded). Registry clears on `WebApp::~WebApp()` so re-running an example doesn't leak ghost params. Direct `ParameterRegistry` access is **not** part of the public surface — examples and helpers must use the three operator paths so the same source compiles unmodified against vanilla AlloLib. Migration history in `docs/PARAMETER_PIPELINE_PLAN.md`.
 
 ### Known Limitations
 - No GLSL→WGSL auto-transpilation (syntax too different)
@@ -726,6 +732,7 @@ _al_obj_delete(const char* id)
 | `e2e/comprehensive-functional-tests.spec.ts` | All 155 examples × 2 backends (100% pass) |
 | `e2e/true-functional-tests.spec.ts` | 13 focused interaction/animation tests |
 | `e2e/enhanced-functional-tests.spec.ts` | Visual expectation verification with baselines |
+| `e2e/parameter-pipeline.spec.ts` | Parameter pipeline regressions (5 phases) |
 | `e2e/visual-verification.ts` | Baseline management, color analysis utilities |
 | `e2e/visual-expectations.ts` | Per-example visual expectation definitions |
 | `scripts/test-compilation.ts` | Headless compilation test suite |

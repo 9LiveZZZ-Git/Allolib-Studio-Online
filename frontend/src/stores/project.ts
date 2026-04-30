@@ -344,6 +344,14 @@ export const useProjectStore = defineStore('project', () => {
     return Array.from(binaryAssets.value.entries()).map(([path, bytes]) => ({ path, bytes }))
   }
 
+  /// Bundled asset registry — exported so the runtime fetch overlay can
+  /// redirect bare-filename fetches to the canonical /assets/... URL.
+  /// (M8.6: makes the modal's "BUNDLED" status badge load-bearing at
+  /// runtime, not just informational.)
+  function getBundledAssetMap(): Map<string, string> {
+    return new Map(BUNDLED_ASSETS)
+  }
+
   /**
    * Add a new file or update an existing file's content.
    * Used for loading examples and importing files.
@@ -788,6 +796,7 @@ f 1 2 3
     addBinaryAsset,
     getBinaryAsset,
     listBinaryAssets,
+    getBundledAssetMap,
 
     // Actions
     setActiveFile,
