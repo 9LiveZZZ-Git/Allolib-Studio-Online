@@ -76,23 +76,24 @@ al::WebParamInfo WebControlGUI::dispatchInfo(ParameterMeta* p, int index) {
     } else if (auto* vp3 = dynamic_cast<al::ParameterVec3*>(p)) {
         info.type = al::WebParamType::VEC3;
         auto v = vp3->get();
-        info.x = v.x; info.y = v.y; info.z = v.z;
+        info.components = {v.x, v.y, v.z};
     } else if (auto* vp4 = dynamic_cast<al::ParameterVec4*>(p)) {
         info.type = al::WebParamType::VEC4;
         auto v = vp4->get();
-        info.x = v.x; info.y = v.y; info.z = v.z; info.w = v.w;
+        info.components = {v.x, v.y, v.z, v.w};
     } else if (auto* cp = dynamic_cast<al::ParameterColor*>(p)) {
         info.type = al::WebParamType::COLOR;
         auto c = cp->get();
-        info.x = c.r; info.y = c.g; info.z = c.b; info.w = c.a;
+        info.components = {c.r, c.g, c.b, c.a};
     } else if (auto* pp = dynamic_cast<al::ParameterPose*>(p)) {
         info.type = al::WebParamType::POSE;
         auto pose = pp->get();
-        info.x = pose.pos().x; info.y = pose.pos().y; info.z = pose.pos().z;
-        // info.w used as quaternion w; quat xyz aren't yet plumbed through
-        // WebParamInfo — Vue side reconstructs from Euler. (Pre-v0.7.1 the
-        // single-w field was the same compromise.)
-        info.w = (float)pose.quat().w;
+        // POSE component layout: x, y, z, qw, qx, qy, qz (7 floats).
+        info.components = {
+            (float)pose.pos().x, (float)pose.pos().y, (float)pose.pos().z,
+            (float)pose.quat().w, (float)pose.quat().x,
+            (float)pose.quat().y, (float)pose.quat().z
+        };
     }
     return info;
 }
