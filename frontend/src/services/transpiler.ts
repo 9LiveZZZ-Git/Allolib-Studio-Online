@@ -260,12 +260,51 @@ const nativeToWebPatterns: Array<{
   // and can be included alongside the upstream header.
 
   // Include transformations - Asset loading (native uses Assimp, web uses custom loaders)
-  // M8.1+: WebGLTF (cgltf-based) is the modern path for 3D model loading.
-  // WebOBJ remains for legacy .obj files; al::Scene (Assimp) maps to WebGLTF.
+  // M8.6: al::Scene from al_ext/assets3d/al_Asset.hpp maps to al::WebScene
+  // (the al::Scene-shaped wrapper around WebGLTF). User code reads as pure
+  // vanilla AlloLib; the rewrite pair (include path + symbol below) is
+  // what makes it run unchanged on web.
   {
     pattern: /#include\s*["<]al_ext\/assets3d\/al_Asset\.hpp[">]/g,
-    replacement: '#include "al_WebGLTF.hpp"  // M8: WebGLTF (cgltf) replaces Assimp-based al::Scene',
+    replacement: '#include "al_WebScene.hpp"  // M8.6: WebScene mirrors al::Scene API on top of cgltf',
     description: 'Asset3D include'
+  },
+  // M8.6: rewrite the al::Scene symbol to al::WebScene wherever it appears.
+  // The matched contexts cover the common patterns in vanilla code:
+  //   al::Scene*   pointer declarations
+  //   al::Scene::import(...)   static factory call
+  //   Scene*  scene;           (after `using namespace al;`)
+  //   Scene::import(...)       same
+  // Be conservative: only rewrite when surrounded by word boundaries and
+  // not preceded by `class ` or `struct ` (those would be unrelated user
+  // types that happen to be named Scene).
+  {
+    pattern: /(?<!class\s)(?<!struct\s)\b(al::)?Scene\b/g,
+    replacement: (match: string, ns?: string) => {
+      // Skip if it's part of a longer identifier (DistributedScene,
+      // DynamicScene, MyScene, etc.) — \b before "Scene" plus the
+      // negative-lookbehind on class/struct catches user types, but
+      // multi-word matches (Scene + suffix) are already excluded by the
+      // \b after "Scene" in the regex.
+      const prefix = ns ?? ''
+      return `${prefix}WebScene`
+    },
+    description: 'al::Scene symbol → al::WebScene'
+  },
+  // M8.6: strip user-side cgltf implementation include + macro on web.
+  // cgltf is bundled into libal_web.a (see allolib-wasm/src/al_WebGLTF.cpp);
+  // user code redefining CGLTF_IMPLEMENTATION causes wasm-ld duplicate
+  // symbol errors for every cgltf_* function. Vanilla code that includes
+  // cgltf directly is rare but happens (some users vendor it themselves).
+  {
+    pattern: /#define\s+CGLTF_IMPLEMENTATION[^\n]*\n/g,
+    replacement: '// CGLTF_IMPLEMENTATION stripped on web — cgltf lives in libal_web.a\n',
+    description: 'CGLTF_IMPLEMENTATION strip',
+  },
+  {
+    pattern: /#include\s*["<]cgltf\.h[">][^\n]*\n/g,
+    replacement: '// cgltf.h include stripped on web — types come via al_WebScene.hpp\n',
+    description: 'cgltf.h include strip',
   },
 
   // Base class transformations
@@ -524,6 +563,14 @@ const webToNativePatterns: Array<{
     pattern: /#include\s*["<]al_WebGLTF\.hpp[">]/g,
     replacement: '#include "native_compat/al_NativeGLTF.hpp"  // WebGLTF -> NativeGLTF (same al::WebGLTF symbol; needs cgltf.h on -I)',
     description: 'WebGLTF include'
+  },
+  // M8.6: WebScene -> NativeScene. Studio code that opts into the
+  // al::Scene-shaped wrapper uses al_WebScene.hpp; native_compat provides
+  // the same al::WebScene symbol against vanilla AlloLib + cgltf.h.
+  {
+    pattern: /#include\s*["<]al_WebScene\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeScene.hpp"  // WebScene -> NativeScene (al::Scene-shaped wrapper)',
+    description: 'WebScene include'
   },
   {
     pattern: /#include\s*["<]al_WebHDR\.hpp[">]/g,
