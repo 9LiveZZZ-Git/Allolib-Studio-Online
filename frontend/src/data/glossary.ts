@@ -3484,7 +3484,27 @@ void onDraw(Graphics& g) override {
     }
 }`,
     platforms: ['both'],
-    relatedTerms: ['Mesh', 'LODMesh', 'WebEnvironment'],
+    relatedTerms: ['Mesh', 'LODMesh', 'WebEnvironment', 'WebGLTF'],
+  },
+  {
+    term: 'WebGLTF',
+    category: 'studio',
+    definition: 'glTF 2.0 model loader (M8). Replaces the Assimp-based al::Scene from al_ext/assets3d/al_Asset.hpp with a cgltf-based implementation that walks the scene graph, applies node world transforms, and flattens primitives into an al::Mesh. Per-primitive PBR materials (WebGLTFMaterial) and embedded image bytes (WebGLTFImage) are exposed for downstream texture/material binding. Same al::WebGLTF symbol on both web and native (via native_compat/al_NativeGLTF.hpp + cgltf.h drop-in) — user source is byte-identical across both targets.',
+    syntax: 'WebGLTF gltf;\ngltf.load("/assets/meshes/Duck.glb");',
+    example: `WebGLTF duck;
+
+void onCreate() override {
+    duck.load("/assets/meshes/Duck.glb", [&](bool ok) {
+        if (ok) std::cout << duck.primitiveCount() << " primitives\\n";
+    });
+}
+
+void onDraw(Graphics& g) override {
+    if (duck.ready()) g.draw(duck.mesh());
+}`,
+    platforms: ['both'],
+    webAlternative: 'On web, fetch is async via WebFile (load() returns immediately, callback fires when bytes arrive). On native, load() reads from disk synchronously and the callback fires before load() returns. Mesh extraction logic is identical line-for-line; tests in AlloLib Native Test Files/M8_*.cpp validate parity.',
+    relatedTerms: ['WebOBJ', 'Mesh', 'WebPBR'],
   },
   {
     term: 'WebHDR',

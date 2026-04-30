@@ -462,6 +462,14 @@ const webToNativePatterns: Array<{
     replacement: '#include "native_compat/al_NativeOBJ.hpp"  // WebOBJ -> NativeOBJ (same API)',
     description: 'WebOBJ include'
   },
+  // M8.4: WebGLTF -> NativeGLTF — same al::WebGLTF symbol on both sides,
+  // user source compiles unchanged once cgltf.h is dropped in next to the
+  // include path (single-header, MIT, no link step required).
+  {
+    pattern: /#include\s*["<]al_WebGLTF\.hpp[">]/g,
+    replacement: '#include "native_compat/al_NativeGLTF.hpp"  // WebGLTF -> NativeGLTF (same al::WebGLTF symbol; needs cgltf.h on -I)',
+    description: 'WebGLTF include'
+  },
   {
     pattern: /#include\s*["<]al_WebHDR\.hpp[">]/g,
     replacement: '#include "native_compat/al_NativeHDR.hpp"  // WebHDR -> NativeHDR (same API, uses stb_image)',
