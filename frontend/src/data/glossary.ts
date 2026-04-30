@@ -3200,16 +3200,19 @@ void onAnimate(double dt) override {
   {
     term: 'PresetHandler',
     category: 'types',
-    definition: 'Manages saving and loading parameter presets to/from files. Supports morphing between presets. Studio Online users should prefer WebPresetHandler — same API, plus auto-mirror to the Studio Params panel and IDBFS-backed persistence across reloads.',
-    syntax: 'WebPresetHandler presets{"/presets"};',
-    example: `WebPresetHandler presets;  // defaults to /presets root, ASYNC morph
-presets << amplitude << frequency;     // also lights up Studio Params panel
-presets.storePreset("brass");          // writes /presets/brass.preset, IDBFS-synced
+    definition: 'Manages saving and loading parameter presets to/from files. Supports morphing between presets. On Studio Online, write bare `PresetHandler` and the compat layer routes it through `WebPresetHandler` automatically — every parameter registered via `<<` populates the Studio Params panel. The same registration via `ControlGUI gui;` or `parameterServer() << p` also populates the panel; pick whichever path matches your code, all three feed the same canonical ParameterRegistry.',
+    syntax: 'PresetHandler presets{"./presets"};',
+    example: `PresetHandler presets;                 // bare; web maps to WebPresetHandler
+presets << amplitude << frequency;     // populates Studio Params panel
+presets.storePreset("brass");          // writes presets/brass.preset (IDBFS-synced on web)
 presets.recallPreset("brass");
-presets.morphTo("dark", 2.0);          // 2-second morph (or recallPreset("dark", 2.0))`,
+presets.morphTo("dark", 2.0);          // 2-second morph
+// Equivalent panel population via either of:
+//   gui << amplitude;                  (ControlGUI route)
+//   parameterServer() << amplitude;    (OSC route — also populates panel)`,
     platforms: ['both'],
-    webAlternative: 'WebPresetHandler is the Studio Online subclass; bare PresetHandler also links via upstream AlloLib but lacks the Studio Params auto-mirror.',
-    relatedTerms: ['Parameter', 'ControlGUI', 'SynthGUIManager'],
+    webAlternative: 'Bare PresetHandler in user code is automatically promoted to WebPresetHandler by the compat layer (path normalization under /presets, IDBFS persistence, auto-feed to ParameterRegistry). Native compiles untouched — round-trip preserved.',
+    relatedTerms: ['Parameter', 'ControlGUI', 'SynthGUIManager', 'ParameterServer'],
   },
   {
     term: 'ParameterBundle',

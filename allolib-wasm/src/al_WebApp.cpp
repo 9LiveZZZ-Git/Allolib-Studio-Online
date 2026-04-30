@@ -187,6 +187,13 @@ WebApp::~WebApp() {
     cleanupAudio();
     cleanupBackend();
     cleanupGraphics();
+    // Phase 7 (Q3-approved): clear the canonical ParameterRegistry on
+    // WebApp teardown so re-running an example doesn't leave ghost
+    // parameters in the Studio panel from the previous run. Users
+    // reported "phantom params" in the v0.4.5 era as a bug; this
+    // closes the loop. Bumps version + fires onChange(nullptr) so any
+    // subscribers (Vue panel polling fallback) see the reset.
+    ParameterRegistry::global().clear();
 }
 
 void WebApp::configureWebAudio(const WebAudioConfig& config) {
@@ -208,7 +215,7 @@ void WebApp::dimensions(int width, int height) {
 // Stamped into the WASM library at compile time. If the Railway docker cache
 // shipped a stale libal_web.a, this won't match the frontend version and the
 // user can see the mismatch immediately.
-#define ALLOLIB_WASM_LIB_VERSION "0.7.8"
+#define ALLOLIB_WASM_LIB_VERSION "0.7.9"
 
 void WebApp::start() {
     if (mRunning) return;
