@@ -205,9 +205,11 @@ const nativeToWebPatterns: Array<{
   // and can be included alongside the upstream header.
 
   // Include transformations - Asset loading (native uses Assimp, web uses custom loaders)
+  // M8.1+: WebGLTF (cgltf-based) is the modern path for 3D model loading.
+  // WebOBJ remains for legacy .obj files; al::Scene (Assimp) maps to WebGLTF.
   {
     pattern: /#include\s*["<]al_ext\/assets3d\/al_Asset\.hpp[">]/g,
-    replacement: '#include "al_WebOBJ.hpp"  // Web uses WebOBJ instead of Assimp',
+    replacement: '#include "al_WebGLTF.hpp"  // M8: WebGLTF (cgltf) replaces Assimp-based al::Scene',
     description: 'Asset3D include'
   },
 

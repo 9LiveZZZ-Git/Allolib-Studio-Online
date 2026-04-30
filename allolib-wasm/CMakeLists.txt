@@ -252,6 +252,7 @@ set(WEB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_FBOBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_FBO_Web.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/al_EasyFBO_Web.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/al_WebGLTF.cpp
 )
 
 # WebGL2 backend sources - always included (needed for al::Graphics)
