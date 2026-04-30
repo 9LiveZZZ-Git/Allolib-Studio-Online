@@ -879,22 +879,48 @@ export function transpileToWeb(code: string): TranspileResult {
   // user's own main() can stay — the link uses --no-entry, so it is
   // harmless dead code.
   if (!result.includes('ALLOLIB_WEB_MAIN')) {
-    // Match class OR struct, with optional template clause, deriving from
-    // any (al::)?WebApp. Falls back to grabbing the type used in
-    // `<Type> app; app.start();` if no derivation is found inline.
+    // Strict regex: matches `class Foo : public WebApp` / `struct Foo : public WebApp`
+    // INLINE — no `{` allowed between the class name and the inheritance
+    // clause. Earlier `[\s\S]{0,400}?` was too loose: it picked the FIRST
+    // class declared anywhere within 400 chars of `: public WebApp`, so
+    // a file like flocking.cpp's `class Boid { ... }; class FlockingApp :
+    // public App { ... }` would incorrectly tag Boid as the app class.
     let appClass: string | undefined
-    const derivedMatch = result.match(
-      /(?:class|struct)\s+(\w+)\b[\s\S]{0,400}?:\s*public\s+(?:al::)?WebApp\b/
-    )
-    if (derivedMatch) {
-      appClass = derivedMatch[1]
-    } else {
-      const startCallMatch = result.match(
-        /\b(\w+)\s+\w+\s*;[\s\S]{0,400}?\b\w+\.start\s*\(\s*\)/
-      )
-      if (startCallMatch && /^[A-Z]/.test(startCallMatch[1])) {
-        appClass = startCallMatch[1]
+    const STRICT_DERIVED =
+      /(?:class|struct)\s+(\w+)\s+(?:final\s+)?:\s*[^{;]*?\bpublic\s+(?:al::)?WebApp\b/g
+    const derived = Array.from(result.matchAll(STRICT_DERIVED)).map(m => m[1])
+    if (derived.length === 1) {
+      appClass = derived[0]
+    } else if (derived.length > 1) {
+      // Multiple App-derived classes (rare but legal). Pick the one
+      // instantiated inside int main(); if none of them are, fall back
+      // to the last declared (typically the user's most-derived class).
+      const mainBody = result.match(/int\s+main\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)
+      if (mainBody) {
+        for (const cls of derived) {
+          if (new RegExp(`\\b${cls}\\b`).test(mainBody[1])) {
+            appClass = cls
+            break
+          }
+        }
       }
+      if (!appClass) appClass = derived[derived.length - 1]
+    } else {
+      // Fall back to scanning for `<Type> app; ... app.start();` /
+      // `app->start();` / `std::make_unique<Type>(); ...->start();`.
+      // Scan window widened to 2000 chars to handle main bodies that
+      // configure audio, set window size, etc. before `start()`.
+      const dotStart = result.match(
+        /\b([A-Z]\w*)\s+\w+\s*(?:\([^)]*\))?\s*;[\s\S]{0,2000}?\b\w+\.start\s*\(\s*\)/
+      )
+      const arrowStart = result.match(
+        /\b([A-Z]\w*)\s*\*\s*\w+\s*=[\s\S]{0,500}?;[\s\S]{0,2000}?->start\s*\(\s*\)/
+      )
+      const makeUnique = result.match(
+        /make_(?:unique|shared)\s*<\s*([A-Z]\w*)\s*>[\s\S]{0,2000}?->start\s*\(\s*\)/
+      )
+      const cand = dotStart?.[1] || arrowStart?.[1] || makeUnique?.[1]
+      if (cand) appClass = cand
     }
     if (appClass) {
       // Strip any existing `int main(...) { ... }` block before injecting,
