@@ -391,40 +391,47 @@ private:
     static int sNextRequestId;
 };
 
-// Static member definitions
-WebFile::UploadCallback WebFile::sUploadCallback;
-WebFile::MultiUploadCallback WebFile::sMultiUploadCallback;
-WebFile::UploadCallback WebFile::sURLCallback;
-std::vector<UploadedFile> WebFile::sBatchFiles;
-std::map<int, WebFile::UploadCallback> WebFile::sURLCallbacks;
-int WebFile::sNextRequestId = 1;
+// Static member definitions — `inline` (C++17) so this header can be
+// included from multiple translation units (user main.cpp AND
+// libal_web.a's al_WebGLTF.cpp, both reach WebFile via includes) without
+// wasm-ld's "duplicate symbol" trap. Without inline, the lib + user TU
+// both emit a non-weak definition and the linker rejects.
+inline WebFile::UploadCallback WebFile::sUploadCallback;
+inline WebFile::MultiUploadCallback WebFile::sMultiUploadCallback;
+inline WebFile::UploadCallback WebFile::sURLCallback;
+inline std::vector<UploadedFile> WebFile::sBatchFiles;
+inline std::map<int, WebFile::UploadCallback> WebFile::sURLCallbacks;
+inline int WebFile::sNextRequestId = 1;
 
 } // namespace al
 
-// C callbacks for JavaScript - must be exported with EMSCRIPTEN_KEEPALIVE
+// C callbacks for JavaScript — must be exported with EMSCRIPTEN_KEEPALIVE.
+// Marked `inline` so multiple TUs that include this header don't produce
+// duplicate symbols at link time (same reason as the static members
+// above). Emscripten still picks them up as exports via KEEPALIVE.
 extern "C" {
     EMSCRIPTEN_KEEPALIVE
-    void _al_web_file_uploaded(const char* name, const char* mime, uint8_t* data, int size, int isBatch) {
+    inline void _al_web_file_uploaded(const char* name, const char* mime, uint8_t* data, int size, int isBatch) {
         al::WebFile::_onFileUploaded(name, mime, data, size, isBatch != 0);
     }
 
     EMSCRIPTEN_KEEPALIVE
-    void _al_web_file_batch_start(int count) {
+    inline void _al_web_file_batch_start(int count) {
         al::WebFile::_onBatchStart(count);
     }
 
     EMSCRIPTEN_KEEPALIVE
-    void _al_web_file_batch_end() {
+    inline void _al_web_file_batch_end() {
         al::WebFile::_onBatchEnd();
     }
 
     EMSCRIPTEN_KEEPALIVE
-    void _al_web_file_url_loaded(const char* name, const char* mime, uint8_t* data, int size) {
+    inline void _al_web_file_url_loaded(const char* name, const char* mime, uint8_t* data, int size) {
         al::WebFile::_onURLLoaded(name, mime, data, size);
     }
 
     EMSCRIPTEN_KEEPALIVE
-    void _al_web_file_url_loaded_v2(int requestId, const char* url, const char* mime, uint8_t* data, int size) {
+    inline void _al_web_file_url_loaded_v2(int requestId, const char* url, const char* mime, uint8_t* data, int size) {
         al::WebFile::_onURLLoadedV2(requestId, url, mime, data, size);
     }
 }
