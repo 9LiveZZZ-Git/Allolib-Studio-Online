@@ -269,6 +269,22 @@ const nativeToWebPatterns: Array<{
     replacement: '#include "al_WebScene.hpp"  // M8.6: WebScene mirrors al::Scene API on top of cgltf',
     description: 'Asset3D include'
   },
+  // M8.3b: import-side mirrors of the M8.4 export rewrites. Tests authored
+  // against the native_compat shims for desktop builds round-trip cleanly
+  // back to the studio's web headers. Lets a single source file be the
+  // canonical form on both sides — the desktop side ships native_compat
+  // alongside cgltf.h, the studio side has libal_web.a built from these
+  // exact .hpp/.cpp pairs.
+  {
+    pattern: /#include\s*["<]native_compat\/al_NativeScene\.hpp[">]/g,
+    replacement: '#include "al_WebScene.hpp"  // M8.6: native_compat mirror → studio header',
+    description: 'NativeScene include'
+  },
+  {
+    pattern: /#include\s*["<]native_compat\/al_NativeGLTF\.hpp[">]/g,
+    replacement: '#include "al_WebGLTF.hpp"  // M8.4: native_compat mirror → studio header',
+    description: 'NativeGLTF include'
+  },
   // M8.6: rewrite the al::Scene symbol to al::WebScene wherever it appears.
   // The matched contexts cover the common patterns in vanilla code:
   //   al::Scene*   pointer declarations
