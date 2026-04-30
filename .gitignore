@@ -8,9 +8,25 @@ al_ext/
 
 # AlloLib docs (local reference copy, not pushed)
 allolib-docs/
+docs/
 
 # Native test fixtures for milestone validation (not pushed; uploaded via Import Native UI)
 AlloLib Native Test Files/
+
+# Claude-generated planning / audit docs (local-only working drafts).
+# Project-canon docs (CLAUDE.md, README.md, PROJECT.md, SECURITY.md, LICENSE)
+# stay tracked. Audit/plan/redesign artifacts that accumulate during a
+# session don't need to be in git history — they're scratchpad output.
+FRONTEND_AUDIT.md
+MAT200B_EXAMPLES_PLAN.md
+MAT245_EXAMPLES_PLAN.md
+NATIVE_COMPAT_AUDIT_*.md
+NATIVE_COMPAT_PLAN.md
+PARAMETER_PIPELINE_PLAN.md
+PLAN.md
+TIMELINE_REDESIGN_PLAN.md
+WIKI_PLAN.md
+COMPATIBILITY_REPORT.md
 
 # Build outputs
 dist/
