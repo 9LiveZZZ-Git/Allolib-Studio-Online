@@ -1969,6 +1969,1612 @@ public:
 ALLOLIB_WEB_MAIN(AllpassDispersion)
 `,
   },
+  {
+    id: 'mat-1d-waveguide',
+    title: '1D Waveguide Instrument',
+    description:
+      'Real bidirectional waveguide string: two delay lines (left-going and right-going waves) exchange energy at each end through one-zero lowpass reflections. Pluck = noise burst written into both lines centred on the pluck position; pickup taps both lines at a configurable position. Tweak stiffness/damping to morph from piano-string to nylon-guitar to almost-rubber-band — and watch both travelling waves as separate strips on screen.',
+    category: 'mat-synthesis',
+    subcategory: 'physical',
+    code: `/**
+ * 1D Waveguide Instrument — MAT200B Phase 2 (physical models)
+ *
+ * Bidirectional digital waveguide model of a string. Unlike a
+ * Karplus-Strong delay-line which folds both travelling waves into a
+ * single buffer, here we keep them separate:
+ *
+ *   rightGoing[]  — wave moving toward the right boundary
+ *   leftGoing[]   — wave moving toward the left boundary
+ *
+ * Each audio sample reflects with a sign flip + one-zero lowpass at
+ * each boundary; the reflected sample feeds the OPPOSITE delay line.
+ * 'stiffness' opens the boundary lowpass for a brighter, more piano-
+ * like ring; 'damping' is the per-section feedback gain.
+ *
+ *   pitch_hz     50..1200  Hz       fundamental (delay length D = sr/f)
+ *   pluckPos     0.05..0.95          pluck location along the string
+ *   pickupPos    0.05..0.95          pickup tap location
+ *   damping      0.90..1.00          per-sample feedback gain
+ *   stiffness    0.0..1.0            boundary one-zero coefficient blend
+ *   excitation   0.0..1.0            pluck noise amplitude
+ *   pluck        Trigger             fires a new pluck burst
+ */
+
+#include "al_playground_compat.hpp"
+
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <vector>
+
+using namespace al;
+
+class WaveguideString : public App {
+public:
+  Parameter pitch_hz   {"pitch_hz",   "", 220.0f, 50.0f, 1200.0f};
+  Parameter pluckPos   {"pluckPos",   "",   0.30f, 0.05f,  0.95f};
+  Parameter pickupPos  {"pickupPos",  "",   0.65f, 0.05f,  0.95f};
+  Parameter damping    {"damping",    "",   0.99f, 0.90f,  1.00f};
+  Parameter stiffness  {"stiffness",  "",   0.30f, 0.0f,   1.0f};
+  Parameter excitation {"excitation", "",   0.60f, 0.0f,   1.0f};
+  Trigger   pluck      {"pluck",      ""};
+
+  ControlGUI gui;
+
+  static constexpr int MAX_DELAY = 4096;
+  std::vector<float> rightGoing;
+  std::vector<float> leftGoing;
+
+  int   delayLen = 256;
+  int   writeIdxR = 0;
+  int   writeIdxL = 0;
+
+  float lpStateLeft  = 0.f;
+  float lpStateRight = 0.f;
+
+  std::atomic<int> pluckPending{0};
+  std::atomic<int> delayLenAtomic{256};
+
+  Mesh rightStrip, leftStrip, gridMesh, pickupMarker;
+
+  void onInit() override {
+    gui << pitch_hz << pluckPos << pickupPos
+        << damping << stiffness << excitation << pluck;
+    pluck.registerChangeCallback([this](float) {
+      pluckPending.store(1, std::memory_order_release);
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    rightGoing.assign(MAX_DELAY, 0.f);
+    leftGoing.assign(MAX_DELAY, 0.f);
+    nav().pos(0, 0, 3.5f);
+  }
+
+  static inline float tap(const std::vector<float>& buf, int writeIdx, int pos) {
+    int idx = writeIdx - pos;
+    while (idx < 0) idx += MAX_DELAY;
+    return buf[idx % MAX_DELAY];
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float sr = io.framesPerSecond();
+    const int   D  = std::max(4, std::min(MAX_DELAY - 1,
+                       static_cast<int>(sr / pitch_hz.get())));
+    delayLen = D;
+    delayLenAtomic.store(D, std::memory_order_release);
+
+    const float fb    = damping.get();
+    const float aLP   = 0.5f - 0.5f * stiffness.get();
+
+    if (pluckPending.exchange(0, std::memory_order_acquire)) {
+      const int   center = static_cast<int>(pluckPos.get() * D);
+      const int   width  = std::max(8, D / 4);
+      const float amp    = excitation.get() * 0.5f;
+      for (int i = 0; i < D; ++i) {
+        const int dist = std::abs(i - center);
+        const int idxR = ((writeIdxR - i) % MAX_DELAY + MAX_DELAY) % MAX_DELAY;
+        const int idxL = ((writeIdxL - i) % MAX_DELAY + MAX_DELAY) % MAX_DELAY;
+        if (dist < width / 2) {
+          const float w = 1.0f - (2.0f * dist / static_cast<float>(width));
+          const float n = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+          const float v = n * w * amp;
+          rightGoing[idxR] = v;
+          leftGoing[idxL]  = v;
+        } else {
+          rightGoing[idxR] *= 0.5f;
+          leftGoing[idxL]  *= 0.5f;
+        }
+      }
+      lpStateLeft = lpStateRight = 0.f;
+    }
+
+    const int pickupTap = std::max(1, std::min(D - 2,
+                            static_cast<int>(pickupPos.get() * D)));
+
+    while (io()) {
+      const float rAtRight = tap(rightGoing, writeIdxR, D - 1);
+      const float lAtLeft  = tap(leftGoing,  writeIdxL, D - 1);
+
+      const float lpLeft  = (1.0f - aLP) * lAtLeft  + aLP * lpStateLeft;
+      lpStateLeft = lAtLeft;
+      const float lpRight = (1.0f - aLP) * rAtRight + aLP * lpStateRight;
+      lpStateRight = rAtRight;
+
+      const float intoRight = -lpLeft  * fb;
+      const float intoLeft  = -lpRight * fb;
+
+      const float pR = tap(rightGoing, writeIdxR, pickupTap);
+      const float pL = tap(leftGoing,  writeIdxL, D - 1 - pickupTap);
+      const float out = (pR + pL) * 0.5f;
+
+      writeIdxR = (writeIdxR + 1) % MAX_DELAY;
+      writeIdxL = (writeIdxL + 1) % MAX_DELAY;
+      rightGoing[writeIdxR] = intoRight;
+      leftGoing[writeIdxL]  = intoLeft;
+
+      io.out(0) = out;
+      io.out(1) = out;
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const int D = delayLenAtomic.load(std::memory_order_acquire);
+    constexpr int VN = 384;
+    const int step = std::max(1, D / VN);
+
+    rightStrip.reset();
+    rightStrip.primitive(Mesh::LINE_STRIP);
+    leftStrip.reset();
+    leftStrip.primitive(Mesh::LINE_STRIP);
+
+    int count = 0;
+    for (int k = 0; k < D && count < VN; k += step, ++count) {
+      const float t = static_cast<float>(count) / VN;
+      const float x = -1.4f + 2.8f * t;
+
+      const float vr = tap(rightGoing, writeIdxR, k);
+      rightStrip.vertex(x, 0.5f + vr * 0.6f, 0.f);
+      rightStrip.color(0.95f, 0.55f + 0.3f * t, 0.30f);
+
+      const float vl = tap(leftGoing, writeIdxL, D - 1 - k);
+      leftStrip.vertex(x, -0.5f + vl * 0.6f, 0.f);
+      leftStrip.color(0.30f, 0.65f + 0.3f * t, 0.95f);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f,  0.5f, 0.f); gridMesh.vertex(1.4f,  0.5f, 0.f);
+    gridMesh.vertex(-1.4f, -0.5f, 0.f); gridMesh.vertex(1.4f, -0.5f, 0.f);
+    for (int i = 0; i < 4; ++i) gridMesh.color(0.22f, 0.22f, 0.25f);
+
+    pickupMarker.reset();
+    pickupMarker.primitive(Mesh::TRIANGLES);
+    const float px = -1.4f + 2.8f * pickupPos.get();
+    auto addDot = [&](float cx, float cy, float r) {
+      const int seg = 16;
+      for (int s = 0; s < seg; ++s) {
+        const float a0 = 2.0f * 3.14159265f * s       / seg;
+        const float a1 = 2.0f * 3.14159265f * (s + 1) / seg;
+        pickupMarker.vertex(cx, cy, 0.f);
+        pickupMarker.vertex(cx + r * std::cos(a0), cy + r * std::sin(a0), 0.f);
+        pickupMarker.vertex(cx + r * std::cos(a1), cy + r * std::sin(a1), 0.f);
+        pickupMarker.color(1.0f, 0.85f, 0.20f);
+        pickupMarker.color(1.0f, 0.85f, 0.20f);
+        pickupMarker.color(1.0f, 0.85f, 0.20f);
+      }
+    };
+    addDot(px,  0.5f, 0.04f);
+    addDot(px, -0.5f, 0.04f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.05f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(rightStrip);
+    g.draw(leftStrip);
+    g.draw(pickupMarker);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(WaveguideString)
+`,
+  },
+  {
+    id: 'mat-subtractive',
+    title: 'Subtractive Synth — Saw + Resonant Filter',
+    description:
+      "Classic subtractive synthesis: a sawtooth oscillator whose harmonics are sculpted by a resonant lowpass biquad, with two ADSR envelopes — one shaping amplitude, the other sweeping the filter cutoff for that signature 'wah' motion. Visualization plots the filter's pole/zero positions on the complex z-plane (unit circle, two poles inside, two zeros at z=-1) above a live magnitude spectrum so the harmonic carving is visible while you hear it.",
+    category: 'mat-synthesis',
+    subcategory: 'subtractive',
+    code: `/**
+ * Subtractive Synth — Saw + Resonant Filter — MAT200B Phase 2
+ *
+ * Source -> filter -> amp envelope is the textbook subtractive
+ * voice. A sawtooth is harmonically dense (1/k spectrum), a
+ * resonant lowpass biquad carves a band, and an ADSR shapes
+ * amplitude. A second ADSR with its own depth ('env_amount') is
+ * summed into the filter cutoff for the classic synth-bass sweep.
+ *
+ * Visual top: z-plane unit circle with illustrative pole/zero dots.
+ * Visual bottom: 256-pt Hann-windowed inline DFT of the output.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Filter.h"
+#include "Gamma/Envelope.h"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class Subtractive : public App {
+public:
+  Parameter pitch_hz   {"pitch_hz",   "",  110.0f,  40.0f, 1200.0f};
+  Parameter cutoff_hz  {"cutoff_hz",  "", 1200.0f,  50.0f,12000.0f};
+  Parameter resonance  {"resonance",  "",    4.0f,   0.5f,   15.0f};
+  Parameter env_amount {"env_amount", "", 1500.0f,   0.0f, 6000.0f};
+  Parameter attack_ms  {"attack_ms",  "",    5.0f,   1.0f, 1000.0f};
+  Parameter decay_ms   {"decay_ms",   "",  250.0f,  10.0f, 2000.0f};
+  Parameter sustain    {"sustain",    "",    0.5f,   0.0f,    1.0f};
+  Parameter release_ms {"release_ms", "",  500.0f,  10.0f, 3000.0f};
+  Parameter amp        {"amplitude",  "",   0.20f,   0.0f,    1.0f};
+  Trigger   noteOn     {"noteOn",     ""};
+  Trigger   noteOff    {"noteOff",    ""};
+
+  ControlGUI gui;
+
+  gam::Saw<>    saw;
+  gam::Biquad<> lpf;
+  gam::Env<3>   ampEnv;
+  gam::Env<3>   cutEnv;
+
+  std::atomic<int> noteOnPending{0};
+  std::atomic<int> noteOffPending{0};
+
+  std::atomic<float> cutEnvViz{0.f};
+  std::atomic<float> sampleRateHz{48000.f};
+
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  Mesh spectrum, gridMesh, unitCircle, poleMesh, zeroMesh;
+
+  void onInit() override {
+    gui << pitch_hz << cutoff_hz << resonance << env_amount
+        << attack_ms << decay_ms << sustain << release_ms << amp
+        << noteOn << noteOff;
+
+    noteOn.registerChangeCallback([this](float) {
+      noteOnPending.store(1, std::memory_order_release);
+    });
+    noteOff.registerChangeCallback([this](float) {
+      noteOffPending.store(1, std::memory_order_release);
+    });
+
+    ampEnv.levels(0.f, 1.f, sustain.get(), 0.f);
+    ampEnv.sustainPoint(2);
+    cutEnv.levels(0.f, 1.f, sustain.get(), 0.f);
+    cutEnv.sustainPoint(2);
+
+    lpf.type(gam::LOW_PASS);
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float sr = io.framesPerSecond();
+    sampleRateHz.store(sr, std::memory_order_relaxed);
+
+    ampEnv.lengths()[0] = attack_ms.get()  / 1000.f;
+    ampEnv.lengths()[1] = decay_ms.get()   / 1000.f;
+    ampEnv.lengths()[2] = release_ms.get() / 1000.f;
+    ampEnv.levels()[2]  = sustain.get();
+    cutEnv.lengths()[0] = attack_ms.get()  / 1000.f;
+    cutEnv.lengths()[1] = decay_ms.get()   / 1000.f;
+    cutEnv.lengths()[2] = release_ms.get() / 1000.f;
+    cutEnv.levels()[2]  = sustain.get();
+
+    if (noteOnPending.exchange(0, std::memory_order_acquire)) {
+      ampEnv.reset();
+      cutEnv.reset();
+    }
+    if (noteOffPending.exchange(0, std::memory_order_acquire)) {
+      ampEnv.release();
+      cutEnv.release();
+    }
+
+    saw.freq(pitch_hz.get());
+    const float baseFc  = cutoff_hz.get();
+    const float envAmt  = env_amount.get();
+    const float Q       = resonance.get();
+    const float gain    = amp.get();
+
+    while (io()) {
+      const float ce = cutEnv();
+      const float fc = std::min(0.49f * sr,
+                                std::max(20.f, baseFc + envAmt * ce));
+      lpf.set(fc, Q);
+
+      const float src = saw();
+      const float filt = lpf(src);
+      const float ae   = ampEnv();
+      const float y    = filt * ae * gain;
+
+      io.out(0) = y;
+      io.out(1) = y;
+
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = y;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+
+    cutEnvViz.store(cutEnv.value(), std::memory_order_relaxed);
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
+      x[i] = blockBuf[idx] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void addDiscDots(Mesh& m, float cx, float cy, float radius,
+                   float r, float gC, float b) {
+    constexpr int SEG = 12;
+    for (int i = 0; i < SEG; ++i) {
+      const float a0 = 2.0f * static_cast<float>(M_PI) * i       / SEG;
+      const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / SEG;
+      m.vertex(cx, cy, 0.f);
+      m.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
+      m.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
+      m.color(r, gC, b); m.color(r, gC, b); m.color(r, gC, b);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const float sr   = sampleRateHz.load(std::memory_order_relaxed);
+    const float Q    = resonance.get();
+    const float ce   = cutEnvViz.load(std::memory_order_relaxed);
+    const float fc   = std::min(0.49f * sr,
+                       std::max(20.f, cutoff_hz.get() + env_amount.get() * ce));
+
+    constexpr float CX = 0.0f;
+    constexpr float CY = 0.55f;
+    constexpr float R  = 0.45f;
+
+    unitCircle.reset();
+    unitCircle.primitive(Mesh::LINE_STRIP);
+    constexpr int CSEG = 64;
+    for (int i = 0; i <= CSEG; ++i) {
+      const float a = 2.0f * static_cast<float>(M_PI) * i / CSEG;
+      unitCircle.vertex(CX + R * std::cos(a), CY + R * std::sin(a), 0.f);
+      unitCircle.color(0.45f, 0.45f, 0.55f);
+    }
+
+    const float poleR     = std::max(0.0f,
+                              std::min(0.99f, 1.0f - static_cast<float>(M_PI) * fc / (sr * Q)));
+    const float poleTheta = 2.0f * static_cast<float>(M_PI) * fc / sr;
+
+    poleMesh.reset();
+    poleMesh.primitive(Mesh::TRIANGLES);
+    addDiscDots(poleMesh,
+            CX + R * poleR * std::cos(poleTheta),
+            CY + R * poleR * std::sin(poleTheta),
+            0.035f, 0.95f, 0.55f, 0.35f);
+    addDiscDots(poleMesh,
+            CX + R * poleR * std::cos(-poleTheta),
+            CY + R * poleR * std::sin(-poleTheta),
+            0.035f, 0.95f, 0.55f, 0.35f);
+
+    zeroMesh.reset();
+    zeroMesh.primitive(Mesh::TRIANGLES);
+    addDiscDots(zeroMesh, CX - R, CY, 0.030f, 0.30f, 0.85f, 0.95f);
+
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float h  = std::min(0.95f, mag[k] * 6.0f);
+      spectrum.vertex(xx, -1.05f + h, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.55f + 0.35f * t, 0.45f + 0.45f * t, 0.95f - 0.3f * t);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(CX - R - 0.05f, CY, 0.f);
+    gridMesh.vertex(CX + R + 0.05f, CY, 0.f);
+    gridMesh.vertex(CX, CY - R - 0.05f, 0.f);
+    gridMesh.vertex(CX, CY + R + 0.05f, 0.f);
+    gridMesh.vertex(-1.4f, -1.05f, 0.f);
+    gridMesh.vertex( 1.4f, -1.05f, 0.f);
+    for (int k = 0; k < 6; ++k) gridMesh.color(0.22f, 0.22f, 0.28f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.08f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(unitCircle);
+    g.draw(zeroMesh);
+    g.draw(poleMesh);
+    g.draw(spectrum);
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp  (const Mouse&) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(Subtractive)
+`,
+  },
+  {
+    id: 'mat-granular-cloud',
+    title: 'Granular Cloud Visualizer',
+    description:
+      'Granular synthesis lab fed by a bundled CC0 loop. Each grain reads a Hann-windowed slice of the source at a randomized position and pitch shift. Visualization plots every active grain as a glowing dot in (source position x semitone) space, fading from bright to dark as the grain ages. Knobs cover density, grain length, position spread, pitch spread, pan spread, and amplitude.',
+    category: 'mat-synthesis',
+    subcategory: 'granular',
+    code: `/**
+ * Granular Cloud Visualizer — MAT200B granular synthesis
+ *
+ * Streams a bundled CC0 loop through a fixed-size pool of 32 grains.
+ * Each grain has a Hann envelope, randomized start position, pitch
+ * shift, and pan; advances by srcSR/hostSR per output sample.
+ *
+ * Visualization: every active grain plotted as a small disc at
+ * (sourcePos, semitones) — newest grains glow, retiring grains
+ * fade to dark.
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class GranularCloud : public App {
+public:
+  ParameterMenu source         {"source",          ""};
+  Parameter     density_hz     {"density_hz",      "",  8.0f,  1.0f,  50.0f};
+  Parameter     grain_ms       {"grain_ms",        "", 80.0f, 10.0f, 500.0f};
+  Parameter     position_spread{"position_spread", "",  0.30f, 0.0f,   1.0f};
+  Parameter     centerPos      {"centerPos",       "",  0.30f, 0.0f,   1.0f};
+  Parameter     pitch_spread   {"pitch_spread",    "",  4.0f,  0.0f,  12.0f};
+  Parameter     pan_spread     {"pan_spread",      "",  0.60f, 0.0f,   1.0f};
+  Parameter     amp            {"amp",             "",  0.40f, 0.0f,   1.0f};
+
+  ControlGUI gui;
+
+  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer* current = &drums;
+
+  static constexpr int MAX_GRAINS = 32;
+
+  struct Grain {
+    bool   active   = false;
+    int    startFrame = 0;
+    double curFrame  = 0.0;
+    float  pitchRatio = 1.f;
+    int    dur       = 1;
+    int    age       = 0;
+    float  pan       = 0.f;
+    float  semitones = 0.f;
+  };
+  std::array<Grain, MAX_GRAINS> grains{};
+
+  struct GrainSnap {
+    bool  active;
+    float startNorm;
+    float semitones;
+    float ageNorm;
+  };
+  std::array<GrainSnap, MAX_GRAINS> snap{};
+  std::atomic<int> snapPublish{0};
+
+  static float frand(float lo, float hi) {
+    const float u = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+    return lo + u * (hi - lo);
+  }
+
+  Mesh cloudMesh, gridMesh, bandMesh;
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+
+    gui << source << density_hz << grain_ms << position_spread
+        << centerPos << pitch_spread << pan_spread << amp;
+
+    source.registerChangeCallback([this](float v) {
+      switch (static_cast<int>(v)) {
+        case 0: current = &drums; break;
+        case 1: current = &pad;   break;
+        case 2: current = &mixed; break;
+      }
+      for (auto& g : grains) g.active = false;
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    drums.load("drum_loop_120bpm.wav");
+    pad.load("pad_loop.wav");
+    mixed.load("mixed_loop.wav");
+    nav().pos(0, 0, 4.0f);
+  }
+
+  int allocGrain() {
+    for (int i = 0; i < MAX_GRAINS; ++i) {
+      if (!grains[i].active) return i;
+    }
+    return -1;
+  }
+
+  void onSound(AudioIOData& io) override {
+    if (!current || !current->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const float  sr        = io.framesPerSecond();
+    const float  srcSR     = current->sampleRate() > 1.f ? current->sampleRate() : sr;
+    const double rateRatio = static_cast<double>(srcSR) / static_cast<double>(sr);
+    const int    nFrames   = current->frames();
+    if (nFrames <= 1) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+
+    const float density = density_hz.get();
+    const float gMs     = grain_ms.get();
+    const float posSpr  = position_spread.get();
+    const float ctr     = centerPos.get();
+    const float pSpr    = pitch_spread.get();
+    const float panSpr  = pan_spread.get();
+    const float gain    = amp.get();
+    const float pSpawn  = density / sr;
+    const int   gDur    = std::max(1, static_cast<int>(gMs * 0.001f * sr));
+
+    while (io()) {
+      if (frand(0.f, 1.f) < pSpawn) {
+        const int slot = allocGrain();
+        if (slot >= 0) {
+          Grain& gr = grains[slot];
+          const float posNorm = std::min(0.999f, std::max(0.f,
+              ctr + frand(-posSpr, +posSpr)));
+          const float st = frand(-pSpr, +pSpr);
+          gr.active     = true;
+          gr.startFrame = static_cast<int>(posNorm * (nFrames - 1));
+          gr.curFrame   = static_cast<double>(gr.startFrame);
+          gr.pitchRatio = std::pow(2.0f, st / 12.0f);
+          gr.dur        = gDur;
+          gr.age        = 0;
+          gr.pan        = frand(-panSpr, +panSpr);
+          gr.semitones  = st;
+        }
+      }
+
+      float outL = 0.f, outR = 0.f;
+      for (auto& gr : grains) {
+        if (!gr.active) continue;
+        const float in = current->readInterp(0, static_cast<float>(gr.curFrame));
+        const float t = static_cast<float>(gr.age) / static_cast<float>(gr.dur);
+        const float w = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * t));
+        const float v = in * w;
+        const float panAng = (gr.pan + 1.0f) * 0.25f * static_cast<float>(M_PI);
+        outL += v * std::cos(panAng);
+        outR += v * std::sin(panAng);
+        gr.curFrame += static_cast<double>(gr.pitchRatio) * rateRatio;
+        if (gr.curFrame >= nFrames) gr.curFrame -= nFrames;
+        if (gr.curFrame < 0)        gr.curFrame += nFrames;
+        ++gr.age;
+        if (gr.age >= gr.dur) gr.active = false;
+      }
+
+      io.out(0) = outL * gain;
+      io.out(1) = outR * gain;
+    }
+
+    for (int i = 0; i < MAX_GRAINS; ++i) {
+      const Grain& gr = grains[i];
+      GrainSnap& s = snap[i];
+      s.active    = gr.active;
+      s.startNorm = (nFrames > 1)
+          ? static_cast<float>(gr.startFrame) / static_cast<float>(nFrames - 1)
+          : 0.f;
+      s.semitones = gr.semitones;
+      s.ageNorm   = (gr.dur > 0)
+          ? std::min(1.0f, static_cast<float>(gr.age) / static_cast<float>(gr.dur))
+          : 1.f;
+    }
+    snapPublish.fetch_add(1, std::memory_order_release);
+  }
+
+  static float startToX(float startNorm) {
+    return -1.4f + startNorm * 2.8f;
+  }
+  static float semiToY(float st) {
+    return -1.0f + (st + 12.0f) / 24.0f * 2.0f;
+  }
+
+  // Inline disc emitter — pushes a TRIANGLES fan into 'm' centred at (cx,cy).
+  static void emitDisc(Mesh& m, float cx, float cy, float radius, int segs,
+                       float r, float gC, float b) {
+    for (int i = 0; i < segs; ++i) {
+      const float a0 = 2.0f * static_cast<float>(M_PI) * i       / segs;
+      const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / segs;
+      m.vertex(cx, cy, 0.f);
+      m.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
+      m.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
+      m.color(r, gC, b); m.color(r, gC, b); m.color(r, gC, b);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    (void)snapPublish.load(std::memory_order_acquire);
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f, semiToY(0.f), 0.f);
+    gridMesh.vertex( 1.4f, semiToY(0.f), 0.f);
+    gridMesh.color(0.55f, 0.55f, 0.55f);
+    gridMesh.color(0.55f, 0.55f, 0.55f);
+    for (int st = -12; st <= 12; st += 6) {
+      if (st == 0) continue;
+      gridMesh.vertex(-1.4f, semiToY(static_cast<float>(st)), 0.f);
+      gridMesh.vertex( 1.4f, semiToY(static_cast<float>(st)), 0.f);
+      gridMesh.color(0.18f, 0.18f, 0.22f);
+      gridMesh.color(0.18f, 0.18f, 0.22f);
+    }
+    gridMesh.vertex(-1.4f, -1.0f, 0.f); gridMesh.vertex(1.4f, -1.0f, 0.f);
+    gridMesh.vertex(-1.4f,  1.0f, 0.f); gridMesh.vertex(1.4f,  1.0f, 0.f);
+    for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.30f);
+
+    bandMesh.reset();
+    bandMesh.primitive(Mesh::LINES);
+    const float ctr   = centerPos.get();
+    const float spr   = position_spread.get();
+    auto clamp01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+    const float xL    = startToX(clamp01(ctr - spr));
+    const float xC    = startToX(clamp01(ctr));
+    const float xR    = startToX(clamp01(ctr + spr));
+    auto vline = [&](float x, float r, float g, float b) {
+      bandMesh.vertex(x, -1.0f, 0.f);
+      bandMesh.vertex(x,  1.0f, 0.f);
+      bandMesh.color(r, g, b);
+      bandMesh.color(r, g, b);
+    };
+    vline(xL, 0.40f, 0.65f, 0.90f);
+    vline(xC, 0.95f, 0.95f, 0.45f);
+    vline(xR, 0.40f, 0.65f, 0.90f);
+
+    cloudMesh.reset();
+    cloudMesh.primitive(Mesh::TRIANGLES);
+    for (int i = 0; i < MAX_GRAINS; ++i) {
+      const GrainSnap& s = snap[i];
+      if (!s.active) continue;
+      const float px = startToX(s.startNorm);
+      const float py = semiToY(s.semitones);
+      const float bright = std::max(0.0f, 1.0f - s.ageNorm);
+      const float r  = 0.20f + 0.80f * bright;
+      const float gC = 0.10f + 0.85f * bright * bright;
+      const float b  = 0.05f + 0.40f * bright * bright * bright;
+      emitDisc(cloudMesh, px, py, 0.04f, 14, r, gC, b);
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(bandMesh);
+    g.draw(cloudMesh);
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse& /*m*/) override { return false; }
+  bool onMouseDrag(const Mouse& /*m*/) override { return false; }
+  bool onMouseUp  (const Mouse& /*m*/) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(GranularCloud)
+`,
+  },
+  {
+    id: 'mat-multiscale-stems',
+    title: 'Multiscale Stem Visualizer',
+    description: 'Play a bundled loop and visualize it at three simultaneous time scales (full loop overview, ~1s medium window, ~10ms short window) with per-scale dB-RMS meters.',
+    category: 'mat-mixing',
+    subcategory: 'stems',
+    code: `/**
+ * Multiscale Stem Visualizer
+ *
+ * Plays one of three bundled loops (drums, pad, mixed) and renders the
+ * audio simultaneously at three time scales stacked vertically:
+ *
+ *   1. Top    : full-loop overview (downsampled min/max envelope, 256
+ *               columns, with a moving playhead marker).
+ *   2. Middle : medium-zoom window of the last ~zoom_med_ms ms.
+ *   3. Bottom : live ~zoom_short_ms ms window.
+ *
+ * Three one-pole RMS detectors (short / medium / long taus) drive
+ * dB meters pinned to the right edge.
+ */
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+#include <array>
+#include <vector>
+#include <cmath>
+#include <cstring>
+
+using namespace al;
+
+static const int   kFullCols    = 256;
+static const int   kShortRing   = 1024;
+static const int   kMedRing     = 72000;
+static const float kHostSR      = 48000.f;
+
+class MultiscaleStems : public App {
+public:
+  ControlGUI gui;
+
+  ParameterMenu source{"source"};
+  Parameter amp{"amp", "", 0.5f, 0.f, 1.f};
+  Parameter zoom_short_ms{"zoom_short_ms", "", 10.f, 1.f, 50.f};
+  Parameter zoom_med_ms{"zoom_med_ms", "", 1000.f, 100.f, 3000.f};
+  Trigger retrigger{"retrigger"};
+
+  WebSamplePlayer pDrums, pPad, pMixed;
+  WebSamplePlayer* current = nullptr;
+
+  double playhead = 0.0;
+
+  std::array<float, kShortRing> shortRing{};
+  std::array<float, kMedRing>   medRing{};
+  int shortW = 0;
+  int medW   = 0;
+
+  float rmsShort = 0.f, rmsMed = 0.f, rmsLong = 0.f;
+  float coefShort = 0.f, coefMed = 0.f, coefLong = 0.f;
+
+  std::vector<float> envMin, envMax;
+  int cachedFrames = 0;
+
+  Mesh mFull, mMed, mShort, mBars, mGrid, mPlayhead;
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    gui << source << amp << zoom_short_ms << zoom_med_ms << retrigger;
+
+    source.registerChangeCallback([this](int v) {
+      switch (v) {
+        case 0: current = &pDrums; break;
+        case 1: current = &pPad;   break;
+        default: current = &pMixed; break;
+      }
+      playhead = 0.0;
+      buildFullEnvelope();
+    });
+
+    retrigger.registerChangeCallback([this](float) {
+      playhead = 0.0;
+    });
+
+    auto tauCoef = [](float tauSec) {
+      return std::exp(-1.f / (tauSec * kHostSR));
+    };
+    coefShort = tauCoef(0.010f);
+    coefMed   = tauCoef(0.300f);
+    coefLong  = tauCoef(3.000f);
+  }
+
+  void onCreate() override {
+    gui.init();
+    pDrums.load("drum_loop_120bpm.wav");
+    pPad.load("pad_loop.wav");
+    pMixed.load("mixed_loop.wav");
+    current = &pDrums;
+    buildFullEnvelope();
+
+    nav().pos(0, 0, 4);
+
+    mFull.primitive(Mesh::TRIANGLE_STRIP);
+    mMed.primitive(Mesh::LINE_STRIP);
+    mShort.primitive(Mesh::LINE_STRIP);
+    mBars.primitive(Mesh::TRIANGLES);
+    mGrid.primitive(Mesh::LINES);
+    mPlayhead.primitive(Mesh::LINES);
+  }
+
+  void buildFullEnvelope() {
+    envMin.assign(kFullCols, 0.f);
+    envMax.assign(kFullCols, 0.f);
+    if (!current) return;
+    int frames = (int)current->frames();
+    cachedFrames = frames;
+    if (frames <= 0) return;
+    int per = std::max(1, frames / kFullCols);
+    for (int c = 0; c < kFullCols; ++c) {
+      int start = (c * frames) / kFullCols;
+      int end   = std::min(frames, start + per);
+      float lo = 1.f, hi = -1.f;
+      for (int i = start; i < end; ++i) {
+        float s = current->readInterp(0, (double)i);
+        if (s < lo) lo = s;
+        if (s > hi) hi = s;
+      }
+      if (lo > hi) { lo = 0.f; hi = 0.f; }
+      envMin[c] = lo;
+      envMax[c] = hi;
+    }
+  }
+
+  void onSound(AudioIOData& io) override {
+    float a = amp.get();
+    if (!current || current->frames() <= 0) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    double srcSR = current->sampleRate();
+    double inc = srcSR / (double)kHostSR;
+    int frames = (int)current->frames();
+
+    while (io()) {
+      float s = current->readInterp(0, playhead) * a;
+      playhead += inc;
+      if (playhead >= frames) playhead -= frames;
+      if (playhead < 0) playhead += frames;
+
+      shortRing[shortW] = s;
+      shortW = (shortW + 1) % kShortRing;
+      medRing[medW] = s;
+      medW = (medW + 1) % kMedRing;
+
+      float ax = std::fabs(s);
+      rmsShort = (1.f - coefShort) * ax + coefShort * rmsShort;
+      rmsMed   = (1.f - coefMed)   * ax + coefMed   * rmsMed;
+      rmsLong  = (1.f - coefLong)  * ax + coefLong  * rmsLong;
+
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  void onAnimate(double) override {}
+
+  static float dbMap(float lin) {
+    float db = 20.f * std::log10(std::max(1e-6f, lin));
+    float t = (db + 60.f) / 60.f;
+    if (t < 0.f) t = 0.f;
+    if (t > 1.f) t = 1.f;
+    return t * 0.7f;
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.06f, 0.07f, 0.09f);
+
+    const float xL = -1.4f, xR = 1.25f;
+
+    mGrid.reset();
+    mGrid.primitive(Mesh::LINES);
+    auto hline = [&](float y, float r, float gG, float b){
+      mGrid.vertex(xL, y, 0); mGrid.color(r, gG, b);
+      mGrid.vertex(xR, y, 0); mGrid.color(r, gG, b);
+    };
+    hline(+1.35f, 0.3f, 0.3f, 0.35f);
+    hline(+0.65f, 0.3f, 0.3f, 0.35f);
+    hline(+0.55f, 0.3f, 0.3f, 0.35f);
+    hline(-0.05f, 0.3f, 0.3f, 0.35f);
+    hline(-0.15f, 0.3f, 0.3f, 0.35f);
+    hline(-0.85f, 0.3f, 0.3f, 0.35f);
+    auto zeroAxis = [&](float yc){
+      mGrid.vertex(xL, yc, 0); mGrid.color(0.45f, 0.45f, 0.5f);
+      mGrid.vertex(xR, yc, 0); mGrid.color(0.45f, 0.45f, 0.5f);
+    };
+    zeroAxis(+1.00f);
+    zeroAxis(+0.25f);
+    zeroAxis(-0.50f);
+    g.meshColor();
+    g.draw(mGrid);
+
+    const float panelW = xR - xL;
+
+    mFull.reset();
+    mFull.primitive(Mesh::TRIANGLE_STRIP);
+    if ((int)envMin.size() == kFullCols) {
+      for (int c = 0; c < kFullCols; ++c) {
+        float fx = xL + (c / (float)(kFullCols - 1)) * panelW;
+        float yMin = +1.00f + envMin[c] * 0.33f;
+        float yMax = +1.00f + envMax[c] * 0.33f;
+        mFull.vertex(fx, yMax, 0); mFull.color(0.45f, 0.85f, 1.0f);
+        mFull.vertex(fx, yMin, 0); mFull.color(0.25f, 0.55f, 0.8f);
+      }
+    }
+    g.draw(mFull);
+
+    mPlayhead.reset();
+    mPlayhead.primitive(Mesh::LINES);
+    if (cachedFrames > 0) {
+      float t = (float)(playhead / (double)cachedFrames);
+      float px = xL + t * panelW;
+      mPlayhead.vertex(px, +1.32f, 0); mPlayhead.color(1.f, 1.f, 1.f);
+      mPlayhead.vertex(px, +0.68f, 0); mPlayhead.color(1.f, 1.f, 1.f);
+    }
+    g.draw(mPlayhead);
+
+    mMed.reset();
+    mMed.primitive(Mesh::LINE_STRIP);
+    int medSamples = (int)((zoom_med_ms.get() / 1000.f) * kHostSR);
+    if (medSamples < 2) medSamples = 2;
+    if (medSamples > kMedRing) medSamples = kMedRing;
+    int verts = 512;
+    for (int i = 0; i < verts; ++i) {
+      int offs = (int)((float)i / (float)(verts - 1) * (medSamples - 1));
+      int idx  = (medW - medSamples + offs) % kMedRing;
+      if (idx < 0) idx += kMedRing;
+      float s = medRing[(size_t)idx];
+      float fx = xL + (i / (float)(verts - 1)) * panelW;
+      float fy = +0.25f + s * 0.28f;
+      mMed.vertex(fx, fy, 0);
+      mMed.color(0.9f, 0.7f, 0.4f);
+    }
+    g.draw(mMed);
+
+    mShort.reset();
+    mShort.primitive(Mesh::LINE_STRIP);
+    int shortSamples = (int)((zoom_short_ms.get() / 1000.f) * kHostSR);
+    if (shortSamples < 2) shortSamples = 2;
+    if (shortSamples > kShortRing) shortSamples = kShortRing;
+    int sverts = std::min(512, shortSamples);
+    for (int i = 0; i < sverts; ++i) {
+      int offs = (int)((float)i / (float)(sverts - 1) * (shortSamples - 1));
+      int idx  = (shortW - shortSamples + offs) % kShortRing;
+      if (idx < 0) idx += kShortRing;
+      float s = shortRing[(size_t)idx];
+      float fx = xL + (i / (float)(sverts - 1)) * panelW;
+      float fy = -0.50f + s * 0.32f;
+      mShort.vertex(fx, fy, 0);
+      mShort.color(1.0f, 0.55f, 0.6f);
+    }
+    g.draw(mShort);
+
+    mBars.reset();
+    mBars.primitive(Mesh::TRIANGLES);
+    auto bar = [&](float cx, float yBase, float h, float r, float gC, float b){
+      const float w = 0.06f;
+      float x0 = cx - w * 0.5f, x1 = cx + w * 0.5f;
+      float y0 = yBase, y1 = yBase + h;
+      mBars.vertex(x0, y0, 0); mBars.color(r, gC, b);
+      mBars.vertex(x1, y0, 0); mBars.color(r, gC, b);
+      mBars.vertex(x1, y1, 0); mBars.color(r * 1.4f, gC * 1.4f, b * 1.4f);
+      mBars.vertex(x0, y0, 0); mBars.color(r, gC, b);
+      mBars.vertex(x1, y1, 0); mBars.color(r * 1.4f, gC * 1.4f, b * 1.4f);
+      mBars.vertex(x0, y1, 0); mBars.color(r * 1.4f, gC * 1.4f, b * 1.4f);
+    };
+    bar(1.35f, +0.65f, dbMap(rmsLong),  0.45f, 0.85f, 1.0f);
+    bar(1.35f, -0.05f, dbMap(rmsMed),   0.9f,  0.7f,  0.4f);
+    bar(1.35f, -0.85f, dbMap(rmsShort), 1.0f,  0.55f, 0.6f);
+    g.draw(mBars);
+
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp(const Mouse&)   override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(MultiscaleStems)
+`,
+  },
+  {
+    id: 'mat-mastering-ab',
+    title: 'Mastering A/B with Diff Visuals',
+    description:
+      'Plays a bundled CC0 loop through two parallel chains: A is the clean reference, B is a simple mastering stack (gain trim + tilt EQ + soft tanh saturation). Toggle playB to A/B compare audibly with a 5-ms crossfade and an optional RMS loudness-match so the toggle judges timbre, not level. The visual stacks A on top, B in the middle, and the A-B difference as a filled red curve at the bottom — when the diff collapses to a flat line, B is doing nothing; as you push gain/tilt/saturation, the diff bulges.',
+    category: 'mat-mixing',
+    subcategory: 'mastering',
+    code: `/**
+ * Mastering A/B with Diff Visuals — MAT200B Phase 3
+ *
+ * A (reference) = source untouched. B (processed) = tilt EQ -> gain
+ * trim -> soft tanh saturation. The 'playB' toggle picks which chain
+ * is audible with a 5-ms crossfade. Optional 'loudness_match' applies
+ * a slowly-smoothed RMS correction to B so toggling judges timbre,
+ * not level.
+ *
+ * Visuals: A waveform (top, blue) + B waveform (middle, orange) +
+ * |A-B| difference (bottom, red TRIANGLE_STRIP fill) + RMS-diff bar +
+ * coloured A/B badge.
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+#include "Gamma/Filter.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class MasteringAB : public App {
+public:
+  ParameterMenu source         {"source",         ""};
+  ParameterBool playB          {"playB",          "", false};
+  Parameter     gain_dB        {"gain_dB",        "",  0.0f, -12.0f, 12.0f};
+  Parameter     tiltAmount_dB  {"tiltAmount_dB",  "",  0.0f,  -6.0f,  6.0f};
+  Parameter     tiltPivot_hz   {"tiltPivot_hz",   "", 800.0f, 100.0f, 4000.0f};
+  Parameter     saturation     {"saturation",     "",  0.3f,  0.0f, 1.0f};
+  Parameter     loudness_match {"loudness_match", "",  1.0f,  0.0f, 1.0f};
+  Trigger       retrigger      {"retrigger",      ""};
+
+  ControlGUI gui;
+
+  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer* current = &drums;
+
+  double playhead = 0.0;
+
+  gam::Biquad<> lowShelf, highShelf;
+
+  float rmsA_sq = 1e-8f, rmsB_sq = 1e-8f;
+  float corrSmoothed = 1.0f;
+
+  std::atomic<int>   xfadeTarget{0};
+  int                xfadePrev = 0;
+  float              xfadePos  = 1.0f;
+  float              xfadeStep = 1.0f / 240.0f;
+
+  static constexpr int RING = 1024;
+  std::array<float, RING> ringA{};
+  std::array<float, RING> ringB{};
+  std::atomic<int> ringW{0};
+
+  std::atomic<float> dispRmsDiffDB{0.0f};
+
+  Mesh waveA, waveB, diffFill, gridMesh, rmsBar, badge;
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+
+    gui << source << playB << gain_dB << tiltAmount_dB << tiltPivot_hz
+        << saturation << loudness_match << retrigger;
+
+    source.registerChangeCallback([this](float v) {
+      switch (static_cast<int>(v)) {
+        case 0: current = &drums; break;
+        case 1: current = &pad;   break;
+        case 2: current = &mixed; break;
+      }
+      playhead = 0.0;
+    });
+    retrigger.registerChangeCallback([this](float) { playhead = 0.0; });
+    playB.registerChangeCallback([this](float v) {
+      xfadeTarget.store(v > 0.5f ? 1 : 0, std::memory_order_release);
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    drums.load("drum_loop_120bpm.wav");
+    pad.load("pad_loop.wav");
+    mixed.load("mixed_loop.wav");
+
+    lowShelf.type(gam::LOW_SHELF);
+    highShelf.type(gam::HIGH_SHELF);
+    lowShelf.res(0.707f);
+    highShelf.res(0.707f);
+
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    if (!current || !current->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const float sr        = io.framesPerSecond();
+    const float srcSR     = current->sampleRate() > 1.f ? current->sampleRate() : sr;
+    const double rateRatio = static_cast<double>(srcSR) / static_cast<double>(sr);
+    const int   nFrames   = current->frames();
+
+    const float tilt = tiltAmount_dB.get();
+    const float pivot = tiltPivot_hz.get();
+    lowShelf.freq(pivot);
+    highShelf.freq(pivot);
+    lowShelf.level(std::pow(10.0f, (-tilt * 0.5f) / 20.0f));
+    highShelf.level(std::pow(10.0f, ( tilt * 0.5f) / 20.0f));
+
+    const float gainLin   = std::pow(10.0f, gain_dB.get() / 20.0f);
+    const float satAmt    = saturation.get();
+    const bool  satActive = satAmt > 0.001f;
+    const float satDrive  = 1.0f + satAmt * 5.0f;
+    const float lmMix     = loudness_match.get();
+
+    const float rmsCoef   = std::exp(-1.0f / (0.300f * sr));
+    const float corrCoef  = std::exp(-1.0f / (0.150f * sr));
+
+    xfadeStep = 1.0f / std::max(1.0f, sr * 0.005f);
+
+    const int target = xfadeTarget.load(std::memory_order_acquire);
+
+    while (io()) {
+      const float in = current->readInterp(0, static_cast<float>(playhead));
+      playhead += rateRatio;
+      if (playhead >= nFrames) playhead -= nFrames;
+
+      const float a = in;
+
+      float b = lowShelf(in);
+      b = highShelf(b);
+      b *= gainLin;
+      if (satActive) b = std::tanh(b * satDrive);
+
+      rmsA_sq = a * a + rmsCoef * (rmsA_sq - a * a);
+      rmsB_sq = b * b + rmsCoef * (rmsB_sq - b * b);
+
+      const float rA = std::sqrt(std::max(rmsA_sq, 1e-10f));
+      const float rB = std::sqrt(std::max(rmsB_sq, 1e-10f));
+      const float corrTarget = std::min(8.0f, rA / std::max(rB, 1e-6f));
+      corrSmoothed = corrTarget + corrCoef * (corrSmoothed - corrTarget);
+      const float corr = 1.0f * (1.0f - lmMix) + corrSmoothed * lmMix;
+      const float bMatched = b * corr;
+
+      if (target != xfadePrev && xfadePos >= 1.0f) {
+        xfadePos = 0.0f;
+      }
+      float outSample;
+      if (xfadePos >= 1.0f) {
+        outSample = (target == 1) ? bMatched : a;
+        xfadePrev = target;
+      } else {
+        const float prevS = (xfadePrev == 1) ? bMatched : a;
+        const float targS = (target    == 1) ? bMatched : a;
+        outSample = prevS + (targS - prevS) * xfadePos;
+        xfadePos += xfadeStep;
+        if (xfadePos >= 1.0f) { xfadePos = 1.0f; xfadePrev = target; }
+      }
+
+      io.out(0) = outSample;
+      io.out(1) = outSample;
+
+      const int w = ringW.load(std::memory_order_relaxed);
+      ringA[w] = a;
+      ringB[w] = bMatched;
+      ringW.store((w + 1) % RING, std::memory_order_release);
+    }
+
+    const float rA = std::sqrt(std::max(rmsA_sq, 1e-10f));
+    const float rB = std::sqrt(std::max(rmsB_sq, 1e-10f));
+    const float diffDB = 20.0f * std::log10(std::max(rB, 1e-6f) / std::max(rA, 1e-6f));
+    dispRmsDiffDB.store(diffDB, std::memory_order_release);
+  }
+
+  static void emitDisc(Mesh& m, float cx, float cy, float radius, int segs,
+                       float r, float gC, float b) {
+    for (int i = 0; i < segs; ++i) {
+      const float a0 = 2.0f * static_cast<float>(M_PI) * i       / segs;
+      const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / segs;
+      m.vertex(cx, cy, 0.f);
+      m.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
+      m.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
+      m.color(r, gC, b); m.color(r, gC, b); m.color(r, gC, b);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const int w = ringW.load(std::memory_order_acquire);
+    constexpr int W = 512;
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    const float rowYs[3] = { 0.85f, 0.10f, -0.65f };
+    for (float y : rowYs) {
+      gridMesh.vertex(-1.4f, y, 0.f);
+      gridMesh.vertex( 1.4f, y, 0.f);
+      gridMesh.color(0.22f, 0.22f, 0.26f);
+      gridMesh.color(0.22f, 0.22f, 0.26f);
+    }
+
+    waveA.reset(); waveB.reset();
+    waveA.primitive(Mesh::LINE_STRIP);
+    waveB.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < W; ++i) {
+      const int idx = (w - W + i + RING) % RING;
+      const float xx = -1.4f + (static_cast<float>(i) / (W - 1)) * 2.8f;
+      const float a  = ringA[idx];
+      const float b  = ringB[idx];
+      waveA.vertex(xx, rowYs[0] + a * 0.20f, 0.f);
+      waveA.color(0.45f, 0.65f, 0.95f);
+      waveB.vertex(xx, rowYs[1] + b * 0.20f, 0.f);
+      waveB.color(0.95f, 0.6f, 0.30f);
+    }
+
+    diffFill.reset();
+    diffFill.primitive(Mesh::TRIANGLE_STRIP);
+    const float yBase = rowYs[2];
+    for (int i = 0; i < W; ++i) {
+      const int idx = (w - W + i + RING) % RING;
+      const float xx = -1.4f + (static_cast<float>(i) / (W - 1)) * 2.8f;
+      const float d  = (ringA[idx] - ringB[idx]) * 0.45f;
+      diffFill.vertex(xx, yBase,     0.f);
+      diffFill.vertex(xx, yBase + d, 0.f);
+      diffFill.color(0.95f, 0.30f, 0.30f);
+      diffFill.color(0.95f, 0.30f, 0.30f);
+    }
+
+    rmsBar.reset();
+    rmsBar.primitive(Mesh::TRIANGLES);
+    const float diffDB = std::max(-12.0f, std::min(12.0f, dispRmsDiffDB.load()));
+    const float barX0 = 1.55f, barX1 = 1.70f;
+    const float barCenter = 0.10f;
+    const float barH = (diffDB / 12.0f) * 0.6f;
+    const float by0 = barCenter;
+    const float by1 = barCenter + barH;
+    const float ylo = std::min(by0, by1);
+    const float yhi = std::max(by0, by1);
+    rmsBar.vertex(barX0, ylo, 0.f); rmsBar.vertex(barX1, ylo, 0.f); rmsBar.vertex(barX1, yhi, 0.f);
+    rmsBar.vertex(barX0, ylo, 0.f); rmsBar.vertex(barX1, yhi, 0.f); rmsBar.vertex(barX0, yhi, 0.f);
+    const float bcR = (diffDB >= 0.f) ? 0.95f : 0.45f;
+    const float bcG = (diffDB >= 0.f) ? 0.55f : 0.7f;
+    const float bcB = (diffDB >= 0.f) ? 0.35f : 1.0f;
+    for (int k = 0; k < 6; ++k) rmsBar.color(bcR, bcG, bcB);
+
+    badge.reset();
+    badge.primitive(Mesh::TRIANGLES);
+    {
+      const bool b = playB.get();
+      const float r0 = b ? 0.95f : 0.45f;
+      const float g0 = b ? 0.6f  : 0.65f;
+      const float b0 = b ? 0.30f : 0.95f;
+      emitDisc(badge, 1.30f, 1.20f, 0.10f, 24, r0, g0, b0);
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.05f, 0.05f, 0.08f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(diffFill);
+    g.draw(waveA);
+    g.draw(waveB);
+    g.draw(rmsBar);
+    g.draw(badge);
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse& /*m*/) override { return false; }
+  bool onMouseDrag(const Mouse& /*m*/) override { return false; }
+  bool onMouseUp  (const Mouse& /*m*/) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(MasteringAB)
+`,
+  },
+  {
+    id: 'mat-mix-thermometer',
+    title: 'Mix Thermometer (Loudness Sweet-Spot Meter)',
+    description:
+      'Vertical thermometer-style loudness meter with cold/sweet/hot color zones plus a rolling 6-second history strip. Reference ticks at the streaming-platform norms (-23 / -18 / -14 dB) and a live cyan target line driven by the target_dB parameter. Honest caveat: this is RMS-pseudo-LUFS over a tunable window, not a true ITU-R BS.1770 K-weighted reading — qualitatively similar trend, easier to read in real time. Plays one of three bundled CC0 loops with a hot-running amp knob so you can push the meter into the red on purpose.',
+    category: 'mat-mixing',
+    subcategory: 'mastering',
+    code: `/**
+ * Mix Thermometer (Loudness Sweet-Spot Meter) — MAT200B Mixing/Mastering
+ *
+ * A vertical "thermometer" meter that visualizes the integrated
+ * loudness of the playing loop over a tunable window (default 3 s).
+ * Cold (blue) = too quiet, sweet (green) = inside target band,
+ * hot (red) = too loud. Reference ticks at -23 / -18 / -14 dB.
+ *
+ * IMPORTANT — RMS-pseudo-LUFS caveat: true LUFS (ITU-R BS.1770)
+ * needs K-weighting + gating. We skip both and use a one-pole RMS
+ * over window_sec. The trend is qualitatively similar; absolute
+ * values are not. Read as "how hot relative to my target," not
+ * as "what would Spotify say."
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <algorithm>
+
+using namespace al;
+
+class MixThermometer : public App {
+public:
+  ParameterMenu source        {"source",         ""};
+  Parameter     amp           {"amp",            "",  1.0f,   0.0f,   2.0f};
+  Parameter     windowSec     {"window_sec",     "",  3.0f,   0.5f,  10.0f};
+  Parameter     target_dB     {"target_dB",      "", -18.0f, -28.0f,  -9.0f};
+  Parameter     sweetWidth_dB {"sweet_width_dB", "",  3.0f,   1.0f,   6.0f};
+  Trigger       retrigger     {"retrigger",      ""};
+
+  ControlGUI gui;
+
+  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer* current = &drums;
+
+  double playhead = 0.0;
+  float rmsLin = 1e-9f;
+  std::atomic<float> displayDB{-60.f};
+
+  static constexpr int HIST_N = 360;
+  std::array<float, HIST_N> hist{};
+  int histW = 0;
+
+  Mesh thermoBg, sweetBand, fillCol, refTicks, targetLine;
+  Mesh histLine, histTarget, histBg;
+
+  static constexpr float TH_X0 = -1.30f, TH_X1 = -1.00f;
+  static constexpr float TH_Y0 = -0.90f, TH_Y1 =  0.90f;
+  static constexpr float HS_X0 = -0.70f, HS_X1 =  1.40f;
+  static constexpr float HS_Y0 = -0.40f, HS_Y1 =  0.40f;
+  static constexpr float DB_LO = -60.0f, DB_HI = 0.0f;
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+
+    gui << source << amp << windowSec << target_dB << sweetWidth_dB << retrigger;
+
+    source.registerChangeCallback([this](float v) {
+      switch (static_cast<int>(v)) {
+        case 0: current = &drums; break;
+        case 1: current = &pad;   break;
+        case 2: current = &mixed; break;
+      }
+      playhead = 0.0;
+    });
+    retrigger.registerChangeCallback([this](float) { playhead = 0.0; });
+
+    hist.fill(-60.f);
+  }
+
+  void onCreate() override {
+    gui.init();
+    drums.load("drum_loop_120bpm.wav");
+    pad.load("pad_loop.wav");
+    mixed.load("mixed_loop.wav");
+    nav().pos(0, 0, 4.0f);
+  }
+
+  static float clamp01(float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); }
+
+  static float dbToThermoY(float db) {
+    const float t = (db - DB_LO) / (DB_HI - DB_LO);
+    return TH_Y0 + clamp01(t) * (TH_Y1 - TH_Y0);
+  }
+  static float dbToHistY(float db) {
+    const float t = (db - DB_LO) / (DB_HI - DB_LO);
+    return HS_Y0 + clamp01(t) * (HS_Y1 - HS_Y0);
+  }
+
+  // (r,g,b) lerp.
+  static void lerpColor(float ar, float ag, float ab,
+                        float br, float bg, float bb,
+                        float t,
+                        float& outR, float& outG, float& outB) {
+    t = clamp01(t);
+    outR = ar + (br - ar) * t;
+    outG = ag + (bg - ag) * t;
+    outB = ab + (bb - ab) * t;
+  }
+
+  static void zoneColor(float db, float tgt, float sw,
+                        float& outR, float& outG, float& outB) {
+    const float lo = tgt - sw;
+    const float hi = tgt + sw;
+    if (db < lo) {
+      const float t = (db - DB_LO) / std::max(0.001f, lo - DB_LO);
+      lerpColor(0.20f, 0.45f, 1.00f,
+                0.30f, 0.95f, 0.40f, t, outR, outG, outB);
+    } else if (db > hi) {
+      const float t = (db - hi) / std::max(0.001f, DB_HI - hi);
+      lerpColor(0.30f, 0.95f, 0.40f,
+                1.00f, 0.30f, 0.25f, t, outR, outG, outB);
+    } else {
+      outR = 0.30f; outG = 0.95f; outB = 0.40f;
+    }
+  }
+
+  static void addRect(Mesh& m, float x0, float y0, float x1, float y1,
+                      float r, float gC, float b) {
+    m.vertex(x0, y0, 0.f); m.color(r, gC, b);
+    m.vertex(x1, y0, 0.f); m.color(r, gC, b);
+    m.vertex(x0, y1, 0.f); m.color(r, gC, b);
+    m.vertex(x1, y1, 0.f); m.color(r, gC, b);
+  }
+  static void addHLine(Mesh& m, float x0, float x1, float y, float halfH,
+                       float r, float gC, float b) {
+    addRect(m, x0, y - halfH, x1, y + halfH, r, gC, b);
+  }
+
+  void onSound(AudioIOData& io) override {
+    if (!current || !current->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const float sr        = io.framesPerSecond();
+    const float srcSR     = current->sampleRate() > 1.f ? current->sampleRate() : sr;
+    const double rateRatio = static_cast<double>(srcSR) / static_cast<double>(sr);
+    const int   nFrames   = current->frames();
+    const float gain      = amp.get();
+    const float winSec    = std::max(0.05f, windowSec.get());
+    const float coef      = std::exp(-1.0f / (winSec * sr));
+
+    while (io()) {
+      const float s   = current->readInterp(0, static_cast<float>(playhead));
+      playhead += rateRatio;
+      if (playhead >= nFrames) playhead -= nFrames;
+
+      const float out = s * gain;
+      io.out(0) = out;
+      io.out(1) = out;
+
+      rmsLin = (1.f - coef) * out * out + coef * rmsLin;
+    }
+
+    const float rmsClamped = std::max(rmsLin, 1e-12f);
+    const float dB = 10.0f * std::log10(rmsClamped);
+    displayDB.store(dB, std::memory_order_release);
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const float dbNow = displayDB.load(std::memory_order_acquire);
+    const float tgt   = target_dB.get();
+    const float sw    = sweetWidth_dB.get();
+
+    hist[histW] = dbNow;
+    histW = (histW + 1) % HIST_N;
+
+    thermoBg.reset();
+    thermoBg.primitive(Mesh::TRIANGLE_STRIP);
+    addRect(thermoBg, TH_X0, TH_Y0, TH_X1, TH_Y1, 0.10f, 0.10f, 0.13f);
+
+    sweetBand.reset();
+    sweetBand.primitive(Mesh::TRIANGLE_STRIP);
+    {
+      const float yLo = dbToThermoY(tgt - sw);
+      const float yHi = dbToThermoY(tgt + sw);
+      addRect(sweetBand, TH_X0, yLo, TH_X1, yHi, 0.10f, 0.35f, 0.18f);
+    }
+
+    fillCol.reset();
+    fillCol.primitive(Mesh::TRIANGLE_STRIP);
+    {
+      const float yTop = dbToThermoY(dbNow);
+      float zR, zG, zB;
+      zoneColor(dbNow, tgt, sw, zR, zG, zB);
+      const float pad = 0.015f;
+      addRect(fillCol, TH_X0 + pad, TH_Y0 + 0.005f,
+                       TH_X1 - pad, yTop, zR, zG, zB);
+    }
+
+    refTicks.reset();
+    refTicks.primitive(Mesh::TRIANGLES);
+    const float refDBs[3] = {-23.f, -18.f, -14.f};
+    for (int i = 0; i < 3; ++i) {
+      const float y = dbToThermoY(refDBs[i]);
+      const float x0 = TH_X0 - 0.03f;
+      const float x1 = TH_X1 + 0.03f;
+      const float halfH = 0.004f;
+      const float r = 0.55f, gC = 0.55f, b = 0.55f;
+      refTicks.vertex(x0, y - halfH, 0.f); refTicks.color(r, gC, b);
+      refTicks.vertex(x1, y - halfH, 0.f); refTicks.color(r, gC, b);
+      refTicks.vertex(x1, y + halfH, 0.f); refTicks.color(r, gC, b);
+      refTicks.vertex(x0, y - halfH, 0.f); refTicks.color(r, gC, b);
+      refTicks.vertex(x1, y + halfH, 0.f); refTicks.color(r, gC, b);
+      refTicks.vertex(x0, y + halfH, 0.f); refTicks.color(r, gC, b);
+    }
+
+    targetLine.reset();
+    targetLine.primitive(Mesh::TRIANGLE_STRIP);
+    {
+      const float y = dbToThermoY(tgt);
+      addHLine(targetLine, TH_X0 - 0.05f, TH_X1 + 0.05f, y, 0.006f,
+               0.30f, 0.95f, 1.00f);
+    }
+
+    histBg.reset();
+    histBg.primitive(Mesh::TRIANGLE_STRIP);
+    addRect(histBg, HS_X0, HS_Y0, HS_X1, HS_Y1, 0.07f, 0.07f, 0.10f);
+
+    histTarget.reset();
+    histTarget.primitive(Mesh::TRIANGLE_STRIP);
+    {
+      const float y = dbToHistY(tgt);
+      addHLine(histTarget, HS_X0, HS_X1, y, 0.004f, 0.30f, 0.95f, 1.00f);
+    }
+
+    histLine.reset();
+    histLine.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < HIST_N; ++i) {
+      const int idx = (histW + i) % HIST_N;
+      const float t = static_cast<float>(i) / (HIST_N - 1);
+      const float x = HS_X0 + t * (HS_X1 - HS_X0);
+      const float y = dbToHistY(hist[idx]);
+      float zR, zG, zB;
+      zoneColor(hist[idx], tgt, sw, zR, zG, zB);
+      histLine.vertex(x, y, 0.f);
+      histLine.color(zR, zG, zB);
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.07f);
+    g.meshColor();
+
+    g.draw(thermoBg);
+    g.draw(sweetBand);
+    g.draw(fillCol);
+    g.draw(refTicks);
+    g.draw(targetLine);
+
+    g.draw(histBg);
+    g.draw(histTarget);
+    g.draw(histLine);
+
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse& /*m*/) override { return false; }
+  bool onMouseDrag(const Mouse& /*m*/) override { return false; }
+  bool onMouseUp  (const Mouse& /*m*/) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(MixThermometer)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
