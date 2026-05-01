@@ -1230,7 +1230,7 @@ ALLOLIB_WEB_MAIN(FmIndex)
     id: 'mat-comb-swept',
     title: 'Comb Filter Swept-Delay Visualizer',
     description:
-      "White noise into a comb filter (gam::Comb) whose delay length is modulated by a low-frequency sine. The comb's notches appear at fk = k / delaySec, so as delay sweeps the notches march up and down the spectrum. Live magnitude view (inline DFT) shows the comb teeth moving in real time.",
+      "White noise into a comb filter (gam::Comb) whose delay length is modulated by a low-frequency sine. The comb's notches appear at fk = k / delaySec, so as delay sweeps the notches march up and down the spectrum. The visualizer plots the deterministic transfer function |H(e^jω)| computed from the current delay/feedback/feedforward — visible immediately, no audio start-up wait — with a wallclock-driven LFO so the comb teeth animate even before the AudioContext engages.",
     category: 'mat-signal',
     subcategory: 'delay',
     code: `/**
@@ -1244,9 +1244,17 @@ ALLOLIB_WEB_MAIN(FmIndex)
  * pronounced; with 'feedforward' the timbre is closer to a
  * subtractive filter.
  *
- * Visual: 256-point inline DFT of the comb output. Drag 'lfo_hz'
- * up to 5 Hz and watch the spectrum animate; drop it to 0.05 Hz
- * to study a static notch pattern at any chosen delay.
+ * Visual: deterministic |H(e^jω)| of the IIR comb computed directly
+ * from delay D, feedback g, feedforward c at every animation frame.
+ * For sample-delay M = round(D * sr), the difference equation is
+ *   y[n] = x[n] + c x[n-M] + g y[n-M]
+ * giving transfer function
+ *   H(z) = (1 + c z^-M) / (1 - g z^-M).
+ * Magnitude on the unit circle z = e^jω, ω in [0, π], maps to
+ * frequency [0, sr/2]. Plotting this directly means the visualizer
+ * shows the correct comb response BEFORE audio starts, no DFT-of-
+ * silence empty bars. The LFO is driven by wallclock so the sweep
+ * is visible whether or not the AudioContext is running.
  */
 
 #include "al_playground_compat.hpp"
@@ -1280,11 +1288,14 @@ public:
   gam::Comb<float, gam::ipl::Linear> comb{0.1f};   // 100 ms max delay
   gam::LFO<>             lfo;
 
-  static constexpr int N = 256;
-  std::array<float, N> blockBuf{};
-  std::atomic<int> blockW{0};
+  // Wallclock LFO phase for the visualizer — so the spectrum animates
+  // even when AudioContext hasn't started yet.
+  double vizLfoPhase = 0.0;
+  // Last known sample rate from audio thread (for converting delay
+  // seconds -> integer sample-delay in the transfer function).
+  std::atomic<float> sampleRateHz{48000.f};
 
-  Mesh spectrum, gridMesh;
+  Mesh spectrum, gridMesh, notchMarks;
 
   void onInit() override {
     gui << delay_min << delay_max << lfo_hz << feedback << feedforward << amp;
@@ -1296,6 +1307,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    sampleRateHz.store(io.framesPerSecond(), std::memory_order_relaxed);
     lfo.freq(lfo_hz.get());
     const float dmin = delay_min.get() * 0.001f;
     const float dmax = delay_max.get() * 0.001f;
@@ -1304,7 +1316,7 @@ public:
     const float a    = amp.get();
 
     while (io()) {
-      const float u = lfo.cos() * 0.5f + 0.5f;     // 0..1
+      const float u = lfo.cos() * 0.5f + 0.5f;
       const float dSec = dmin + u * (dmax - dmin);
       comb.delay(dSec);
       comb.fbk(fb);
@@ -1314,53 +1326,77 @@ public:
       const float s = comb(n) * a;
       io.out(0) = s;
       io.out(1) = s;
-
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = s;
-      blockW.store((w + 1) % N, std::memory_order_release);
     }
   }
 
-  void computeSpectrum(std::array<float, N / 2>& mag) {
-    const int w = blockW.load(std::memory_order_acquire);
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
-      x[i] = blockBuf[idx] * win;
-    }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * M_PI * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
-      }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
-    }
-  }
+  void onAnimate(double dt) override {
+    // Wallclock LFO so the visual animates pre-audio.
+    vizLfoPhase += dt * static_cast<double>(lfo_hz.get());
+    if (vizLfoPhase > 1.0) vizLfoPhase -= std::floor(vizLfoPhase);
+    const float u = 0.5f + 0.5f * std::cos(2.0f * static_cast<float>(M_PI)
+                                           * static_cast<float>(vizLfoPhase));
 
-  void onAnimate(double /*dt*/) override {
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag);
+    const float sr   = sampleRateHz.load(std::memory_order_relaxed);
+    const float dmin = delay_min.get() * 0.001f;
+    const float dmax = delay_max.get() * 0.001f;
+    const float dSec = dmin + u * (dmax - dmin);
+    const float g    = feedback.get();
+    const float c    = feedforward.get();
+    const int   M    = std::max(1, static_cast<int>(std::round(dSec * sr)));
 
+    // Plot |H(e^jω)| at NB equally-spaced ω in [0, π].
+    constexpr int NB = 256;
     spectrum.reset();
     spectrum.primitive(Mesh::TRIANGLE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(1.6f, mag[k] * 8.0f);
+    for (int k = 0; k < NB; ++k) {
+      const float w = static_cast<float>(M_PI) * k / (NB - 1);
+      const float wM = w * M;
+      // numerator   N(e^jω) = 1 + c e^-jωM   -> |N|^2 = 1 + 2c cos(ωM) + c²
+      const float numMag2 = 1.f + 2.f * c * std::cos(wM) + c * c;
+      // denominator D(e^jω) = 1 - g e^-jωM   -> |D|^2 = 1 - 2g cos(ωM) + g²
+      const float denMag2 = std::max(1e-6f,
+                            1.f - 2.f * g * std::cos(wM) + g * g);
+      const float H = std::sqrt(numMag2 / denMag2);
+      // dB-ish vertical scale: log compresses the resonance peaks so
+      // they don't shoot off-screen at high feedback.
+      const float h  = std::min(1.6f, std::log10(1.f + H * 4.f) * 1.4f);
+
+      const float xx = -1.4f + (static_cast<float>(k) / (NB - 1)) * 2.8f;
       const float yb = -1.0f, yt = -1.0f + h;
       spectrum.vertex(xx, yb, 0.f);
       spectrum.vertex(xx, yt, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      const Color c{0.6f + 0.4f * t, 0.4f + 0.5f * (1.f - t), 0.85f};
-      spectrum.color(c.r * 0.4f, c.g * 0.4f, c.b * 0.4f);
-      spectrum.color(c.r,        c.g,        c.b);
+      const float t = static_cast<float>(k) / (NB - 1);
+      // Bottom row darker, top row brighter — gives the peaks a clear
+      // glow against the baseline.
+      spectrum.color(0.20f + 0.20f * t, 0.20f + 0.30f * (1.f - t), 0.45f);
+      spectrum.color(0.65f + 0.35f * t, 0.45f + 0.50f * (1.f - t), 0.95f);
+    }
+
+    // Mark the harmonic notch positions fk = k / D as dim vertical
+    // ticks along the baseline. Helps the eye lock onto the math.
+    notchMarks.reset();
+    notchMarks.primitive(Mesh::LINES);
+    if (dSec > 1e-6f && sr > 1.f) {
+      const float fundamental = 1.f / dSec;     // Hz
+      const float nyquist = 0.5f * sr;
+      for (int kk = 1; kk < 64; ++kk) {
+        const float fk = (kk - 0.5f) * fundamental;   // notch midpoints
+        if (fk >= nyquist) break;
+        const float xx = -1.4f + (fk / nyquist) * 2.8f;
+        notchMarks.vertex(xx, -1.0f, 0.f);
+        notchMarks.vertex(xx, -0.92f, 0.f);
+        notchMarks.color(0.55f, 0.30f, 0.30f);
+        notchMarks.color(0.55f, 0.30f, 0.30f);
+      }
     }
 
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
     gridMesh.vertex(-1.4f, -1.0f, 0.f); gridMesh.vertex(1.4f, -1.0f, 0.f);
+    gridMesh.color(0.25f, 0.25f, 0.25f); gridMesh.color(0.25f, 0.25f, 0.25f);
+    // Mid-line and 0-dB-ish reference at h = log10(1 + 1*4) * 1.4 ≈ 0.98.
+    const float refY = -1.0f + std::min(1.6f, std::log10(5.f) * 1.4f);
+    gridMesh.vertex(-1.4f, refY, 0.f); gridMesh.vertex(1.4f, refY, 0.f);
     gridMesh.color(0.25f, 0.25f, 0.25f); gridMesh.color(0.25f, 0.25f, 0.25f);
   }
 
@@ -1369,6 +1405,7 @@ public:
     g.meshColor();
     g.draw(gridMesh);
     g.draw(spectrum);
+    g.draw(notchMarks);
     gui.draw(g);
   }
 };
