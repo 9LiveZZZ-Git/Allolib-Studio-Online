@@ -6,26 +6,93 @@
  *
  * Usage:
  *   WebSamplePlayer player;
- *   player.load("path/to/sample.wav");  // Async load
+ *   player.load("path/to/sample.wav");  // suspends via Asyncify; returns when ready
  *   if (player.ready()) {
  *       float sample = player.read(channel, frame);
  *   }
+ *
+ * Implementation note (2026-05-01, v0.12.8): the previous JS->C
+ * round-trip via Module.ccall('_al_web_sample_loaded', ...) required
+ * the symbol to be exported AND for the user TU to actually emit it.
+ * That made the symbol fragile against per-example links: examples
+ * that didn't include this header didn't emit the symbol, so any
+ * attempt to add it to EXPORTED_FUNCTIONS hit
+ *   wasm-ld: symbol exported via --export not found
+ * at link time; conversely, if it wasn't exported, runtime calls
+ * aborted with "Cannot call unknown function _al_web_sample_loaded".
+ *
+ * The fix is structural: load() now uses EM_ASYNC_JS, which suspends
+ * the wasm caller until the JS coroutine resolves and returns a
+ * pointer to a packed buffer (header + interleaved samples). No
+ * C-callable symbol is exposed to JS, so no export contract exists,
+ * so neither the link nor the runtime can fail on a missing name.
+ * ASYNCIFY=1 is already enabled in compile.sh, which is the only
+ * runtime requirement.
  */
 
 #ifndef AL_WEB_SAMPLE_PLAYER_HPP
 #define AL_WEB_SAMPLE_PLAYER_HPP
 
 #include <emscripten.h>
-#include <string>
-#include <vector>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+
+namespace al {
+class WebSamplePlayer;
+} // namespace al
+
+// JS coroutine: fetch URL, decode via Web Audio, allocate a single
+// packed buffer in WASM memory, return its pointer. Layout:
+//   bytes  0..3 : int32   numChannels
+//   bytes  4..7 : int32   numFrames
+//   bytes  8..11: float32 sampleRate
+//   bytes 12..  : float32 interleaved samples (channels * frames)
+// Caller is responsible for free()-ing the returned pointer. Returns
+// 0 on failure (network, decode, OOM).
+EM_ASYNC_JS(void*, _al_ws_fetch_and_decode, (const char* urlPtr), {
+    const url = UTF8ToString(urlPtr);
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) { console.error('[WebSamplePlayer] fetch failed', resp.status, url); return 0; }
+        const buf = await resp.arrayBuffer();
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new Ctx();
+        const ab = await ctx.decodeAudioData(buf);
+        const ch = ab.numberOfChannels;
+        const fr = ab.length;
+        const sr = ab.sampleRate;
+        const total = ch * fr;
+        const ptr = Module._malloc(12 + total * 4);
+        if (!ptr) { console.error('[WebSamplePlayer] malloc failed'); return 0; }
+        Module.HEAP32[(ptr + 0) >> 2] = ch;
+        Module.HEAP32[(ptr + 4) >> 2] = fr;
+        Module.HEAPF32[(ptr + 8) >> 2] = sr;
+        const dataIdx = (ptr + 12) >> 2;
+        // Pull each channel once, then interleave.
+        const channelData = [];
+        for (let c = 0; c < ch; c++) channelData.push(ab.getChannelData(c));
+        for (let f = 0; f < fr; f++) {
+            const base = dataIdx + f * ch;
+            for (let c = 0; c < ch; c++) {
+                Module.HEAPF32[base + c] = channelData[c][f];
+            }
+        }
+        return ptr;
+    } catch (e) {
+        console.error('[WebSamplePlayer] load failed:', e);
+        return 0;
+    }
+});
 
 namespace al {
 
 /**
- * Web-based sample player using Web Audio API
+ * Web-based sample player using Web Audio API.
  *
- * Note: Loading is asynchronous. Check ready() before accessing samples.
+ * Note: load() suspends via Asyncify until the file is decoded; on
+ * return, ready() is true and read()/readInterp() work immediately.
  */
 class WebSamplePlayer {
 public:
@@ -39,82 +106,48 @@ public:
     }
 
     /**
-     * Load a sample from URL (async)
-     * The sample will be decoded using Web Audio API
+     * Load a sample from URL. Suspends via Asyncify until decoded.
+     * On success, ready() returns true. On failure, ready() stays false
+     * and an error is logged to the console.
      */
     void load(const std::string& url) {
         mReady = false;
         mUrl = url;
 
-        EM_ASM({
-            var url = UTF8ToString($0);
-            var playerPtr = $1;
+        void* p = _al_ws_fetch_and_decode(url.c_str());
+        if (!p) return;
 
-            fetch(url)
-                .then(response => response.arrayBuffer())
-                .then(buffer => {
-                    var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    return audioCtx.decodeAudioData(buffer);
-                })
-                .then(audioBuffer => {
-                    var channels = audioBuffer.numberOfChannels;
-                    var frames = audioBuffer.length;
-                    var sampleRate = audioBuffer.sampleRate;
+        // Read header (int32, int32, float32) then samples.
+        const auto* hdrInt   = reinterpret_cast<const int32_t*>(p);
+        const auto* hdrFloat = reinterpret_cast<const float*>(p);
+        const int   channels = hdrInt[0];
+        const int   frames   = hdrInt[1];
+        const float sampleRate = hdrFloat[2];
+        const auto* samples = reinterpret_cast<const float*>(
+            reinterpret_cast<const char*>(p) + 12);
+        const int totalSamples = channels * frames;
 
-                    // Interleave channel data
-                    var interleaved = new Float32Array(channels * frames);
-                    for (var frame = 0; frame < frames; frame++) {
-                        for (var ch = 0; ch < channels; ch++) {
-                            var channelData = audioBuffer.getChannelData(ch);
-                            interleaved[frame * channels + ch] = channelData[frame];
-                        }
-                    }
+        if (mSamples) delete[] mSamples;
+        mSamples = new float[totalSamples];
+        for (int i = 0; i < totalSamples; ++i) mSamples[i] = samples[i];
 
-                    // Copy to WASM memory
-                    var ptr = Module._malloc(interleaved.length * 4);
-                    Module.HEAPF32.set(interleaved, ptr >> 2);
+        mChannels   = channels;
+        mFrames     = frames;
+        mSampleRate = sampleRate;
+        mReady      = true;
 
-                    // Call C++ callback
-                    Module.ccall('_al_web_sample_loaded', null,
-                        ['number', 'number', 'number', 'number', 'number', 'number'],
-                        [playerPtr, ptr, channels, frames, sampleRate, interleaved.length]);
-                })
-                .catch(err => {
-                    console.error('Failed to load sample:', err);
-                });
-        }, url.c_str(), this);
+        std::free(p);
+
+        std::printf("[WebSamplePlayer] Loaded: %d channels, %d frames, %.0f Hz\n",
+                    channels, frames, sampleRate);
     }
 
-    /**
-     * Check if sample is loaded and ready
-     */
-    bool ready() const { return mReady; }
-
-    /**
-     * Get number of channels
-     */
-    int channels() const { return mChannels; }
-
-    /**
-     * Get number of frames
-     */
-    int frames() const { return mFrames; }
-
-    /**
-     * Get sample rate
-     */
+    bool  ready()      const { return mReady; }
+    int   channels()   const { return mChannels; }
+    int   frames()     const { return mFrames; }
     float sampleRate() const { return mSampleRate; }
+    float duration()   const { return mFrames / (float)mSampleRate; }
 
-    /**
-     * Get duration in seconds
-     */
-    float duration() const {
-        return mFrames / (float)mSampleRate;
-    }
-
-    /**
-     * Read sample at frame and channel
-     */
     float read(int channel, int frame) const {
         if (!mReady || !mSamples) return 0;
         if (frame < 0 || frame >= mFrames) return 0;
@@ -122,44 +155,17 @@ public:
         return mSamples[frame * mChannels + channel];
     }
 
-    /**
-     * Read interpolated sample at fractional frame position
-     */
     float readInterp(int channel, float frame) const {
         if (!mReady) return 0;
-
-        int f0 = (int)frame;
-        int f1 = f0 + 1;
-        float frac = frame - f0;
-
-        float s0 = read(channel, f0);
-        float s1 = read(channel, f1);
-
+        const int f0 = (int)frame;
+        const int f1 = f0 + 1;
+        const float frac = frame - f0;
+        const float s0 = read(channel, f0);
+        const float s1 = read(channel, f1);
         return s0 + (s1 - s0) * frac;
     }
 
-    /**
-     * Get pointer to raw sample data (interleaved)
-     */
     const float* data() const { return mSamples; }
-
-    // Called from JavaScript when sample is loaded
-    void _onLoaded(float* samples, int channels, int frames, float sampleRate, int totalSamples) {
-        if (mSamples) delete[] mSamples;
-
-        mSamples = new float[totalSamples];
-        for (int i = 0; i < totalSamples; i++) {
-            mSamples[i] = samples[i];
-        }
-
-        mChannels = channels;
-        mFrames = frames;
-        mSampleRate = sampleRate;
-        mReady = true;
-
-        printf("[WebSamplePlayer] Loaded: %d channels, %d frames, %.0f Hz\n",
-               channels, frames, sampleRate);
-    }
 
 private:
     bool mReady;
@@ -171,16 +177,5 @@ private:
 };
 
 } // namespace al
-
-// C callback for JavaScript
-extern "C" {
-    void _al_web_sample_loaded(al::WebSamplePlayer* player, float* samples,
-                                int channels, int frames, float sampleRate, int totalSamples) {
-        if (player) {
-            player->_onLoaded(samples, channels, frames, sampleRate, totalSamples);
-            free(samples);  // Free the malloc'd buffer
-        }
-    }
-}
 
 #endif // AL_WEB_SAMPLE_PLAYER_HPP
