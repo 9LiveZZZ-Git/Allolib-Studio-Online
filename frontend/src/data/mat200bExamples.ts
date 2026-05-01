@@ -349,6 +349,283 @@ public:
 ALLOLIB_WEB_MAIN(Lissajous)
 `,
   },
+  {
+    id: 'mat-risset',
+    title: 'Risset Glissando Reconstruction',
+    description:
+      "Eight sine oscillators stacked an octave apart, each rising (or falling) at the same rate; a Gaussian amplitude envelope across the stack means the chord seems to shift forever without ever leaving the audible band. Visual is a polar plot where each oscillator's angle = pitch-within-octave, radius scaled by the bell envelope.",
+    category: 'mat-synthesis',
+    subcategory: 'additive',
+    code: `/**
+ * Risset Glissando Reconstruction — MAT200B Phase 1 #2
+ *
+ * Stack of N sine oscillators at one-octave spacing. Each frame all of
+ * them shift by 'rate' octaves/sec (positive = up, negative = down);
+ * when one passes the top of the band it wraps to the bottom an octave
+ * lower. A Gaussian amplitude envelope across the stack (centred at
+ * mid-band) hides the discontinuity, so the perceived pitch motion
+ * never stops.
+ *
+ * Visual: polar plot, one disc per oscillator. Angle = octave fraction
+ * (0..1 mod 2pi), radius scaled by the bell envelope. As the rate
+ * spins the dots, the eye sees what the ear hears.
+ *
+ *   rate         oct/sec, signed — positive rises, negative falls
+ *   amplitude    overall level
+ *   spread       Gaussian width (smaller = harder bell, more obvious wrap)
+ *   numTones     count of stacked oscillators (3..16)
+ *   reset        Trigger — reset all phases to zero
+ */
+
+#include "al_playground_compat.hpp"
+#include "al/graphics/al_Shapes.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <cmath>
+#include <vector>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class Risset : public App {
+public:
+  Parameter     rate     {"rate",      "",  0.30f, -2.0f, 2.0f};
+  Parameter     amplitude{"amplitude", "",  0.25f,  0.0f, 1.0f};
+  Parameter     spread   {"spread",    "",  0.30f,  0.05f, 1.0f};
+  ParameterInt  numTones {"numTones",  "",  8,      3,    16};
+  Trigger       reset    {"reset",     ""};
+
+  ControlGUI gui;
+
+  static constexpr int MAX_TONES = 16;
+  std::vector<gam::Sine<>> oscs{MAX_TONES};
+  std::array<float, MAX_TONES> logF{};   // octaves above base
+  float baseHz = 110.f;
+
+  Mesh dots;
+
+  void onInit() override {
+    gui << rate << amplitude << spread << numTones << reset;
+    reset.registerChangeCallback([this](float) {
+      for (auto& v : logF) v = 0.f;
+    });
+    for (int i = 0; i < MAX_TONES; ++i) logF[i] = static_cast<float>(i);
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+    dots.primitive(Mesh::TRIANGLES);
+  }
+
+  void onSound(AudioIOData& io) override {
+    const int N = numTones.get();
+    const float dt = 1.0f / io.framesPerSecond();
+    const float r  = rate.get();
+    const float sp = spread.get();
+    const float amp = amplitude.get();
+
+    while (io()) {
+      float mix = 0.f;
+      for (int i = 0; i < N; ++i) {
+        logF[i] += r * dt;
+        // Wrap into [0, N): when an osc leaves the top it reappears at
+        // the bottom an octave lower (silent due to the envelope).
+        while (logF[i] < 0.f)  logF[i] += static_cast<float>(N);
+        while (logF[i] >= N)   logF[i] -= static_cast<float>(N);
+
+        const float hz = baseHz * std::pow(2.0f, logF[i]);
+        oscs[i].freq(hz);
+
+        // Bell envelope on position-within-band, peak at N/2.
+        const float u = (logF[i] - 0.5f * (N - 1)) / (sp * N);
+        const float env = std::exp(-u * u);
+        mix += oscs[i]() * env;
+      }
+      const float s = mix * amp / std::sqrt(static_cast<float>(N));
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const int N = numTones.get();
+    const float sp = spread.get();
+    dots.reset();
+    dots.primitive(Mesh::TRIANGLES);
+    for (int i = 0; i < N; ++i) {
+      const float frac = logF[i] / static_cast<float>(N);
+      const float u    = (logF[i] - 0.5f * (N - 1)) / (sp * N);
+      const float env  = std::exp(-u * u);
+      const float r    = 0.4f + 1.4f * env;
+      const float ang  = frac * 2.0f * static_cast<float>(M_PI);
+      const float cx   = std::cos(ang) * r;
+      const float cy   = std::sin(ang) * r;
+      Mesh disc;
+      addDisc(disc, 0.05f + 0.10f * env, 16);
+      const float cr = 1.0f - frac;
+      const float cg = 0.4f + 0.5f * frac;
+      const float cb = 0.4f + 0.6f * frac;
+      for (size_t v = 0; v < disc.vertices().size(); ++v) {
+        const auto& p = disc.vertices()[v];
+        dots.vertex(p.x + cx, p.y + cy, 0.f);
+        dots.color(cr * env, cg * env, cb * env);
+      }
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.07f);
+    g.meshColor();
+    g.draw(dots);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(Risset)
+`,
+  },
+  {
+    id: 'mat-karplus-strong',
+    title: 'Karplus–Strong String Lab',
+    description:
+      'Plucked-string physical model: short noise burst into a delay line + lowpass feedback. Pitch = sampleRate / delay length; damping is the feedback gain. Visual is the delay line itself drawn as a horizontal vertex strip — each vertex height = current sample, so you watch the standing wave develop and decay.',
+    category: 'mat-synthesis',
+    subcategory: 'physical',
+    code: `/**
+ * Karplus–Strong String Lab — MAT200B Phase 1 #3
+ *
+ * Classic delay-line + lowpass-feedback string. Pluck = N samples of
+ * white noise written into a circular delay buffer; each subsequent
+ * audio sample averages the current and previous ring read with a
+ * feedback gain ('damping'). One-zero lowpass + scalar feedback is
+ * enough to model the lossy reflections at the bridge.
+ *
+ *   y[n]    = 0.5 * (buf[r] + prev) * damping
+ *   buf[w]  = y[n]
+ *   prev    = buf[r]   (before write)
+ *
+ * Pluck position is faked by writing the noise burst centred on
+ * pluckPos*delayLen with a triangular window — fewer high harmonics
+ * if you pluck near the centre, more if near the bridge.
+ *
+ * Visual: the delay buffer drawn as a LINE_STRIP, x = position along
+ * the string, y = current sample value. Standing-wave shape and
+ * decay both visible.
+ *
+ *   pitch        Hz — sets the delay length (sampleRate / pitch)
+ *   damping      0.80..1.00 — feedback gain (1 ~= no decay)
+ *   pluckPos     0..1 — fraction along the string that gets noise
+ *   excitation   0..1 — initial pluck amplitude
+ *   pluck        Trigger — fire a new noise burst
+ */
+
+#include "al_playground_compat.hpp"
+
+#include <atomic>
+#include <cstdlib>
+#include <vector>
+
+using namespace al;
+
+class KarplusStrong : public App {
+public:
+  Parameter pitch     {"pitch",      "", 220.0f, 40.0f, 1200.0f};
+  Parameter damping   {"damping",    "", 0.99f,  0.80f, 1.00f};
+  Parameter pluckPos  {"pluckPos",   "", 0.50f,  0.05f, 0.95f};
+  Parameter excitation{"excitation", "", 0.60f,  0.0f,  1.0f};
+  Trigger   pluck     {"pluck",      ""};
+
+  ControlGUI gui;
+
+  static constexpr int MAX_DELAY = 4096;
+  std::vector<float> buf;
+  int delayLen   = 256;
+  int writeIdx   = 0;
+  float prevSample = 0.f;
+  std::atomic<int> pluckPending{0};
+
+  Mesh stringMesh;
+
+  void onInit() override {
+    gui << pitch << damping << pluckPos << excitation << pluck;
+    pluck.registerChangeCallback([this](float) {
+      pluckPending.store(1, std::memory_order_release);
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    buf.assign(MAX_DELAY, 0.f);
+    nav().pos(0, 0, 3.5f);
+    stringMesh.primitive(Mesh::LINE_STRIP);
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float sr = io.framesPerSecond();
+    delayLen = std::max(2, std::min(MAX_DELAY,
+                static_cast<int>(sr / pitch.get())));
+    const float fb = damping.get();
+
+    if (pluckPending.exchange(0, std::memory_order_acquire)) {
+      // Triangular-windowed noise burst centred on pluckPos.
+      const int center = static_cast<int>(pluckPos.get() * delayLen);
+      const int width  = std::max(8, delayLen / 4);
+      const float amp  = excitation.get();
+      for (int i = 0; i < delayLen; ++i) {
+        const int dist = std::abs(i - center);
+        if (dist < width / 2) {
+          const float w = 1.0f - (2.0f * dist / static_cast<float>(width));
+          const float n = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+          buf[i] = n * w * amp;
+        } else {
+          buf[i] *= 0.5f;
+        }
+      }
+    }
+
+    while (io()) {
+      const float cur = buf[writeIdx];
+      const float y   = 0.5f * (cur + prevSample) * fb;
+      prevSample = cur;
+      buf[writeIdx] = y;
+      writeIdx = (writeIdx + 1) % delayLen;
+      io.out(0) = y;
+      io.out(1) = y;
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    stringMesh.reset();
+    stringMesh.primitive(Mesh::LINE_STRIP);
+    // Downsample for cheap mesh upload — 512 vertices / frame.
+    constexpr int N = 512;
+    const int step = std::max(1, delayLen / N);
+    int i = 0;
+    for (int k = 0; k < delayLen && i < N; k += step, ++i) {
+      const float x = -1.4f + 2.8f * (static_cast<float>(i) / N);
+      const float y = buf[(writeIdx + k) % delayLen] * 1.5f;
+      stringMesh.vertex(x, y, 0.f);
+      const float t = static_cast<float>(i) / N;
+      stringMesh.color(0.4f + 0.5f * t, 0.8f - 0.4f * t, 0.5f);
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.06f, 0.06f);
+    g.meshColor();
+    g.draw(stringMesh);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(KarplusStrong)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
