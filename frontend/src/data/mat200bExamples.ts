@@ -621,6 +621,28 @@ public:
     g.draw(stringMesh);
     gui.draw(g);
   }
+
+  // Musical keyboard: set pitch and pluck on key press.
+  static int noteFromKey(int key) {
+    static const int kbd[] = {
+      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
+      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
+      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
+    };
+    for (int i = 0; i < 21; ++i) {
+      const int K = kbd[i*2];
+      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    }
+    return -1;
+  }
+  bool onKeyDown(const Keyboard& k) override {
+    const int n = noteFromKey(k.key());
+    if (n >= 0) {
+      pitch.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
+      pluck.set(1.0f);
+    }
+    return true;
+  }
 };
 
 ALLOLIB_WEB_MAIN(KarplusStrong)
@@ -1570,48 +1592,58 @@ public:
       }
     }
 
-    // Render the table as a LINE_STRIP across the top half.
+    // Render the table as a LINE_STRIP centered at y = 0.55, swing ±0.40.
+    // (Previously y = 0.8 ± 0.55 ran off the top of the viewport.)
     tableMesh.reset();
     tableMesh.primitive(Mesh::LINE_STRIP);
     for (int i = 0; i < TBL; ++i) {
       const float xx = -1.4f + (static_cast<float>(i) / (TBL - 1)) * 2.8f;
-      const float yy = 0.8f + table[i] * 0.55f;
+      const float yy = 0.55f + table[i] * 0.40f;
       tableMesh.vertex(xx, yy, 0.f);
       tableMesh.color(0.6f, 0.95f, 0.4f);
     }
 
-    // Spectrum across the bottom.
+    // Spectrum across the bottom: y in [-0.95, +0.05] max.
     std::array<float, N / 2> mag{};
     computeSpectrum(mag);
     spectrum.reset();
     spectrum.primitive(Mesh::LINE_STRIP);
     for (int k = 0; k < N / 2; ++k) {
       const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(1.4f, mag[k] * 7.0f);
-      const float yy = -1.0f + h;
+      const float h  = std::min(1.0f, mag[k] * 7.0f);
+      const float yy = -0.95f + h;
       spectrum.vertex(xx, yy, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
     }
 
-    // Grid + a small dot showing the current playhead within the table.
+    // Grid: table baseline + spectrum baseline.
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(-1.4f, 0.8f, 0.f); gridMesh.vertex(1.4f, 0.8f, 0.f);
-    gridMesh.vertex(-1.4f,-1.0f, 0.f); gridMesh.vertex(1.4f,-1.0f, 0.f);
+    gridMesh.vertex(-1.4f, 0.55f, 0.f); gridMesh.vertex(1.4f, 0.55f, 0.f);
+    gridMesh.vertex(-1.4f,-0.95f, 0.f); gridMesh.vertex(1.4f,-0.95f, 0.f);
     for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
 
-    const float p = playheadIdx.load(std::memory_order_acquire) / TBL;   // 0..1
+    // Playhead marker as inline triangle-fan disc (no external addDisc).
+    const float p = playheadIdx.load(std::memory_order_acquire) / TBL;
     const float px = -1.4f + p * 2.8f;
     const int idx = static_cast<int>(p * (TBL - 1));
-    const float py = 0.8f + table[idx] * 0.55f;
+    const float py = 0.55f + table[idx] * 0.40f;
     playMarker.reset();
     playMarker.primitive(Mesh::TRIANGLES);
-    Mesh d; addDisc(d, 0.05f, 12);
-    for (size_t v = 0; v < d.vertices().size(); ++v) {
-      const auto& q = d.vertices()[v];
-      playMarker.vertex(q.x + px, q.y + py, 0.f);
-      playMarker.color(1.0f, 0.85f, 0.2f);
+    {
+      const int seg = 14;
+      const float radius = 0.045f;
+      for (int s = 0; s < seg; ++s) {
+        const float a0 = 2.f * static_cast<float>(M_PI) * s       / seg;
+        const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
+        playMarker.vertex(px, py, 0.f);
+        playMarker.vertex(px + radius * std::cos(a0), py + radius * std::sin(a0), 0.f);
+        playMarker.vertex(px + radius * std::cos(a1), py + radius * std::sin(a1), 0.f);
+        playMarker.color(1.0f, 0.85f, 0.2f);
+        playMarker.color(1.0f, 0.85f, 0.2f);
+        playMarker.color(1.0f, 0.85f, 0.2f);
+      }
     }
   }
 
@@ -2215,6 +2247,28 @@ public:
     g.draw(pickupMarker);
     gui.draw(g);
   }
+
+  // Musical keyboard: set pitch and pluck on key press.
+  static int noteFromKey(int key) {
+    static const int kbd[] = {
+      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
+      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
+      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
+    };
+    for (int i = 0; i < 21; ++i) {
+      const int K = kbd[i*2];
+      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    }
+    return -1;
+  }
+  bool onKeyDown(const Keyboard& k) override {
+    const int n = noteFromKey(k.key());
+    if (n >= 0) {
+      pitch_hz.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
+      pluck.set(1.0f);
+    }
+    return true;
+  }
 };
 
 ALLOLIB_WEB_MAIN(WaveguideString)
@@ -2472,6 +2526,35 @@ public:
   bool onMouseDown(const Mouse&) override { return false; }
   bool onMouseDrag(const Mouse&) override { return false; }
   bool onMouseUp  (const Mouse&) override { return false; }
+
+  // Musical keyboard: ZXCVBNM = C3..B3, ASDFGHJ = C4..B4, QWERTYU = C5..B5.
+  static int noteFromKey(int key) {
+    static const int kbd[] = {
+      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
+      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
+      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
+    };
+    for (int i = 0; i < 21; ++i) {
+      const int K = kbd[i*2];
+      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    }
+    return -1;
+  }
+  static float freqFromMidi(int n) {
+    return 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+  }
+  bool onKeyDown(const Keyboard& k) override {
+    const int n = noteFromKey(k.key());
+    if (n >= 0) {
+      pitch_hz.set(freqFromMidi(n));
+      noteOn.set(1.0f);
+    }
+    return true;
+  }
+  bool onKeyUp(const Keyboard& k) override {
+    if (noteFromKey(k.key()) >= 0) noteOff.set(1.0f);
+    return true;
+  }
 };
 
 ALLOLIB_WEB_MAIN(Subtractive)
@@ -3720,7 +3803,7 @@ public:
     rebuildMesh();
   }
 
-  float radiusAt(float theta) const {
+  float radiusAt(float theta) {
     float sum = 0.0f, norm = 0.0f;
     for (int i = 0; i < N_PARTIALS; ++i) {
       const float a = partialAmps[i].load(std::memory_order_relaxed);
@@ -3731,7 +3814,7 @@ public:
     return R0.get() + 0.5f * sum / norm;
   }
 
-  int dominantPartial() const {
+  int dominantPartial() {
     int best = 0;
     float bestVal = -1.0f;
     for (int i = 0; i < N_PARTIALS; ++i) {
@@ -3884,6 +3967,25 @@ public:
   bool onMouseDown(const Mouse&) override { return false; }
   bool onMouseDrag(const Mouse&) override { return false; }
   bool onMouseUp  (const Mouse&) override { return false; }
+
+  // Musical keyboard sets the fundamental f0; harmonics scale automatically.
+  static int noteFromKey(int key) {
+    static const int kbd[] = {
+      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
+      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
+      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
+    };
+    for (int i = 0; i < 21; ++i) {
+      const int K = kbd[i*2];
+      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    }
+    return -1;
+  }
+  bool onKeyDown(const Keyboard& k) override {
+    const int n = noteFromKey(k.key());
+    if (n >= 0) f0.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
+    return true;
+  }
 };
 
 ALLOLIB_WEB_MAIN(AdditiveGeometry)
@@ -3917,8 +4019,8 @@ ALLOLIB_WEB_MAIN(AdditiveGeometry)
 
 using namespace al;
 
-static const int NUM_PARTIALS = 32;
-static const int WAVE_SAMPLES = 256;
+static const int NUM_PARTIALS = 64;
+static const int WAVE_SAMPLES = 384;
 
 class AdditiveSculptor : public App {
 public:
@@ -4170,6 +4272,25 @@ public:
     g.draw(borders);
 
     gui.draw(g);
+  }
+
+  // Musical keyboard: each key sets the fundamental.
+  static int noteFromKey(int key) {
+    static const int kbd[] = {
+      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
+      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
+      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
+    };
+    for (int i = 0; i < 21; ++i) {
+      const int K = kbd[i*2];
+      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    }
+    return -1;
+  }
+  bool onKeyDown(const Keyboard& k) override {
+    const int n = noteFromKey(k.key());
+    if (n >= 0) pitch_hz.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
+    return true;
   }
 };
 

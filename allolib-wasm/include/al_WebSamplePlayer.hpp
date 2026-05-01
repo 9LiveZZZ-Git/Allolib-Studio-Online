@@ -172,8 +172,11 @@ private:
 
 } // namespace al
 
-// C callback for JavaScript
+// C callback for JavaScript. EMSCRIPTEN_KEEPALIVE prevents dead-code
+// elimination before the linker's EXPORTED_FUNCTIONS list applies, so the
+// symbol is reliably callable via Module.ccall regardless of TU ordering.
 extern "C" {
+    EMSCRIPTEN_KEEPALIVE
     void _al_web_sample_loaded(al::WebSamplePlayer* player, float* samples,
                                 int channels, int frames, float sampleRate, int totalSamples) {
         if (player) {
