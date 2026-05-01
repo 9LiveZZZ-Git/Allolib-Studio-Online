@@ -3131,7 +3131,7 @@ ALLOLIB_WEB_MAIN(MultiscaleStems)
     id: 'mat-mastering-ab',
     title: 'Mastering A/B with Diff Visuals',
     description:
-      'Plays a bundled CC0 loop through two parallel chains: A is the clean reference, B is a simple mastering stack (gain trim + tilt EQ + soft tanh saturation). Toggle playB to A/B compare audibly with a 5-ms crossfade and an optional RMS loudness-match so the toggle judges timbre, not level. The visual stacks A on top, B in the middle, and the A-B difference as a filled red curve at the bottom — when the diff collapses to a flat line, B is doing nothing; as you push gain/tilt/saturation, the diff bulges.',
+      'Plays a bundled CC0 audio source through two parallel chains: A is the clean reference, B is a simple mastering stack (gain trim + tilt EQ + soft tanh saturation). Six source choices: short single-stem loops (drums, pad, mix) and three full 30-second mastering reference tracks (EDM, jazz, orchestral) so you can hear the EQ + saturation chain over a real arrangement. Toggle playB to A/B compare audibly with a 5-ms crossfade and an optional RMS loudness-match so the toggle judges timbre, not level. The visual stacks A on top, B in the middle, and the A-B difference as a filled red curve at the bottom.',
     category: 'mat-mixing',
     subcategory: 'mastering',
     code: `/**
@@ -3176,7 +3176,7 @@ public:
 
   ControlGUI gui;
 
-  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer drums, pad, mixed, edm, jazz, orchestral;
   WebSamplePlayer* current = &drums;
 
   double playhead = 0.0;
@@ -3201,17 +3201,23 @@ public:
   Mesh waveA, waveB, diffFill, gridMesh, rmsBar, badge;
 
   void onInit() override {
-    source.setElements({"drums", "pad", "mixed"});
-    source.set(0);
+    // Short stems first (drums/pad/mix), then full reference tracks
+    // (edm/jazz/orchestral) so the menu reads "loops then mixes."
+    source.setElements({"drums", "pad", "mixed",
+                        "edm full", "jazz full", "orchestral full"});
+    source.set(3);   // default to EDM full mix — most useful for mastering work
 
     gui << source << playB << gain_dB << tiltAmount_dB << tiltPivot_hz
         << saturation << loudness_match << retrigger;
 
     source.registerChangeCallback([this](float v) {
       switch (static_cast<int>(v)) {
-        case 0: current = &drums; break;
-        case 1: current = &pad;   break;
-        case 2: current = &mixed; break;
+        case 0: current = &drums;      break;
+        case 1: current = &pad;        break;
+        case 2: current = &mixed;      break;
+        case 3: current = &edm;        break;
+        case 4: current = &jazz;       break;
+        case 5: current = &orchestral; break;
       }
       playhead = 0.0;
     });
@@ -3226,6 +3232,10 @@ public:
     drums.load("drum_loop_120bpm.wav");
     pad.load("pad_loop.wav");
     mixed.load("mixed_loop.wav");
+    edm.load("edm_full.wav");
+    jazz.load("jazz_full.wav");
+    orchestral.load("orchestral_full.wav");
+    current = &edm;
 
     lowShelf.type(gam::LOW_SHELF);
     highShelf.type(gam::HIGH_SHELF);

@@ -59,6 +59,13 @@ const BUNDLED_ASSETS = new Map<string, string>([
   ['drum_loop_120bpm.wav', '/assets/mat200b/audio/drum_loop_120bpm.wav'],
   ['pad_loop.wav',         '/assets/mat200b/audio/pad_loop.wav'],
   ['mixed_loop.wav',       '/assets/mat200b/audio/mixed_loop.wav'],
+  // Full mastering reference tracks (30s each, CC0 procedurally synthesized
+  // via generate_full_tracks.py; used by mat-mastering-ab so users can
+  // hear the EQ + saturation chain over a real mix's worth of material
+  // instead of a single-stem loop).
+  ['edm_full.wav',         '/assets/mat200b/audio/edm_full.wav'],
+  ['jazz_full.wav',        '/assets/mat200b/audio/jazz_full.wav'],
+  ['orchestral_full.wav',  '/assets/mat200b/audio/orchestral_full.wav'],
   ['bunny.obj',   '/assets/meshes/bunny.obj'],
   ['spot.obj',    '/assets/meshes/spot.obj'],
   ['suzanne.obj', '/assets/meshes/suzanne.obj'],
