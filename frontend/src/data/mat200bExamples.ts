@@ -626,6 +626,297 @@ public:
 ALLOLIB_WEB_MAIN(KarplusStrong)
 `,
   },
+  {
+    id: 'mat-compressor',
+    title: 'Compressor Lab — Downward + Upward',
+    description:
+      'Dynamics processor with dB-dB transfer plot, gain-reduction meter, and before/after waveforms. Switch between downward (peak-tame) and upward (quiet-lift) compression on the same signal to see how a single threshold treats peaks vs. body. Plays bundled CC0 audio (drums / pad / mix).',
+    category: 'mat-signal',
+    subcategory: 'dynamics',
+    code: `/**
+ * Compressor Lab — MAT200B Phase 1 #4
+ *
+ * Plays one of three bundled CC0 loops through a one-pole envelope
+ * follower + threshold/ratio/attack/release compressor. The headline
+ * pedagogy is the mode toggle:
+ *
+ *   downward (default) — when input exceeds threshold, output is
+ *     pulled toward threshold by 1/ratio of the overshoot. Tames
+ *     peaks. Transfer curve bends DOWN above the knee.
+ *
+ *   upward — when input falls BELOW threshold (and above the noise
+ *     floor), output is BOOSTED toward threshold by ratio. Lifts
+ *     the quiet body of the signal without touching peaks. Transfer
+ *     curve bends UP below the knee.
+ *
+ * Same threshold, ratio, attack, release knobs in both modes — the
+ * mode switch just chooses which side of the threshold gets the
+ * gain shaping. Drums (high transient material) demo downward best;
+ * the pad (low dynamic range) demo upward best; mixed shows both.
+ *
+ * Visuals: dB-dB transfer curve (LINE_STRIP) + live input/output
+ * dot moving along it + before/after waveforms drawn from a
+ * 1024-sample atomic ringbuffer.
+ *
+ * Knobs:
+ *   source        menu — drums / pad / mixed
+ *   upwardMode    bool — false = downward, true = upward
+ *   threshold_dB  -60..0
+ *   ratio         1..20
+ *   attack_ms     0.1..200
+ *   release_ms    10..1000
+ *   makeup_dB     0..24
+ *   retrigger     restart loop from start
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+using namespace al;
+
+class CompressorLab : public App {
+public:
+  ParameterMenu source     {"source",      ""};
+  ParameterBool upwardMode {"upwardMode",  "", false};
+  Parameter     threshold  {"threshold_dB","", -20.0f, -60.0f, 0.0f};
+  Parameter     ratio      {"ratio",       "",  4.0f,   1.0f, 20.0f};
+  Parameter     attackMs   {"attack_ms",   "",  5.0f,   0.1f, 200.0f};
+  Parameter     releaseMs  {"release_ms",  "", 100.0f, 10.0f, 1000.0f};
+  Parameter     makeup_dB  {"makeup_dB",   "",  0.0f,   0.0f, 24.0f};
+  Trigger       retrigger  {"retrigger",   ""};
+
+  ControlGUI gui;
+
+  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer* current = &drums;
+
+  // Playhead is in source-rate frames; advance by srcRate/hostRate per output sample.
+  double playhead = 0.0;
+
+  // Envelope follower state (linear).
+  float envState = 0.f;
+
+  // Audio -> graphics ringbuffers (mono before/after).
+  static constexpr int RING = 1024;
+  std::array<float, RING> beforeRing{};
+  std::array<float, RING> afterRing{};
+  std::atomic<int> ringW{0};
+
+  // Live display values (atomically published from audio thread).
+  std::atomic<float> currentInDB {-60.f};
+  std::atomic<float> currentOutDB{-60.f};
+  std::atomic<float> currentGRDB {  0.f};
+
+  Mesh transferCurve, livePoint, gridMesh, beforeWave, afterWave, grBar;
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+
+    gui << source << upwardMode << threshold << ratio
+        << attackMs << releaseMs << makeup_dB << retrigger;
+
+    source.registerChangeCallback([this](float v) {
+      switch (static_cast<int>(v)) {
+        case 0: current = &drums; break;
+        case 1: current = &pad;   break;
+        case 2: current = &mixed; break;
+      }
+      playhead = 0.0;
+    });
+    retrigger.registerChangeCallback([this](float) { playhead = 0.0; });
+  }
+
+  void onCreate() override {
+    gui.init();
+    drums.load("drum_loop_120bpm.wav");
+    pad.load("pad_loop.wav");
+    mixed.load("mixed_loop.wav");
+    nav().pos(0, 0, 4.0f);
+  }
+
+  static float onePoleCoef(float ms, float sr) {
+    return std::exp(-1.0f / (ms * 0.001f * sr));
+  }
+
+  void onSound(AudioIOData& io) override {
+    if (!current || !current->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const float sr     = io.framesPerSecond();
+    const float srcSR  = current->sampleRate() > 1.f ? current->sampleRate() : sr;
+    const double rateRatio = static_cast<double>(srcSR) / static_cast<double>(sr);
+    const float aA     = onePoleCoef(attackMs.get(),  sr);
+    const float aR     = onePoleCoef(releaseMs.get(), sr);
+    const float thrDB  = threshold.get();
+    const float r      = ratio.get();
+    const float makeupLin = std::pow(10.0f, makeup_dB.get() / 20.0f);
+    const bool  upward = upwardMode.get();
+    const float noiseFloorDB = -60.0f;
+    const int   nFrames = current->frames();
+
+    float lastInDB = -60.f, lastOutDB = -60.f, lastGRDB = 0.f;
+
+    while (io()) {
+      // Source read with linear interpolation, looping.
+      const float in = current->readInterp(0, static_cast<float>(playhead));
+      playhead += rateRatio;
+      if (playhead >= nFrames) playhead -= nFrames;
+
+      // Envelope follower (peak / one-pole).
+      const float absIn = std::abs(in);
+      const float coef  = (absIn > envState) ? aA : aR;
+      envState = absIn + coef * (envState - absIn);
+
+      const float lvlDB = (envState > 1e-6f) ? 20.f * std::log10(envState) : -120.f;
+
+      float grDB = 0.f;
+      if (!upward) {
+        // Downward: shave overshoot.
+        if (lvlDB > thrDB) {
+          grDB = -(lvlDB - thrDB) * (1.0f - 1.0f / r);
+        }
+      } else {
+        // Upward: lift undershoot, but only down to the noise floor.
+        if (lvlDB < thrDB && lvlDB > noiseFloorDB) {
+          grDB = (thrDB - lvlDB) * (1.0f - 1.0f / r);
+        }
+      }
+
+      const float gainLin = std::pow(10.0f, grDB / 20.0f) * makeupLin;
+      const float out     = in * gainLin;
+
+      io.out(0) = out;
+      io.out(1) = out;
+
+      const int w = ringW.load(std::memory_order_relaxed);
+      beforeRing[w] = in;
+      afterRing[w]  = out;
+      ringW.store((w + 1) % RING, std::memory_order_release);
+
+      lastInDB  = lvlDB;
+      lastOutDB = lvlDB + grDB + makeup_dB.get();
+      lastGRDB  = grDB;
+    }
+
+    currentInDB.store(lastInDB,  std::memory_order_release);
+    currentOutDB.store(lastOutDB,std::memory_order_release);
+    currentGRDB.store(lastGRDB,  std::memory_order_release);
+  }
+
+  // Map an input dB value to screen X in [-1.4, +1.4] over the -60..0 range.
+  static float dbToX(float db) { return -1.4f + (db + 60.0f) / 60.0f * 2.8f; }
+  static float dbToY(float db) { return  0.2f + (db + 60.0f) / 60.0f * 1.8f; }
+
+  void onAnimate(double /*dt*/) override {
+    const float thrDB  = threshold.get();
+    const float r      = ratio.get();
+    const float makeup = makeup_dB.get();
+    const bool  upward = upwardMode.get();
+
+    // Transfer curve: 240 points from -60 to 0 dB input.
+    transferCurve.reset();
+    transferCurve.primitive(Mesh::LINE_STRIP);
+    constexpr int N = 240;
+    for (int i = 0; i < N; ++i) {
+      const float inDB = -60.0f + (60.0f * i) / (N - 1);
+      float outDB = inDB;
+      if (!upward) {
+        if (inDB > thrDB) outDB = thrDB + (inDB - thrDB) / r;
+      } else {
+        if (inDB < thrDB && inDB > -60.f)
+          outDB = inDB + (thrDB - inDB) * (1.0f - 1.0f / r);
+      }
+      outDB += makeup;
+      transferCurve.vertex(dbToX(inDB), dbToY(outDB), 0.f);
+      transferCurve.color(upward ? 0.5f : 0.4f,
+                          upward ? 0.7f : 0.9f,
+                          upward ? 1.0f : 0.5f);
+    }
+
+    // Reference identity line (input = output, no compression).
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    for (int dB = -60; dB <= 0; dB += 10) {
+      // vertical
+      gridMesh.vertex(dbToX(dB),     dbToY(-60.f), 0.f);
+      gridMesh.vertex(dbToX(dB),     dbToY(0.f),   0.f);
+      // horizontal
+      gridMesh.vertex(dbToX(-60.f),  dbToY(dB),    0.f);
+      gridMesh.vertex(dbToX(0.f),    dbToY(dB),    0.f);
+      const float c = 0.18f;
+      for (int k = 0; k < 4; ++k) gridMesh.color(c, c, c);
+    }
+    // identity diagonal
+    gridMesh.vertex(dbToX(-60.f), dbToY(-60.f), 0.f);
+    gridMesh.vertex(dbToX(0.f),   dbToY(0.f),   0.f);
+    gridMesh.color(0.3f, 0.3f, 0.3f);
+    gridMesh.color(0.3f, 0.3f, 0.3f);
+
+    // Live point on the curve.
+    livePoint.reset();
+    livePoint.primitive(Mesh::TRIANGLES);
+    {
+      Mesh d;
+      addDisc(d, 0.04f, 16);
+      const float px = dbToX(currentInDB.load());
+      const float py = dbToY(currentOutDB.load());
+      for (size_t v = 0; v < d.vertices().size(); ++v) {
+        const auto& p = d.vertices()[v];
+        livePoint.vertex(p.x + px, p.y + py, 0.f);
+        livePoint.color(1.0f, 0.85f, 0.2f);
+      }
+    }
+
+    // Before / after waveforms (below the transfer plot).
+    const int w = ringW.load(std::memory_order_acquire);
+    beforeWave.reset(); afterWave.reset();
+    beforeWave.primitive(Mesh::LINE_STRIP);
+    afterWave.primitive(Mesh::LINE_STRIP);
+    constexpr int W = 512;
+    for (int i = 0; i < W; ++i) {
+      const int idx = (w - W + i + RING) % RING;
+      const float xx = -1.4f + (static_cast<float>(i) / W) * 2.8f;
+      beforeWave.vertex(xx, beforeRing[idx] * 0.18f - 1.20f, 0.f);
+      beforeWave.color(0.4f, 0.6f, 0.9f);
+      afterWave.vertex (xx, afterRing[idx]  * 0.18f - 1.65f, 0.f);
+      afterWave.color (0.95f, 0.55f, 0.3f);
+    }
+
+    // GR meter on the right edge — height proportional to |GR| in dB.
+    grBar.reset();
+    grBar.primitive(Mesh::TRIANGLES);
+    const float grAbs = std::min(24.f, std::abs(currentGRDB.load()));
+    const float h     = grAbs / 24.0f * 1.8f;
+    const float x0    = 1.55f, x1 = 1.70f, y0 = 0.2f, y1 = 0.2f + h;
+    // two triangles
+    grBar.vertex(x0, y0, 0.f); grBar.vertex(x1, y0, 0.f); grBar.vertex(x1, y1, 0.f);
+    grBar.vertex(x0, y0, 0.f); grBar.vertex(x1, y1, 0.f); grBar.vertex(x0, y1, 0.f);
+    const Color grColor = upward ? Color(0.4f, 0.85f, 1.0f) : Color(1.0f, 0.55f, 0.4f);
+    for (int k = 0; k < 6; ++k) grBar.color(grColor.r, grColor.g, grColor.b);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.05f, 0.05f, 0.08f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(transferCurve);
+    g.draw(livePoint);
+    g.draw(beforeWave);
+    g.draw(afterWave);
+    g.draw(grBar);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(CompressorLab)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
