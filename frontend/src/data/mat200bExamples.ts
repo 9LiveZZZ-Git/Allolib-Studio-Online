@@ -3612,6 +3612,1246 @@ public:
 ALLOLIB_WEB_MAIN(MixThermometer)
 `,
   },
+  {
+    id: 'mat-additive-geometry',
+    title: 'Additive Geometry',
+    description:
+      'A single coefficient vector simultaneously drives a 16-partial additive synthesizer and a parametric 3D mesh whose radius is the same Fourier sum: r(theta) = R0 + sum(a_n * cos(n*theta)). Push the a3 slider up and you hear the third harmonic AND see three new lobes bloom around the surface. Mesh hue tracks the dominant harmonic index, and a thin time-domain scope ring traces one period of the audio waveform — which is also the mesh radius cross-section at the equator. The trick is a std::array<std::atomic<float>, 16> shared lock-free between audio and graphics.',
+    category: 'mat-synthesis',
+    subcategory: 'additive',
+    code: `/**
+ * Additive Geometry — MAT200B Phase 2 (additive synthesis)
+ *
+ * One std::array<std::atomic<float>, 16> drives BOTH:
+ *   - audio: 16 sines summed with amplitudes a[n]
+ *   - mesh:  parametric surface radius r(theta) = R0 + sum a_n cos(n theta)
+ *
+ * Slider a_n up -> harmonic n louder AND n lobes appear on the mesh.
+ * The scope ring at the bottom traces r(theta) at the equator — same
+ * curve as one period of the time-domain waveform.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class AdditiveGeometry : public App {
+public:
+  static constexpr int N_PARTIALS = 16;
+  std::array<gam::Sine<>, N_PARTIALS> oscs;
+  std::array<std::atomic<float>, N_PARTIALS> partialAmps;
+
+  Parameter f0      {"f0_Hz",       "",        110.0f,  40.0f,  440.0f};
+  Parameter master  {"master",      "",          0.25f,  0.0f,    1.0f};
+  Parameter a1{"a1","partials",1.00f,0.f,1.f}; Parameter a2{"a2","partials",0.f,0.f,1.f};
+  Parameter a3{"a3","partials",0.00f,0.f,1.f}; Parameter a4{"a4","partials",0.f,0.f,1.f};
+  Parameter a5{"a5","partials",0.00f,0.f,1.f}; Parameter a6{"a6","partials",0.f,0.f,1.f};
+  Parameter a7{"a7","partials",0.00f,0.f,1.f}; Parameter a8{"a8","partials",0.f,0.f,1.f};
+  Parameter tailDecay {"tail_decay","",  0.5f, 0.0f, 1.0f};
+  Parameter rotate    {"rotate",    "",  0.3f, -2.0f, 2.0f};
+  Parameter R0        {"base_radius","", 1.0f, 0.2f, 2.0f};
+  ParameterBool wireframe {"wireframe","", false};
+  Trigger sawPreset    {"preset_saw",   ""};
+  Trigger squarePreset {"preset_square",""};
+  Trigger clearPreset  {"preset_clear", ""};
+
+  ControlGUI gui;
+
+  Mesh surface, scope;
+  static constexpr int N_LON = 64;
+  static constexpr int N_LAT = 32;
+  float yaw = 0.0f;
+  int frameCount = 0;
+
+  void onInit() override {
+    for (int i = 0; i < N_PARTIALS; ++i) partialAmps[i].store(0.0f);
+    partialAmps[0].store(1.0f);
+
+    Parameter* live[8] = {&a1,&a2,&a3,&a4,&a5,&a6,&a7,&a8};
+    for (int i = 0; i < 8; ++i) {
+      const int idx = i;
+      live[i]->registerChangeCallback([this, idx](float v) {
+        partialAmps[idx].store(v);
+      });
+    }
+
+    sawPreset.registerChangeCallback([this, live](float){
+      for (int i = 0; i < 8; ++i) live[i]->set(1.0f / float(i + 1));
+      for (int i = 8; i < N_PARTIALS; ++i) partialAmps[i].store(1.0f / float(i + 1));
+    });
+    squarePreset.registerChangeCallback([this, live](float){
+      for (int i = 0; i < 8; ++i) {
+        const int n = i + 1;
+        live[i]->set((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
+      }
+      for (int i = 8; i < N_PARTIALS; ++i) {
+        const int n = i + 1;
+        partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
+      }
+    });
+    clearPreset.registerChangeCallback([this, live](float){
+      for (int i = 0; i < 8; ++i) live[i]->set(0.0f);
+      for (int i = 8; i < N_PARTIALS; ++i) partialAmps[i].store(0.0f);
+    });
+
+    gui << f0 << master
+        << a1 << a2 << a3 << a4 << a5 << a6 << a7 << a8
+        << tailDecay << rotate << R0 << wireframe
+        << sawPreset << squarePreset << clearPreset;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+    for (auto& o : oscs) o.freq(110.0f);
+    surface.primitive(Mesh::TRIANGLES);
+    scope.primitive(Mesh::LINE_STRIP);
+    rebuildMesh();
+  }
+
+  float radiusAt(float theta) const {
+    float sum = 0.0f, norm = 0.0f;
+    for (int i = 0; i < N_PARTIALS; ++i) {
+      const float a = partialAmps[i].load(std::memory_order_relaxed);
+      sum  += a * std::cos(float(i + 1) * theta);
+      norm += a;
+    }
+    if (norm < 1e-4f) norm = 1.0f;
+    return R0.get() + 0.5f * sum / norm;
+  }
+
+  int dominantPartial() const {
+    int best = 0;
+    float bestVal = -1.0f;
+    for (int i = 0; i < N_PARTIALS; ++i) {
+      const float a = partialAmps[i].load(std::memory_order_relaxed);
+      if (a > bestVal) { bestVal = a; best = i; }
+    }
+    return best;
+  }
+
+  static void hsv2rgb(float h, float s, float v, float& r, float& g, float& b) {
+    const float i = std::floor(h * 6.0f);
+    const float f = h * 6.0f - i;
+    const float p = v * (1.0f - s);
+    const float q = v * (1.0f - f * s);
+    const float t = v * (1.0f - (1.0f - f) * s);
+    const int ii = int(i) % 6;
+    switch (ii) {
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      default: r=v; g=p; b=q; break;
+    }
+  }
+
+  void rebuildMesh() {
+    surface.reset();
+    surface.primitive(wireframe.get() ? Mesh::LINES : Mesh::TRIANGLES);
+
+    const float hue = float(dominantPartial()) / float(N_PARTIALS);
+
+    std::vector<Vec3f> verts;
+    std::vector<float> rgb;
+    verts.reserve((N_LAT + 1) * (N_LON + 1));
+    rgb.reserve((N_LAT + 1) * (N_LON + 1) * 3);
+
+    for (int j = 0; j <= N_LAT; ++j) {
+      const float v = float(j) / float(N_LAT);
+      const float phi = v * float(M_PI);
+      const float sinPhi = std::sin(phi);
+      const float cosPhi = std::cos(phi);
+      for (int i = 0; i <= N_LON; ++i) {
+        const float u = float(i) / float(N_LON);
+        const float theta = u * 2.0f * float(M_PI);
+        const float r = radiusAt(theta);
+        const float taper = 0.5f + 0.5f * sinPhi;
+        const float rEff = R0.get() + (r - R0.get()) * taper;
+        const float x = rEff * sinPhi * std::cos(theta);
+        const float y = rEff * cosPhi;
+        const float z = rEff * sinPhi * std::sin(theta);
+        verts.push_back(Vec3f(x, y, z));
+        float bright = 0.4f + 0.6f * std::max(0.0f, (r - R0.get()) * 1.5f + 0.5f);
+        if (bright > 1.0f) bright = 1.0f;
+        float cr, cg, cb;
+        hsv2rgb(hue, 0.85f, bright, cr, cg, cb);
+        rgb.push_back(cr); rgb.push_back(cg); rgb.push_back(cb);
+      }
+    }
+
+    auto idx = [](int j, int i) { return j * (N_LON + 1) + i; };
+    auto emit = [&](int p) {
+      surface.vertex(verts[p]);
+      surface.color(rgb[p*3], rgb[p*3+1], rgb[p*3+2]);
+    };
+
+    for (int j = 0; j < N_LAT; ++j) {
+      for (int i = 0; i < N_LON; ++i) {
+        const int a = idx(j, i);
+        const int b = idx(j, i + 1);
+        const int c = idx(j + 1, i);
+        const int d = idx(j + 1, i + 1);
+        if (wireframe.get()) {
+          emit(a); emit(b);
+          emit(a); emit(c);
+        } else {
+          emit(a); emit(c); emit(b);
+          emit(b); emit(c); emit(d);
+        }
+      }
+    }
+
+    scope.reset();
+    scope.primitive(Mesh::LINE_STRIP);
+    constexpr int SCOPE_N = 256;
+    for (int i = 0; i <= SCOPE_N; ++i) {
+      const float u = float(i) / float(SCOPE_N);
+      const float theta = u * 2.0f * float(M_PI);
+      const float r = radiusAt(theta);
+      scope.vertex(r * std::cos(theta), r * std::sin(theta), -2.0f);
+      scope.color(0.95f, 0.95f, 0.95f);
+    }
+  }
+
+  void onAnimate(double dt) override {
+    yaw += float(dt) * rotate.get();
+    if (++frameCount % 3 == 0) rebuildMesh();
+    const float base = f0.get();
+    for (int i = 0; i < N_PARTIALS; ++i) {
+      oscs[i].freq(base * float(i + 1));
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.07f);
+    g.depthTesting(true);
+
+    g.pushMatrix();
+    g.rotate(yaw * 57.2958f, Vec3f(0, 1, 0));
+    g.rotate(15.0f, Vec3f(1, 0, 0));
+    g.meshColor();
+    g.draw(surface);
+    g.popMatrix();
+
+    g.depthTesting(false);
+    g.pushMatrix();
+    g.translate(0.0f, -1.6f, 0.0f);
+    g.scale(0.4f);
+    g.meshColor();
+    g.draw(scope);
+    g.popMatrix();
+
+    gui.draw(g);
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float amp = master.get();
+    const float decay = tailDecay.get();
+    float amps[N_PARTIALS];
+    float norm = 0.0f;
+    for (int i = 0; i < N_PARTIALS; ++i) {
+      amps[i] = partialAmps[i].load(std::memory_order_relaxed)
+                * std::pow(1.0f - 0.4f * decay, float(i));
+      norm += amps[i];
+    }
+    if (norm < 1e-4f) norm = 1.0f;
+    const float invNorm = amp / norm;
+
+    while (io()) {
+      float s = 0.0f;
+      for (int i = 0; i < N_PARTIALS; ++i) s += amps[i] * oscs[i]();
+      s *= invNorm;
+      if (s >  1.0f) s =  1.0f;
+      if (s < -1.0f) s = -1.0f;
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp  (const Mouse&) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(AdditiveGeometry)
+`,
+  },
+  {
+    id: 'mat-additive-sculptor',
+    title: 'Additive Partial Sculptor',
+    description:
+      'Paint a 32-partial harmonic spectrum and hear it instantly. The top panel is a click-and-drag bar chart where each bar is the amplitude of partial n (frequency = f0 * n); the bottom panel is a live time-domain trace showing one period of the resulting waveform, computed by summing all 32 sines across [0, 2pi]. Sculpt sawtooth, square, and triangle approximations from the preset triggers, then drag bars to break the symmetry and watch the waveform redraw beneath your gesture. Honest caveat: 32 sine evals per sample at 48 kHz is fine on desktop, may stutter on mobile.',
+    category: 'mat-synthesis',
+    subcategory: 'additive',
+    code: `/**
+ * Additive Partial Sculptor — MAT200B Phase 2 (additive synthesis)
+ *
+ * 32 harmonic partials of a fundamental, painted by mouse drag.
+ * Top panel: bar chart (the spectrum you sculpt).
+ * Bottom panel: time-domain trace, one period summed from all 32 sines.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+static const int NUM_PARTIALS = 32;
+static const int WAVE_SAMPLES = 256;
+
+class AdditiveSculptor : public App {
+public:
+  Parameter pitch_hz   {"pitch_hz",   "", 110.0f, 40.0f, 1200.0f};
+  Parameter master_amp {"master_amp", "", 0.25f,   0.0f,    1.0f};
+  Trigger reset            {"reset",            ""};
+  Trigger preset_saw       {"preset_saw",       ""};
+  Trigger preset_square    {"preset_square",    ""};
+  Trigger preset_triangle  {"preset_triangle",  ""};
+
+  ControlGUI gui;
+
+  std::array<gam::Sine<>, NUM_PARTIALS> osc;
+  std::array<std::atomic<float>, NUM_PARTIALS> partialAmps;
+  std::array<float, NUM_PARTIALS> ampsSnapshot{};
+  std::array<float, WAVE_SAMPLES> waveBuf{};
+
+  bool dragging = false;
+
+  // Bar panel rect in world coords ([-1.5, 1.5] x [-0.9, 0.9] visible).
+  static constexpr float BAR_X0 = -1.30f, BAR_X1 = 1.30f;
+  static constexpr float BAR_Y0 =  0.10f, BAR_Y1 = 0.85f;
+  static constexpr float WAV_X0 = -1.30f, WAV_X1 = 1.30f;
+  static constexpr float WAV_Y0 = -0.85f, WAV_Y1 = -0.10f;
+
+  void onInit() override {
+    for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
+
+    reset.registerChangeCallback([this](float) {
+      for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
+    });
+    preset_saw.registerChangeCallback([this](float) {
+      for (int i = 0; i < NUM_PARTIALS; ++i)
+        partialAmps[i].store(1.0f / float(i + 1));
+    });
+    preset_square.registerChangeCallback([this](float) {
+      for (int i = 0; i < NUM_PARTIALS; ++i) {
+        const int n = i + 1;
+        partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
+      }
+    });
+    preset_triangle.registerChangeCallback([this](float) {
+      for (int i = 0; i < NUM_PARTIALS; ++i) {
+        const int n = i + 1;
+        partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n * n) : 0.0f);
+      }
+    });
+
+    gui << pitch_hz << master_amp << reset
+        << preset_saw << preset_square << preset_triangle;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+    for (int i = 0; i < NUM_PARTIALS; ++i) osc[i].freq(pitch_hz.get() * float(i + 1));
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float f0  = pitch_hz.get();
+    const float amp = master_amp.get();
+    for (int i = 0; i < NUM_PARTIALS; ++i) osc[i].freq(f0 * float(i + 1));
+
+    float a[NUM_PARTIALS];
+    float norm = 0.0f;
+    for (int i = 0; i < NUM_PARTIALS; ++i) {
+      a[i] = partialAmps[i].load(std::memory_order_relaxed);
+      norm += a[i];
+    }
+    const float invNorm = (norm > 1.0f) ? (1.0f / norm) : 1.0f;
+
+    while (io()) {
+      float s = 0.0f;
+      for (int i = 0; i < NUM_PARTIALS; ++i) s += a[i] * osc[i]();
+      s *= amp * invNorm;
+      io.out(0) = s;
+      io.out(1) = s;
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    for (int i = 0; i < NUM_PARTIALS; ++i)
+      ampsSnapshot[i] = partialAmps[i].load(std::memory_order_relaxed);
+
+    float norm = 0.0f;
+    for (int i = 0; i < NUM_PARTIALS; ++i) norm += ampsSnapshot[i];
+    const float invNorm = (norm > 1.0f) ? (1.0f / norm) : 1.0f;
+
+    for (int s = 0; s < WAVE_SAMPLES; ++s) {
+      const float t = float(s) / float(WAVE_SAMPLES);
+      const float phase = 2.0f * float(M_PI) * t;
+      float v = 0.0f;
+      for (int i = 0; i < NUM_PARTIALS; ++i)
+        v += ampsSnapshot[i] * std::sin(phase * float(i + 1));
+      waveBuf[s] = v * invNorm;
+    }
+  }
+
+  // Convert mouse pixel coords to the same world space we draw into.
+  // Camera is nav().pos(0,0,4) with default fov: visible world y span ~[-1, 1]
+  // by [-1.5, 1.5] depending on aspect. We use a tuned [-1.5, 1.5] x [-0.9, 0.9].
+  void mouseToWorld(const Mouse& m, float& wx, float& wy) const {
+    const float w = (float)width();
+    const float h = (float)height();
+    const float u = (w > 0.f) ? (float)m.x() / w : 0.f;
+    const float v = (h > 0.f) ? (float)m.y() / h : 0.f;
+    wx = -1.5f + u * 3.0f;
+    wy =  0.9f - v * 1.8f;     // flip y so up is positive
+  }
+
+  bool inBarPanel(float wx, float wy) const {
+    return wx >= BAR_X0 && wx <= BAR_X1 && wy >= BAR_Y0 && wy <= BAR_Y1;
+  }
+
+  void paintAt(float wx, float wy) {
+    float u = (wx - BAR_X0) / (BAR_X1 - BAR_X0);
+    if (u < 0.f) u = 0.f; else if (u > 0.9999f) u = 0.9999f;
+    int idx = int(u * float(NUM_PARTIALS));
+    if (idx < 0) idx = 0; else if (idx >= NUM_PARTIALS) idx = NUM_PARTIALS - 1;
+
+    float v = (wy - BAR_Y0) / (BAR_Y1 - BAR_Y0);
+    if (v < 0.f) v = 0.f; else if (v > 1.f) v = 1.f;
+    partialAmps[idx].store(v);
+  }
+
+  bool onMouseDown(const Mouse& m) override {
+    float wx, wy;
+    mouseToWorld(m, wx, wy);
+    if (inBarPanel(wx, wy)) {
+      dragging = true;
+      paintAt(wx, wy);
+    }
+    return false;
+  }
+
+  bool onMouseDrag(const Mouse& m) override {
+    if (!dragging) return false;
+    float wx, wy;
+    mouseToWorld(m, wx, wy);
+    if (wx < BAR_X0) wx = BAR_X0;
+    if (wx > BAR_X1) wx = BAR_X1;
+    if (wy < BAR_Y0) wy = BAR_Y0;
+    if (wy > BAR_Y1) wy = BAR_Y1;
+    paintAt(wx, wy);
+    return false;
+  }
+
+  bool onMouseUp(const Mouse&) override {
+    dragging = false;
+    return false;
+  }
+
+  static void emitRect(Mesh& m, float x0, float y0, float x1, float y1,
+                       float r, float g, float b) {
+    m.vertex(x0, y0, 0.f); m.color(r, g, b);
+    m.vertex(x1, y0, 0.f); m.color(r, g, b);
+    m.vertex(x0, y1, 0.f); m.color(r, g, b);
+    m.vertex(x1, y0, 0.f); m.color(r, g, b);
+    m.vertex(x1, y1, 0.f); m.color(r, g, b);
+    m.vertex(x0, y1, 0.f); m.color(r, g, b);
+  }
+
+  static void partialColor(int i, float& r, float& g, float& b) {
+    const float t = float(i) / float(NUM_PARTIALS - 1);
+    if (t < 0.5f) {
+      const float u = t * 2.0f;
+      r = 0.10f * (1 - u) + 0.20f * u;
+      g = 0.40f * (1 - u) + 0.90f * u;
+      b = 0.90f * (1 - u) + 0.30f * u;
+    } else {
+      const float u = (t - 0.5f) * 2.0f;
+      r = 0.20f * (1 - u) + 1.00f * u;
+      g = 0.90f * (1 - u) + 0.30f * u;
+      b = 0.30f * (1 - u) + 0.10f * u;
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.06f, 0.07f, 0.09f);
+    g.meshColor();
+
+    Mesh grid; grid.primitive(Mesh::LINES);
+    auto hline = [&](float y, float r, float gC, float b) {
+      grid.vertex(BAR_X0, y, 0); grid.color(r, gC, b);
+      grid.vertex(BAR_X1, y, 0); grid.color(r, gC, b);
+    };
+    hline(BAR_Y1, 0.18f, 0.20f, 0.24f);
+    hline(BAR_Y0 + 0.5f * (BAR_Y1 - BAR_Y0), 0.18f, 0.20f, 0.24f);
+    hline(BAR_Y0, 0.18f, 0.20f, 0.24f);
+    for (int i = 0; i <= NUM_PARTIALS; i += 4) {
+      const float u = float(i) / float(NUM_PARTIALS);
+      const float x = BAR_X0 + u * (BAR_X1 - BAR_X0);
+      grid.vertex(x, BAR_Y0, 0); grid.color(0.18f, 0.20f, 0.24f);
+      grid.vertex(x, BAR_Y1, 0); grid.color(0.18f, 0.20f, 0.24f);
+    }
+    g.draw(grid);
+
+    Mesh bars; bars.primitive(Mesh::TRIANGLES);
+    const float barW = (BAR_X1 - BAR_X0) / float(NUM_PARTIALS);
+    for (int i = 0; i < NUM_PARTIALS; ++i) {
+      float a = ampsSnapshot[i];
+      if (a < 0.f) a = 0.f; else if (a > 1.f) a = 1.f;
+      const float x0 = BAR_X0 + float(i) * barW + barW * 0.08f;
+      const float x1 = BAR_X0 + float(i + 1) * barW - barW * 0.08f;
+      const float y0 = BAR_Y0;
+      const float y1 = BAR_Y0 + a * (BAR_Y1 - BAR_Y0);
+      float cr, cg, cb;
+      partialColor(i, cr, cg, cb);
+      emitRect(bars, x0, y0, x1, y1, cr, cg, cb);
+    }
+    g.draw(bars);
+
+    // Wave panel.
+    const float waveMidY = WAV_Y0 + 0.5f * (WAV_Y1 - WAV_Y0);
+    Mesh wgrid; wgrid.primitive(Mesh::LINES);
+    auto whline = [&](float y) {
+      wgrid.vertex(WAV_X0, y, 0); wgrid.color(0.18f, 0.20f, 0.24f);
+      wgrid.vertex(WAV_X1, y, 0); wgrid.color(0.18f, 0.20f, 0.24f);
+    };
+    whline(WAV_Y0); whline(WAV_Y1); whline(waveMidY);
+    g.draw(wgrid);
+
+    Mesh wave; wave.primitive(Mesh::LINE_STRIP);
+    for (int s = 0; s < WAVE_SAMPLES; ++s) {
+      const float u = float(s) / float(WAVE_SAMPLES - 1);
+      const float x = WAV_X0 + u * (WAV_X1 - WAV_X0);
+      float v = waveBuf[s];
+      if (v < -1.f) v = -1.f; else if (v > 1.f) v = 1.f;
+      const float y = waveMidY + 0.5f * v * (WAV_Y1 - WAV_Y0);
+      wave.vertex(x, y, 0.f);
+      wave.color(0.95f, 0.85f, 0.35f);
+    }
+    g.draw(wave);
+
+    Mesh borders; borders.primitive(Mesh::LINES);
+    auto rectOutline = [&](float x0, float y0, float x1, float y1,
+                           float r, float gC, float b) {
+      borders.vertex(x0, y0, 0); borders.color(r, gC, b);
+      borders.vertex(x1, y0, 0); borders.color(r, gC, b);
+      borders.vertex(x1, y0, 0); borders.color(r, gC, b);
+      borders.vertex(x1, y1, 0); borders.color(r, gC, b);
+      borders.vertex(x1, y1, 0); borders.color(r, gC, b);
+      borders.vertex(x0, y1, 0); borders.color(r, gC, b);
+      borders.vertex(x0, y1, 0); borders.color(r, gC, b);
+      borders.vertex(x0, y0, 0); borders.color(r, gC, b);
+    };
+    rectOutline(BAR_X0, BAR_Y0, BAR_X1, BAR_Y1, 0.30f, 0.55f, 0.80f);
+    rectOutline(WAV_X0, WAV_Y0, WAV_X1, WAV_Y1, 0.85f, 0.55f, 0.25f);
+    g.draw(borders);
+
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(AdditiveSculptor)
+`,
+  },
+  {
+    id: 'mat-granul-stretch',
+    title: 'Granulation Time-Stretcher',
+    description:
+      'Time-stretches a bundled CC0 audio loop by triggering up to 64 overlapping Hann-windowed grains read from a slowly-advancing source position. The stretch factor controls how slowly readPos creeps through the source while each grain plays back at an independent pitch (in semitones), so pitch and time are decoupled. Top panel: full source waveform envelope with a red box highlighting the current read region (jittered by position-jitter). Middle: a real-time playhead cursor that advances at unstretched-source speed since the last retrigger — visualizes how much faster or slower perceived playback is vs. the source. Bottom: 32 most-recently-spawned grains as dots in (source-position × pitch-offset) space. Future work: skip jitter near detected onsets to preserve transients.',
+    category: 'mat-signal',
+    subcategory: 'delay',
+    code: `/**
+ * Granulation Time-Stretcher — MAT200B Phase 2 (granular DSP)
+ *
+ * 64 overlapping grains read from a bundled loop. readPos advances
+ * by (srcSR / hostSR) / stretch per output sample; each grain plays
+ * back at its own pitch ratio so pitch and time decouple.
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+static const int kMaxGrains = 64;
+static const int kEnvelopeBins = 256;
+static const int kRecentGrains = 32;
+
+class GranulStretch : public App {
+public:
+  ControlGUI gui;
+  WebSamplePlayer pDrums, pPad, pMixed;
+
+  ParameterMenu source         {"source",          ""};
+  Parameter     stretch        {"stretch",         "",  1.0f,  0.25f, 4.0f};
+  Parameter     pitch_semitones{"pitch_semitones", "",  0.0f, -12.0f, 12.0f};
+  Parameter     grain_ms       {"grain_ms",        "", 80.0f,  30.0f, 200.0f};
+  Parameter     density_hz     {"density_hz",      "", 20.0f,   5.0f, 40.0f};
+  Parameter     jitter         {"jitter",          "",  0.005f, 0.0f, 0.05f};
+  Parameter     amp            {"amp",             "",  0.6f,   0.0f, 1.0f};
+  Trigger       retrigger      {"retrigger",       ""};
+
+  struct Grain {
+    bool   active = false;
+    double srcPos = 0.0;
+    double rate   = 1.0;
+    int    age    = 0;
+    int    dur    = 1;
+  };
+  std::array<Grain, kMaxGrains> grains{};
+  double readPos = 0.0;
+  unsigned int rngState = 0xC0FFEEu;
+
+  std::atomic<float>     readPosNormA{0.0f};
+  std::atomic<long long> outputSamplesA{0};
+  std::atomic<int>       grainHeadA{0};
+
+  struct RecentGrain { float srcNorm; float pitchOffset; };
+  std::array<RecentGrain, kRecentGrains> recent{};
+
+  double wallSeconds = 0.0;
+  double retriggerWall = 0.0;
+  std::vector<float> envMin, envMax;
+  int envSourceIdx = -1;
+  float hostSR = 48000.0f;
+
+  WebSamplePlayer* current() {
+    const int s = (int)source.get();
+    if (s == 0) return &pDrums;
+    if (s == 1) return &pPad;
+    return &pMixed;
+  }
+
+  float frand() {
+    rngState ^= rngState << 13;
+    rngState ^= rngState >> 17;
+    rngState ^= rngState << 5;
+    return (rngState & 0xFFFFFF) / 16777216.0f;
+  }
+
+  void onInit() override {
+    for (auto& r : recent) { r.srcNorm = -1.0f; r.pitchOffset = 0.0f; }
+
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+
+    gui << source << stretch << pitch_semitones << grain_ms
+        << density_hz << jitter << amp << retrigger;
+
+    retrigger.registerChangeCallback([this](float){
+      readPos = 0.0;
+      retriggerWall = wallSeconds;
+      for (auto& g : grains) g.active = false;
+    });
+
+    source.registerChangeCallback([this](float){
+      readPos = 0.0;
+      retriggerWall = wallSeconds;
+      envSourceIdx = -1;
+    });
+  }
+
+  void onCreate() override {
+    gui.init();
+    pDrums.load("drum_loop_120bpm.wav");
+    pPad.load("pad_loop.wav");
+    pMixed.load("mixed_loop.wav");
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void buildEnvelope(WebSamplePlayer* sp) {
+    envMin.assign(kEnvelopeBins, 0.0f);
+    envMax.assign(kEnvelopeBins, 0.0f);
+    if (!sp || !sp->ready()) return;
+    const int frames = sp->frames();
+    if (frames <= 0) return;
+    const int chunk = std::max(1, frames / kEnvelopeBins);
+    for (int b = 0; b < kEnvelopeBins; ++b) {
+      const int s0 = (int)((long long)b * frames / kEnvelopeBins);
+      const int s1 = std::min(frames, s0 + chunk);
+      float lo = 1.0f, hi = -1.0f;
+      for (int i = s0; i < s1; ++i) {
+        const float v = sp->readInterp(0, (float)i);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      envMin[b] = lo;
+      envMax[b] = hi;
+    }
+  }
+
+  void onSound(AudioIOData& io) override {
+    hostSR = (float)io.framesPerSecond();
+    WebSamplePlayer* sp = current();
+    if (!sp || !sp->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const int   srcFrames = sp->frames();
+    const float srcSR     = sp->sampleRate();
+    if (srcFrames <= 0) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+
+    const float st            = std::max(0.0001f, stretch.get());
+    const float readAdv       = (srcSR / hostSR) / st;
+    const float pitchRate     = std::pow(2.0f, pitch_semitones.get() / 12.0f) * (srcSR / hostSR);
+    const float grainDurSamps = grain_ms.get() * 0.001f * hostSR;
+    const float spawnProb     = density_hz.get() / hostSR;
+    const float jitterFrames  = jitter.get() * srcSR;
+    const float ampVal        = amp.get();
+    const float densNorm      = 1.0f / std::sqrt(std::max(1.0f, density_hz.get() * grain_ms.get() * 0.001f));
+    int recentHead = grainHeadA.load(std::memory_order_relaxed);
+    long long outCounter = outputSamplesA.load(std::memory_order_relaxed);
+
+    while (io()) {
+      if (frand() < spawnProb) {
+        for (int gi = 0; gi < kMaxGrains; ++gi) {
+          if (!grains[gi].active) {
+            const float jit = (frand() * 2.0f - 1.0f) * jitterFrames;
+            double startFrame = readPos + jit;
+            while (startFrame < 0)         startFrame += srcFrames;
+            while (startFrame >= srcFrames) startFrame -= srcFrames;
+            grains[gi].active = true;
+            grains[gi].srcPos = startFrame;
+            grains[gi].rate   = pitchRate;
+            grains[gi].age    = 0;
+            grains[gi].dur    = std::max(2, (int)grainDurSamps);
+            recent[recentHead].srcNorm     = (float)(startFrame / (double)srcFrames);
+            recent[recentHead].pitchOffset = pitch_semitones.get() / 12.0f;
+            recentHead = (recentHead + 1) % kRecentGrains;
+            break;
+          }
+        }
+      }
+
+      float out = 0.0f;
+      for (int gi = 0; gi < kMaxGrains; ++gi) {
+        Grain& g = grains[gi];
+        if (!g.active) continue;
+        const float t = (float)g.age / (float)g.dur;
+        const float env = 0.5f * (1.0f - std::cos(2.0f * (float)M_PI * t));
+        double sp_pos = g.srcPos;
+        while (sp_pos < 0)         sp_pos += srcFrames;
+        while (sp_pos >= srcFrames) sp_pos -= srcFrames;
+        out += sp->readInterp(0, (float)sp_pos) * env;
+        g.srcPos += g.rate;
+        if (++g.age >= g.dur) g.active = false;
+      }
+
+      const float y = out * ampVal * densNorm;
+      io.out(0) = y;
+      io.out(1) = y;
+
+      readPos += readAdv;
+      while (readPos < 0)          readPos += srcFrames;
+      while (readPos >= srcFrames)  readPos -= srcFrames;
+      ++outCounter;
+    }
+
+    readPosNormA.store((float)(readPos / (double)srcFrames), std::memory_order_relaxed);
+    outputSamplesA.store(outCounter, std::memory_order_relaxed);
+    grainHeadA.store(recentHead, std::memory_order_relaxed);
+  }
+
+  void onAnimate(double dt) override {
+    wallSeconds += dt;
+    const int sIdx = (int)source.get();
+    if (sIdx != envSourceIdx) {
+      WebSamplePlayer* sp = current();
+      if (sp && sp->ready()) {
+        buildEnvelope(sp);
+        envSourceIdx = sIdx;
+      }
+    }
+  }
+
+  static void emitRect(Mesh& m, float x, float y, float w, float h,
+                       float r, float gC, float b) {
+    m.vertex(x,     y,     0); m.color(r, gC, b);
+    m.vertex(x + w, y,     0); m.color(r, gC, b);
+    m.vertex(x,     y + h, 0); m.color(r, gC, b);
+    m.vertex(x + w, y,     0); m.color(r, gC, b);
+    m.vertex(x + w, y + h, 0); m.color(r, gC, b);
+    m.vertex(x,     y + h, 0); m.color(r, gC, b);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.05f, 0.05f, 0.07f);
+    g.meshColor();
+
+    // World-coord layout: x [-1.4, 1.4], y [-1, 1].
+    constexpr float xL = -1.4f, xR = 1.4f;
+    constexpr float topY0 = 0.20f,  topY1 = 0.90f;
+    constexpr float midY0 = 0.05f,  midY1 = 0.15f;
+    constexpr float botY0 = -0.85f, botY1 = -0.05f;
+
+    Mesh panels; panels.primitive(Mesh::TRIANGLES);
+    emitRect(panels, xL, topY0, xR - xL, topY1 - topY0, 0.10f, 0.10f, 0.13f);
+    emitRect(panels, xL, midY0, xR - xL, midY1 - midY0, 0.08f, 0.08f, 0.10f);
+    emitRect(panels, xL, botY0, xR - xL, botY1 - botY0, 0.10f, 0.10f, 0.13f);
+    g.draw(panels);
+
+    // Top: source envelope (LINES bars).
+    if ((int)envMin.size() == kEnvelopeBins) {
+      const float panelW  = xR - xL;
+      const float midLine = 0.5f * (topY0 + topY1);
+      const float halfH   = 0.45f * (topY1 - topY0);
+      Mesh wave; wave.primitive(Mesh::LINES);
+      for (int i = 0; i < kEnvelopeBins; ++i) {
+        const float x = xL + (i / (float)(kEnvelopeBins - 1)) * panelW;
+        wave.vertex(x, midLine + envMin[i] * halfH, 0);
+        wave.color(0.55f, 0.85f, 1.0f);
+        wave.vertex(x, midLine + envMax[i] * halfH, 0);
+        wave.color(0.55f, 0.85f, 1.0f);
+      }
+      g.draw(wave);
+
+      const float rp = readPosNormA.load(std::memory_order_relaxed);
+      WebSamplePlayer* sp = current();
+      float jitNorm = 0.0f;
+      if (sp && sp->ready() && sp->frames() > 0) {
+        jitNorm = (jitter.get() * sp->sampleRate()) / (float)sp->frames();
+      }
+      const float halfBox = std::max(0.005f, jitNorm);
+      const float bx0 = xL + std::max(0.0f, rp - halfBox) * panelW;
+      const float bx1 = xL + std::min(1.0f, rp + halfBox) * panelW;
+      Mesh box; box.primitive(Mesh::TRIANGLES);
+      emitRect(box, bx0, topY0, std::max(0.005f, bx1 - bx0), topY1 - topY0,
+               0.85f, 0.20f, 0.20f);
+      g.draw(box);
+
+      Mesh ph; ph.primitive(Mesh::LINES);
+      const float cx = xL + rp * panelW;
+      ph.vertex(cx, topY0, 0); ph.color(1.0f, 0.5f, 0.5f);
+      ph.vertex(cx, topY1, 0); ph.color(1.0f, 0.5f, 0.5f);
+      g.draw(ph);
+    }
+
+    // Middle: real-time playhead.
+    {
+      const float panelW = xR - xL;
+      const double elapsed = wallSeconds - retriggerWall;
+      WebSamplePlayer* sp = current();
+      double srcSec = 1.0;
+      if (sp && sp->ready() && sp->sampleRate() > 0.f)
+        srcSec = (double)sp->frames() / (double)sp->sampleRate();
+      const double rtNorm = std::fmod(elapsed / std::max(0.001, srcSec), 1.0);
+      const float cx = xL + (float)rtNorm * panelW;
+      Mesh cursor; cursor.primitive(Mesh::TRIANGLES);
+      emitRect(cursor, cx - 0.012f, midY0 + 0.005f, 0.024f, midY1 - midY0 - 0.01f,
+               0.95f, 0.95f, 0.40f);
+      g.draw(cursor);
+      Mesh ax; ax.primitive(Mesh::LINES);
+      const float cy = 0.5f * (midY0 + midY1);
+      ax.vertex(xL, cy, 0); ax.color(0.40f, 0.40f, 0.45f);
+      ax.vertex(xR, cy, 0); ax.color(0.40f, 0.40f, 0.45f);
+      g.draw(ax);
+    }
+
+    // Bottom: recent-grain scatter in (sourcePos x pitchOffset).
+    {
+      const float panelW  = xR - xL;
+      const float midLine = 0.5f * (botY0 + botY1);
+      const float halfH   = 0.45f * (botY1 - botY0);
+      Mesh axis; axis.primitive(Mesh::LINES);
+      axis.vertex(xL, midLine, 0); axis.color(0.30f, 0.30f, 0.35f);
+      axis.vertex(xR, midLine, 0); axis.color(0.30f, 0.30f, 0.35f);
+      g.draw(axis);
+
+      Mesh dots; dots.primitive(Mesh::TRIANGLES);
+      for (int i = 0; i < kRecentGrains; ++i) {
+        const RecentGrain& r = recent[i];
+        if (r.srcNorm < 0) continue;
+        const float x  = xL + r.srcNorm * panelW;
+        const float po = std::max(-1.0f, std::min(1.0f, r.pitchOffset));
+        const float y  = midLine + po * halfH;
+        const float age = (float)((i + 1) % kRecentGrains) / (float)kRecentGrains;
+        const float a  = 0.4f + 0.6f * age;
+        const float cr = 0.40f * a, cg = 1.0f * a, cb = 0.70f * a;
+        dots.vertex(x - 0.018f, y - 0.018f, 0); dots.color(cr, cg, cb);
+        dots.vertex(x + 0.018f, y - 0.018f, 0); dots.color(cr, cg, cb);
+        dots.vertex(x,          y + 0.022f, 0); dots.color(cr, cg, cb);
+      }
+      g.draw(dots);
+    }
+
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp  (const Mouse&) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(GranulStretch)
+`,
+  },
+  {
+    id: 'mat-synesthetic-mapper',
+    title: 'Synesthetic Mapper',
+    description:
+      'Extracts four per-block audio features from a bundled CC0 loop — RMS amplitude, spectral centroid, zero-crossing rate, and spectral flatness — then routes any feature to any visual channel of a glyph ensemble. Pick which feature drives size, hue, vertical position, and rotation through ParameterMenu controls; a feature-readout bar at the bottom shows the live values of all four features. An inline 64-point Hann-windowed DFT computes spectral statistics; atomic feature buffers hand data from audio thread to graphics thread without locks.',
+    category: 'mat-visualmusic',
+    subcategory: 'mappers',
+    code: `/**
+ * Synesthetic Mapper — MAT200B Phase 2 (audio→visual feature routing)
+ *
+ * RMS / centroid / ZCR / flatness extracted in onSound; glyph row in
+ * onDraw rendered with user-selected feature → channel mapping.
+ */
+
+#include "al_playground_compat.hpp"
+#include "al_WebSamplePlayer.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <vector>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class SynestheticMapper : public App {
+public:
+  ControlGUI gui;
+
+  WebSamplePlayer drums, pad, mixed;
+  WebSamplePlayer* current = &drums;
+
+  ParameterMenu source     {"source",        ""};
+  ParameterMenu size_src   {"size_src",      ""};
+  ParameterMenu hue_src    {"hue_src",       ""};
+  ParameterMenu posY_src   {"posY_src",      ""};
+  ParameterMenu rot_src    {"rotation_src",  ""};
+  ParameterInt  num_glyphs {"num_glyphs",    "",  8, 1, 16};
+  Parameter     amp        {"amp",           "",  0.7f, 0.0f, 1.0f};
+  Trigger       retrigger  {"retrigger",     ""};
+
+  double playhead = 0.0;
+
+  static constexpr int kDFTSize = 64;
+  std::array<float, kDFTSize> dftBuf{};
+  int dftWritePos = 0;
+  int samplesSinceDFT = 0;
+
+  float lastSample = 0.0f;
+  float rmsAccum = 0.0f;
+  float zcrSm = 0.f, centSm = 0.f, flatSm = 0.f;
+
+  std::atomic<float> fRMS{0.0f}, fCentroid{0.0f}, fZCR{0.0f}, fFlatness{0.0f};
+  float dispRMS = 0.0f, dispCent = 0.0f, dispZCR = 0.0f, dispFlat = 0.0f;
+
+  std::array<float, 16> glyphPhase{};
+
+  void onInit() override {
+    source.setElements({"drums", "pad", "mixed"});
+    source.set(0);
+    source.registerChangeCallback([this](float v){
+      switch ((int)v) {
+        case 0: current = &drums; break;
+        case 1: current = &pad;   break;
+        case 2: current = &mixed; break;
+      }
+      playhead = 0.0;
+    });
+    retrigger.registerChangeCallback([this](float){ playhead = 0.0; });
+
+    const std::vector<std::string> feats = {"RMS", "centroid", "ZCR", "flatness"};
+    size_src.setElements(feats); size_src.set(0);
+    hue_src.setElements(feats);  hue_src.set(1);
+    posY_src.setElements(feats); posY_src.set(2);
+    rot_src.setElements(feats);  rot_src.set(3);
+
+    gui << source << size_src << hue_src << posY_src << rot_src
+        << num_glyphs << amp << retrigger;
+  }
+
+  void onCreate() override {
+    gui.init();
+    drums.load("drum_loop_120bpm.wav");
+    pad.load("pad_loop.wav");
+    mixed.load("mixed_loop.wav");
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    if (!current || !current->ready()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+    const float sr     = io.framesPerSecond();
+    const float srcSR  = current->sampleRate() > 1.f ? current->sampleRate() : sr;
+    const double rate  = (double)srcSR / (double)sr;
+    const int   nFrames = current->frames();
+    if (nFrames <= 0) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+
+    const int blockLen = io.framesPerBuffer();
+    const float gain = amp.get();
+    float blockRMS = 0.0f;
+    int   blockZC  = 0;
+    float prev = lastSample;
+
+    while (io()) {
+      const float raw = current->readInterp(0, (float)playhead);
+      playhead += rate;
+      if (playhead >= nFrames) playhead -= nFrames;
+      const float s = raw * gain;
+      io.out(0) = s; io.out(1) = s;
+
+      blockRMS += raw * raw;
+      if ((raw >= 0.f && prev < 0.f) || (raw < 0.f && prev >= 0.f)) ++blockZC;
+      prev = raw;
+      dftBuf[dftWritePos] = raw;
+      dftWritePos = (dftWritePos + 1) % kDFTSize;
+      ++samplesSinceDFT;
+    }
+    lastSample = prev;
+
+    const float instRMS = std::sqrt(blockRMS / (float)std::max(1, blockLen));
+    rmsAccum = 0.9f * rmsAccum + 0.1f * instRMS;
+    fRMS.store(std::min(1.0f, rmsAccum * 3.0f));
+
+    const float zcrNorm = (float)blockZC / (float)std::max(1, blockLen);
+    zcrSm = 0.85f * zcrSm + 0.15f * std::min(1.0f, zcrNorm * 8.0f);
+    fZCR.store(zcrSm);
+
+    if (samplesSinceDFT >= kDFTSize) {
+      samplesSinceDFT = 0;
+      const int N = kDFTSize;
+      std::array<float, kDFTSize> win{};
+      for (int n = 0; n < N; ++n) {
+        const int idx = (dftWritePos + n) % N;
+        const float w = 0.5f - 0.5f * std::cos(2.f * (float)M_PI * (float)n / (float)(N - 1));
+        win[n] = dftBuf[idx] * w;
+      }
+      const int bins = N / 2;
+      float sumMag = 0.f, sumKMag = 0.f, logSum = 0.f, arithSum = 0.f;
+      for (int k = 0; k < bins; ++k) {
+        float re = 0.f, im = 0.f;
+        const float ang = -2.f * (float)M_PI * (float)k / (float)N;
+        for (int n = 0; n < N; ++n) {
+          re += win[n] * std::cos(ang * n);
+          im += win[n] * std::sin(ang * n);
+        }
+        const float mag = std::sqrt(re * re + im * im);
+        sumMag  += mag;
+        sumKMag += (float)k * mag;
+        logSum  += std::log(mag + 1e-9f);
+        arithSum += mag;
+      }
+      const float centroidBin  = (sumMag > 1e-6f) ? (sumKMag / sumMag) : 0.f;
+      const float centroidNorm = centroidBin / (float)bins;
+      centSm = 0.8f * centSm + 0.2f * centroidNorm;
+      fCentroid.store(std::min(1.0f, centSm * 1.5f));
+      const float geo = std::exp(logSum / (float)bins);
+      const float ari = arithSum / (float)bins;
+      const float flat = (ari > 1e-6f) ? (geo / ari) : 0.f;
+      flatSm = 0.85f * flatSm + 0.15f * flat;
+      fFlatness.store(std::min(1.0f, flatSm));
+    }
+  }
+
+  float feature(int idx) const {
+    switch (idx) {
+      case 0: return fRMS.load();
+      case 1: return fCentroid.load();
+      case 2: return fZCR.load();
+      case 3: return fFlatness.load();
+    }
+    return 0.0f;
+  }
+
+  static void hsv2rgb(float h, float s, float v, float& r, float& g, float& b) {
+    h = h - std::floor(h);
+    const float i = std::floor(h * 6.0f);
+    const float f = h * 6.0f - i;
+    const float p = v * (1.0f - s);
+    const float q = v * (1.0f - f * s);
+    const float t = v * (1.0f - (1.0f - f) * s);
+    const int ii = int(i) % 6;
+    switch (ii) {
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      default: r=v; g=p; b=q; break;
+    }
+  }
+
+  static void emitDisc(Mesh& m, float cx, float cy, float radius,
+                       float r, float g, float b, int segs = 24) {
+    for (int i = 0; i < segs; ++i) {
+      const float a0 = 2.f * (float)M_PI * i       / segs;
+      const float a1 = 2.f * (float)M_PI * (i + 1) / segs;
+      m.vertex(cx, cy, 0.f); m.color(r, g, b);
+      m.vertex(cx + std::cos(a0) * radius, cy + std::sin(a0) * radius, 0.f);
+      m.color(r, g, b);
+      m.vertex(cx + std::cos(a1) * radius, cy + std::sin(a1) * radius, 0.f);
+      m.color(r, g, b);
+    }
+  }
+
+  static void emitRect(Mesh& m, float x, float y, float w, float h,
+                       float r, float g, float b) {
+    m.vertex(x,     y,     0); m.color(r, g, b);
+    m.vertex(x + w, y,     0); m.color(r, g, b);
+    m.vertex(x + w, y + h, 0); m.color(r, g, b);
+    m.vertex(x,     y,     0); m.color(r, g, b);
+    m.vertex(x + w, y + h, 0); m.color(r, g, b);
+    m.vertex(x,     y + h, 0); m.color(r, g, b);
+  }
+
+  void onAnimate(double dt) override {
+    dispRMS  = 0.85f * dispRMS  + 0.15f * fRMS.load();
+    dispCent = 0.85f * dispCent + 0.15f * fCentroid.load();
+    dispZCR  = 0.85f * dispZCR  + 0.15f * fZCR.load();
+    dispFlat = 0.85f * dispFlat + 0.15f * fFlatness.load();
+
+    const float rotF = feature(rot_src.get());
+    const int n = num_glyphs.get();
+    for (int i = 0; i < n && i < (int)glyphPhase.size(); ++i) {
+      const float perGlyphMod = 0.5f + (float)i / (float)std::max(1, n);
+      glyphPhase[i] += (float)dt * (0.3f + rotF * 4.0f) * perGlyphMod;
+      if (glyphPhase[i] > 2.f * (float)M_PI) glyphPhase[i] -= 2.f * (float)M_PI;
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.05f, 0.08f);
+    g.meshColor();
+
+    int n = num_glyphs.get();
+    if (n < 1) n = 1; else if (n > 16) n = 16;
+
+    const float sizeF = feature(size_src.get());
+    const float hueF  = feature(hue_src.get());
+    const float posYF = feature(posY_src.get());
+
+    Mesh discs; discs.primitive(Mesh::TRIANGLES);
+    Mesh ticks; ticks.primitive(Mesh::LINES);
+
+    const float baseRadius = 0.10f;
+    for (int i = 0; i < n; ++i) {
+      const float t = (n == 1) ? 0.5f : (float)i / (float)(n - 1);
+      const float x = -1.3f + t * 2.6f;
+      const float idxMod = 0.6f + 0.4f * std::sin(t * 2.f * (float)M_PI + 1.7f);
+      const float y = (posYF - 0.5f) * 1.0f * idxMod;
+      const float radius = baseRadius * (0.5f + 1.5f * sizeF * idxMod);
+      const float hue = std::fmod(hueF + t * 0.2f, 1.0f);
+      float r, gg, b;
+      hsv2rgb(hue, 0.85f, 0.95f, r, gg, b);
+      emitDisc(discs, x, y, radius, r, gg, b, 24);
+
+      const float ang = glyphPhase[i];
+      const float tickLen = radius * 1.4f;
+      ticks.vertex(x, y, 0.f); ticks.color(1.f, 1.f, 1.f);
+      ticks.vertex(x + std::cos(ang) * tickLen, y + std::sin(ang) * tickLen, 0.f);
+      ticks.color(1.f, 1.f, 1.f);
+    }
+    g.draw(discs);
+    g.draw(ticks);
+
+    Mesh bars; bars.primitive(Mesh::TRIANGLES);
+    emitRect(bars, -1.4f, -1.0f, 2.8f, 0.18f, 0.10f, 0.10f, 0.14f);
+
+    const float vals[4] = { dispRMS, dispCent, dispZCR, dispFlat };
+    const float cols[4][3] = {
+      {0.95f, 0.30f, 0.30f},
+      {0.30f, 0.90f, 0.45f},
+      {0.35f, 0.55f, 0.95f},
+      {0.95f, 0.85f, 0.30f}
+    };
+    const float barW = 0.55f, gap = 0.10f;
+    const float startX = -((barW * 4.0f + gap * 3.0f) * 0.5f);
+    const float baseY  = -0.98f;
+    const float maxH   =  0.14f;
+    for (int i = 0; i < 4; ++i) {
+      float v = std::min(1.0f, std::max(0.0f, vals[i]));
+      const float x = startX + i * (barW + gap);
+      emitRect(bars, x, baseY, barW, maxH, 0.18f, 0.18f, 0.22f);
+      emitRect(bars, x, baseY, barW * v, maxH, cols[i][0], cols[i][1], cols[i][2]);
+    }
+    g.draw(bars);
+
+    Mesh frames; frames.primitive(Mesh::LINES);
+    const int routed[4] = { size_src.get(), hue_src.get(), posY_src.get(), rot_src.get() };
+    const float chCols[4][3] = {
+      {1.00f, 1.00f, 1.00f},
+      {0.20f, 0.90f, 0.95f},
+      {0.95f, 0.35f, 0.85f},
+      {0.95f, 0.55f, 0.20f}
+    };
+    for (int ch = 0; ch < 4; ++ch) {
+      const int featIdx = routed[ch];
+      if (featIdx < 0 || featIdx > 3) continue;
+      const float x = startX + featIdx * (barW + gap);
+      const float ox = 0.012f * (ch + 1);
+      const float oy = 0.012f * (ch + 1);
+      const float r = chCols[ch][0], gg = chCols[ch][1], b = chCols[ch][2];
+      frames.vertex(x - ox, baseY - oy, 0); frames.color(r, gg, b);
+      frames.vertex(x + barW + ox, baseY - oy, 0); frames.color(r, gg, b);
+      frames.vertex(x + barW + ox, baseY - oy, 0); frames.color(r, gg, b);
+      frames.vertex(x + barW + ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
+      frames.vertex(x + barW + ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
+      frames.vertex(x - ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
+      frames.vertex(x - ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
+      frames.vertex(x - ox, baseY - oy, 0); frames.color(r, gg, b);
+    }
+    g.draw(frames);
+
+    gui.draw(g);
+  }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp  (const Mouse&) override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(SynestheticMapper)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
