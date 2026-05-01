@@ -324,6 +324,11 @@ ALLOLIB_WEB_MAIN(Phase1Demo)
 
 #include <array>
 #include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 using namespace al;
 
@@ -347,6 +352,13 @@ public:
   std::array<float, RING_SIZE> ringX{};
   std::array<float, RING_SIZE> ringY{};
   std::atomic<int> ringWrite{0};
+  // Track whether the audio thread has actually pushed samples. Browsers
+  // start the AudioContext suspended until the first user gesture, so for
+  // the first few hundred ms after Run the ring is silent. The graphics
+  // path falls back to a wallclock-driven parametric Lissajous so the
+  // user sees the figure immediately and can confirm the visuals work.
+  bool audioRunning = false;
+  double tWallclock = 0.0;
 
   // -- Trace mesh + post-process chain ------------------------------------
   Mesh                trace;
@@ -388,28 +400,60 @@ public:
       ringX[w] = sx;
       ringY[w] = sy;
       ringWrite.store((w + 1) % RING_SIZE, std::memory_order_release);
+      audioRunning = true;
     }
   }
 
   // -- Snapshot ring -> rebuild trace mesh --------------------------------
-  void onAnimate(double /*dt*/) override {
+  void onAnimate(double dt) override {
+    tWallclock += dt;
     fx.setUniform(studio::FX::Phosphor, "uDecay",    persistence.get());
     fx.setUniform(studio::FX::Bloom,    "uStrength", glow.get());
 
-    const int w = ringWrite.load(std::memory_order_acquire);
-
-    // Walk the most recent N samples (~21 ms at 48 kHz). Larger N = more
-    // visible figure but heavier per-frame mesh upload.
     constexpr int N = 1024;
     trace.reset();
     trace.primitive(Mesh::LINE_STRIP);
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w - N + i + RING_SIZE) % RING_SIZE;
-      trace.vertex(ringX[idx], ringY[idx], 0.f);
-      const float t = static_cast<float>(i) / N;  // 0..1 head-to-tail
-      trace.color(0.4f * t * glow.get(),
-                  1.0f * t * glow.get(),
-                  0.5f * t * glow.get());
+
+    // Visual scale: WebGL2 caps lineWidth at 1 px so a tiny figure
+    // disappears against the post-fx phosphor background. Multiplying
+    // the audio (or fallback) amplitude here just makes the trace
+    // occupy more screen area; the audio itself is unchanged.
+    const float visualScale = 2.5f;
+    const float amp = amplitude.get();
+
+    if (audioRunning) {
+      // Real audio path: walk most recent N samples in the ringbuffer.
+      const int w = ringWrite.load(std::memory_order_acquire);
+      for (int i = 0; i < N; ++i) {
+        const int idx = (w - N + i + RING_SIZE) % RING_SIZE;
+        trace.vertex(ringX[idx] * visualScale, ringY[idx] * visualScale, 0.f);
+        const float t = static_cast<float>(i) / N;
+        trace.color(0.5f + 0.4f * t * glow.get(),
+                    1.0f * t * glow.get() + 0.3f,
+                    0.6f * t * glow.get() + 0.2f);
+      }
+    } else {
+      // Fallback: parametric Lissajous from wallclock so the user sees
+      // the figure immediately. Browsers suspend AudioContext until
+      // the first user gesture; without this fallback the canvas looks
+      // empty for the first 100-500 ms after clicking Run.
+      const float fX = freqX.get();
+      const float fY = freqY.get();
+      // Pick a slow visual rate (audio rates would be a blur on screen
+      // anyway). 220 Hz at 60 FPS already cycles 3.6x per frame; we
+      // sample N points across one "period" of the slower oscillator.
+      const float visualPeriod = 1.0f / 4.0f;  // 4 cycles/sec of the slower osc
+      const double tNow = tWallclock;
+      for (int i = 0; i < N; ++i) {
+        const float u = static_cast<float>(i) / N * visualPeriod;
+        const float sx = std::sin(2.0f * M_PI * fX * (tNow + u) * 0.001f) * amp;
+        const float sy = std::sin(2.0f * M_PI * fY * (tNow + u) * 0.001f) * amp;
+        trace.vertex(sx * visualScale, sy * visualScale, 0.f);
+        const float t = static_cast<float>(i) / N;
+        trace.color(0.5f + 0.4f * t * glow.get(),
+                    1.0f * t * glow.get() + 0.3f,
+                    0.6f * t * glow.get() + 0.2f);
+      }
     }
   }
 
