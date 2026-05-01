@@ -917,6 +917,465 @@ public:
 ALLOLIB_WEB_MAIN(CompressorLab)
 `,
   },
+  {
+    id: 'mat-amrm',
+    title: 'AM / RM Sideband Visualizer',
+    description:
+      "Amplitude modulation vs. ring modulation, side by side. Two oscillators (carrier + modulator); the 'mode' switch picks AM (output = (1 + modDepth*mod) * carrier) or RM (output = mod * carrier). Spectrum view shows the sidebands appear at carrier±modulator (and the carrier-itself peak in AM mode, which RM removes). Time-domain view below shows the resulting waveform.",
+    category: 'mat-synthesis',
+    subcategory: 'modulation',
+    code: `/**
+ * AM/RM Sideband Visualizer — MAT200B Phase 2
+ *
+ * Two oscillators:
+ *   carrier   gam::Sine at 'carrier_hz'
+ *   modulator gam::Sine at 'mod_hz'
+ *
+ * Mode toggle:
+ *   AM (false)  out = (1 + depth * mod) * carrier
+ *               -> sidebands at carrier ± mod, plus the carrier itself
+ *   RM (true)   out = mod * carrier
+ *               -> sidebands at carrier ± mod, NO carrier peak (it's
+ *                  cancelled by the multiplication when mod is bipolar)
+ *
+ * Visual: top half = magnitude spectrum drawn from a small inline DFT
+ * of the recent audio block (256-point Hann-windowed) — students see
+ * the sideband peaks move as 'mod_hz' is dragged. Bottom half = the
+ * raw waveform itself, so the eye sees the AM "hugging" envelope vs.
+ * the RM "balanced" zero-crossing pattern.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class AmRmViz : public App {
+public:
+  Parameter     carrier_hz {"carrier_hz", "", 440.0f, 50.0f, 4000.0f};
+  Parameter     mod_hz     {"mod_hz",     "",  80.0f,  1.0f, 2000.0f};
+  Parameter     depth      {"depth",      "",   0.8f,  0.0f, 1.0f};
+  Parameter     amp        {"amplitude",  "",   0.25f, 0.0f, 1.0f};
+  ParameterBool ringMod    {"ringMod",    "", false};
+
+  ControlGUI gui;
+
+  gam::Sine<> carrier, modulator;
+
+  // Recent audio block (mono) for the inline DFT.
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  Mesh spectrum, waveform, gridMesh;
+
+  void onInit() override {
+    gui << carrier_hz << mod_hz << depth << amp << ringMod;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    carrier.freq(carrier_hz.get());
+    modulator.freq(mod_hz.get());
+    const float d   = depth.get();
+    const float a   = amp.get();
+    const bool  rm  = ringMod.get();
+    while (io()) {
+      const float c = carrier();
+      const float m = modulator();
+      const float s = (rm ? (c * m) : ((1.0f + d * m) * c)) * a;
+      io.out(0) = s;
+      io.out(1) = s;
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = s;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+  }
+
+  // Tiny non-FFT magnitude DFT — N=256 = 32k mults, runs once per frame.
+  // Cheap on the graphics thread and avoids needing gam::STFT here.
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    // Snapshot the ring oldest -> newest with Hann window.
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = blockBuf[idx] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float yy = 0.2f + std::min(1.5f, mag[k] * 6.0f);
+      spectrum.vertex(xx, yy, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.4f + 0.5f * t, 0.9f - 0.4f * t, 0.5f);
+    }
+
+    waveform.reset();
+    waveform.primitive(Mesh::LINE_STRIP);
+    const int w = blockW.load(std::memory_order_acquire);
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
+      const float yy = -0.9f + blockBuf[idx] * 0.6f;
+      waveform.vertex(xx, yy, 0.f);
+      waveform.color(0.95f, 0.65f, 0.35f);
+    }
+
+    // Reference baselines.
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f, 0.2f, 0.f); gridMesh.vertex(1.4f, 0.2f, 0.f);
+    gridMesh.vertex(-1.4f,-0.9f, 0.f); gridMesh.vertex(1.4f,-0.9f, 0.f);
+    for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.25f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.05f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(spectrum);
+    g.draw(waveform);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(AmRmViz)
+`,
+  },
+  {
+    id: 'mat-fm-index',
+    title: 'FM Index Explorer',
+    description:
+      "Phase-modulation FM (Chowning style): output = sin(2π·fc·t + index·sin(2π·fm·t)). The 'index' knob smoothly grows the sideband structure. Visual is the live magnitude spectrum so you watch the Bessel-like fan of partials at fc±k·fm widen as index rises.",
+    category: 'mat-synthesis',
+    subcategory: 'modulation',
+    code: `/**
+ * FM Index Explorer — MAT200B Phase 2
+ *
+ * Single-operator FM (technically PM, the way Chowning meant it).
+ * The carrier oscillator's phase is offset by the modulator output
+ * scaled by 'index':
+ *
+ *   y(t) = amp * sin(2pi*fc*t + index * sin(2pi*fm*t))
+ *
+ * Sideband structure follows Bessel functions of the first kind J_k
+ * evaluated at the index — the spectrum is at fc + k*fm for all
+ * integer k (positive and negative; negative-k partials reflect
+ * around DC). At index = 0 you hear pure carrier; as index rises,
+ * energy distributes into a widening fan of partials.
+ *
+ * Visual: live magnitude spectrum (256-point inline DFT, Hann
+ * window). Drag 'index' from 0 -> 6 and watch the sidebands
+ * spread.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class FmIndex : public App {
+public:
+  Parameter carrier_hz {"carrier_hz", "", 220.0f,  50.0f, 2000.0f};
+  Parameter mod_hz     {"mod_hz",     "", 110.0f,   1.0f, 2000.0f};
+  Parameter index      {"index",      "",   1.0f,   0.0f, 8.0f};
+  Parameter amp        {"amplitude",  "",  0.25f,   0.0f, 1.0f};
+
+  ControlGUI gui;
+
+  gam::Sine<> mod;             // PM modulator (sine)
+  // Carrier phase tracked manually so we can add the modulator output.
+  double carrierPhase = 0.0;
+
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  Mesh spectrum, waveform, gridMesh;
+
+  void onInit() override {
+    gui << carrier_hz << mod_hz << index << amp;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    mod.freq(mod_hz.get());
+    const float fc  = carrier_hz.get();
+    const float idx = index.get();
+    const float a   = amp.get();
+    const float sr  = io.framesPerSecond();
+    const double dPhase = 2.0 * M_PI * fc / sr;
+
+    while (io()) {
+      const float modOut = mod();
+      const float s = a * static_cast<float>(std::sin(carrierPhase + idx * modOut));
+      carrierPhase += dPhase;
+      if (carrierPhase > 2.0 * M_PI) carrierPhase -= 2.0 * M_PI;
+
+      io.out(0) = s;
+      io.out(1) = s;
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = s;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx2 = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = blockBuf[idx2] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float yy = 0.2f + std::min(1.5f, mag[k] * 6.0f);
+      spectrum.vertex(xx, yy, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.5f + 0.4f * t, 0.4f + 0.5f * t, 1.0f - 0.3f * t);
+    }
+
+    waveform.reset();
+    waveform.primitive(Mesh::LINE_STRIP);
+    const int w = blockW.load(std::memory_order_acquire);
+    for (int i = 0; i < N; ++i) {
+      const int idx2 = (w + i) % N;
+      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
+      const float yy = -0.9f + blockBuf[idx2] * 0.6f;
+      waveform.vertex(xx, yy, 0.f);
+      waveform.color(0.4f, 0.85f, 0.6f);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f, 0.2f, 0.f); gridMesh.vertex(1.4f, 0.2f, 0.f);
+    gridMesh.vertex(-1.4f,-0.9f, 0.f); gridMesh.vertex(1.4f,-0.9f, 0.f);
+    for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.25f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.08f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(spectrum);
+    g.draw(waveform);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(FmIndex)
+`,
+  },
+  {
+    id: 'mat-comb-swept',
+    title: 'Comb Filter Swept-Delay Visualizer',
+    description:
+      "White noise into a comb filter (gam::Comb) whose delay length is modulated by a low-frequency sine. The comb's notches appear at fk = k / delaySec, so as delay sweeps the notches march up and down the spectrum. Live magnitude view (inline DFT) shows the comb teeth moving in real time.",
+    category: 'mat-signal',
+    subcategory: 'delay',
+    code: `/**
+ * Comb Filter Swept-Delay Visualizer — MAT200B Phase 2
+ *
+ * gam::Comb fed white noise. The delay length D (in seconds) is
+ * modulated by a low-frequency sine LFO between 'delay_min' and
+ * 'delay_max'. The comb's notches sit at fk = k / D for integer k,
+ * so as D sweeps the notches and peaks march up and down the
+ * spectrum. With 'feedback' close to 1 the resonances become
+ * pronounced; with 'feedforward' the timbre is closer to a
+ * subtractive filter.
+ *
+ * Visual: 256-point inline DFT of the comb output. Drag 'lfo_hz'
+ * up to 5 Hz and watch the spectrum animate; drop it to 0.05 Hz
+ * to study a static notch pattern at any chosen delay.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Effects.h"
+#include "Gamma/Filter.h"
+#include "Gamma/Noise.h"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class CombSwept : public App {
+public:
+  Parameter delay_min {"delay_min_ms", "",  2.0f,   0.5f,  20.0f};
+  Parameter delay_max {"delay_max_ms", "", 20.0f,   5.0f, 100.0f};
+  Parameter lfo_hz    {"lfo_hz",       "",  0.30f,  0.05f, 5.0f};
+  Parameter feedback  {"feedback",     "",  0.85f,  0.0f,  0.99f};
+  Parameter feedforward{"feedforward", "",  0.0f,   0.0f,  1.0f};
+  Parameter amp       {"amplitude",    "",  0.20f,  0.0f,  1.0f};
+
+  ControlGUI gui;
+
+  gam::NoiseWhite<>      noise;
+  gam::Comb<float, gam::ipl::Linear> comb{0.1f};   // 100 ms max delay
+  gam::LFO<>             lfo;
+
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  Mesh spectrum, gridMesh;
+
+  void onInit() override {
+    gui << delay_min << delay_max << lfo_hz << feedback << feedforward << amp;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    lfo.freq(lfo_hz.get());
+    const float dmin = delay_min.get() * 0.001f;
+    const float dmax = delay_max.get() * 0.001f;
+    const float fb   = feedback.get();
+    const float ff   = feedforward.get();
+    const float a    = amp.get();
+
+    while (io()) {
+      const float u = lfo.cos() * 0.5f + 0.5f;     // 0..1
+      const float dSec = dmin + u * (dmax - dmin);
+      comb.delay(dSec);
+      comb.fbk(fb);
+      comb.ffd(ff);
+
+      const float n = noise() * 0.4f;
+      const float s = comb(n) * a;
+      io.out(0) = s;
+      io.out(1) = s;
+
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = s;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = blockBuf[idx] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+
+    spectrum.reset();
+    spectrum.primitive(Mesh::TRIANGLE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float h  = std::min(1.6f, mag[k] * 8.0f);
+      const float yb = -1.0f, yt = -1.0f + h;
+      spectrum.vertex(xx, yb, 0.f);
+      spectrum.vertex(xx, yt, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      const Color c{0.6f + 0.4f * t, 0.4f + 0.5f * (1.f - t), 0.85f};
+      spectrum.color(c.r * 0.4f, c.g * 0.4f, c.b * 0.4f);
+      spectrum.color(c.r,        c.g,        c.b);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f, -1.0f, 0.f); gridMesh.vertex(1.4f, -1.0f, 0.f);
+    gridMesh.color(0.25f, 0.25f, 0.25f); gridMesh.color(0.25f, 0.25f, 0.25f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.06f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(spectrum);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(CombSwept)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
