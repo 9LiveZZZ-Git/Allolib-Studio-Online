@@ -125,6 +125,7 @@ using namespace al;
 
 class MATTemplate : public App {
 public:
+  ParameterBool  playing{"playing", "", true};
   Parameter      freq   {"freq",   "", 220.f, 50.f, 2000.f};
   ParameterInt   detune {"detune", "", 0,    -50,   50};
   ParameterBool  stereo {"stereo", "", true};
@@ -144,7 +145,7 @@ public:
   Mesh trace;
 
   void onInit() override {
-    gui      << freq << detune << stereo << tint << reset;
+    gui      << playing << freq << detune << stereo << tint << reset;
     mPresets << freq << detune << stereo << tint << reset;
     reset.registerChangeCallback([this](float) {
       ringL.fill(0.f); ringR.fill(0.f); ringWrite.store(0);
@@ -158,6 +159,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const float fL = freq.get();
     const float fR = stereo.get() ? freq.get() + detune.get() : freq.get();
     oscL.freq(fL);
@@ -250,6 +255,7 @@ using namespace al;
 
 class Lissajous : public App {
 public:
+  ParameterBool playing {"playing", "", true};
   Parameter freqX     {"freqX",     "", 220.0f, 50.0f,  2000.0f};
   Parameter freqY     {"freqY",     "", 330.0f, 50.0f,  2000.0f};
   Parameter amplitude {"amplitude", "", 0.30f,  0.0f,   1.0f};
@@ -271,7 +277,7 @@ public:
   Mesh trace;
 
   void onInit() override {
-    gui << freqX << freqY << amplitude << reset;
+    gui << playing << freqX << freqY << amplitude << reset;
     reset.registerChangeCallback([this](float) {
       ringX.fill(0.f);
       ringY.fill(0.f);
@@ -286,6 +292,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     oscX.freq(freqX.get());
     oscY.freq(freqY.get());
     const float amp = amplitude.get();
@@ -393,6 +403,7 @@ using namespace al;
 
 class Risset : public App {
 public:
+  ParameterBool playing  {"playing",   "", true};
   Parameter     rate     {"rate",      "",  0.30f, -2.0f, 2.0f};
   Parameter     amplitude{"amplitude", "",  0.25f,  0.0f, 1.0f};
   Parameter     spread   {"spread",    "",  0.30f,  0.05f, 1.0f};
@@ -409,7 +420,7 @@ public:
   Mesh dots;
 
   void onInit() override {
-    gui << rate << amplitude << spread << numTones << reset;
+    gui << playing << rate << amplitude << spread << numTones << reset;
     reset.registerChangeCallback([this](float) {
       for (auto& v : logF) v = 0.f;
     });
@@ -423,6 +434,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const int N = numTones.get();
     const float dt = 1.0f / io.framesPerSecond();
     const float r  = rate.get();
@@ -703,6 +718,7 @@ using namespace al;
 class CompressorLab : public App {
 public:
   ParameterMenu source     {"source",      ""};
+  ParameterBool playing    {"playing",     "", true};
   ParameterBool upwardMode {"upwardMode",  "", false};
   ParameterBool autoNormalize {"auto_normalize", "", true};
   Parameter     threshold  {"threshold_dB","", -20.0f, -60.0f, 0.0f};
@@ -750,7 +766,7 @@ public:
     source.setElements({"drums", "pad", "mixed"});
     source.set(0);
 
-    gui << source << upwardMode << autoNormalize
+    gui << source << playing << upwardMode << autoNormalize
         << threshold << ratio
         << attackMs << releaseMs << makeup_dB << retrigger;
 
@@ -778,7 +794,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
-    if (!current || !current->ready()) {
+    if (!playing.get() || !current || !current->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -1014,6 +1030,7 @@ using namespace al;
 
 class AmRmViz : public App {
 public:
+  ParameterBool playing    {"playing",    "", true};
   Parameter     carrier_hz {"carrier_hz", "", 440.0f, 50.0f, 4000.0f};
   Parameter     mod_hz     {"mod_hz",     "",  80.0f,  1.0f, 2000.0f};
   Parameter     depth      {"depth",      "",   0.8f,  0.0f, 1.0f};
@@ -1032,7 +1049,7 @@ public:
   Mesh spectrum, waveform, gridMesh;
 
   void onInit() override {
-    gui << carrier_hz << mod_hz << depth << amp << ringMod;
+    gui << playing << carrier_hz << mod_hz << depth << amp << ringMod;
   }
 
   void onCreate() override {
@@ -1041,6 +1058,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     carrier.freq(carrier_hz.get());
     modulator.freq(mod_hz.get());
     const float d   = depth.get();
@@ -1168,6 +1189,7 @@ using namespace al;
 
 class FmIndex : public App {
 public:
+  ParameterBool playing {"playing", "", true};
   Parameter carrier_hz {"carrier_hz", "", 220.0f,  50.0f, 2000.0f};
   Parameter mod_hz     {"mod_hz",     "", 110.0f,   1.0f, 2000.0f};
   Parameter index      {"index",      "",   1.0f,   0.0f, 8.0f};
@@ -1186,7 +1208,7 @@ public:
   Mesh spectrum, waveform, gridMesh;
 
   void onInit() override {
-    gui << carrier_hz << mod_hz << index << amp;
+    gui << playing << carrier_hz << mod_hz << index << amp;
   }
 
   void onCreate() override {
@@ -1195,6 +1217,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     mod.freq(mod_hz.get());
     const float fc  = carrier_hz.get();
     const float idx = index.get();
@@ -1282,44 +1308,43 @@ ALLOLIB_WEB_MAIN(FmIndex)
   },
   {
     id: 'mat-comb-swept',
-    title: 'Comb Filter Swept-Delay Visualizer',
+    title: 'Comb Filter — Source · Mode · Sweep',
     description:
-      "White noise into a comb filter (gam::Comb) whose delay length is modulated by a low-frequency sine. The comb's notches appear at fk = k / delaySec, so as delay sweeps the notches march up and down the spectrum. The visualizer plots the deterministic transfer function |H(e^jω)| computed from the current delay/feedback/feedforward — visible immediately, no audio start-up wait — with a wallclock-driven LFO so the comb teeth animate even before the AudioContext engages.",
+      "A pedagogical comb filter lab with three layered visualizers: (1) the deterministic transfer function |H(e^jω)| computed live from the current delay/feedback/feedforward — visible the instant the example loads, no audio warm-up; (2) the impulse response in time domain, computed each animation frame by sending a delta into a clone of the filter — you can literally see the echo train; (3) the live audio output trace below. Source selector covers white noise, pink noise, single impulses, a slow sine sweep, and the bundled mixed loop. Mode toggle switches between feedback comb (resonant peaks at fk = k/D) and feedforward comb (notches at fk = (k+0.5)/D). LFO sweep reveals the math live. On/off gate so you can A/B silence vs the filtered tail without restarting.",
     category: 'mat-signal',
     subcategory: 'delay',
     code: `/**
- * Comb Filter Swept-Delay Visualizer — MAT200B Phase 2
+ * Comb Filter — Source · Mode · Sweep — MAT200B Phase 2 v3
  *
- * gam::Comb fed white noise. The delay length D (in seconds) is
- * modulated by a low-frequency sine LFO between 'delay_min' and
- * 'delay_max'. The comb's notches sit at fk = k / D for integer k,
- * so as D sweeps the notches and peaks march up and down the
- * spectrum. With 'feedback' close to 1 the resonances become
- * pronounced; with 'feedforward' the timbre is closer to a
- * subtractive filter.
+ * Three coupled views of the same filter on screen at once:
  *
- * Visual: deterministic |H(e^jω)| of the IIR comb computed directly
- * from delay D, feedback g, feedforward c at every animation frame.
- * For sample-delay M = round(D * sr), the difference equation is
- *   y[n] = x[n] + c x[n-M] + g y[n-M]
- * giving transfer function
- *   H(z) = (1 + c z^-M) / (1 - g z^-M).
- * Magnitude on the unit circle z = e^jω, ω in [0, π], maps to
- * frequency [0, sr/2]. Plotting this directly means the visualizer
- * shows the correct comb response BEFORE audio starts, no DFT-of-
- * silence empty bars. The LFO is driven by wallclock so the sweep
- * is visible whether or not the AudioContext is running.
+ *   TOP      transfer function |H(e^jω)| — math, deterministic
+ *   MIDDLE   impulse response IR[n] — echo train, computed each frame
+ *            by injecting a delta into a clone of the comb
+ *   BOTTOM   live time-domain output trace
+ *
+ * Source menu (white noise / pink noise / impulse pulse train /
+ * sine sweep / bundled mixed loop) and a feedback↔feedforward
+ * mode toggle. Wallclock-driven LFO so the visual animates even
+ * before AudioContext engages.
+ *
+ *   y_fb[n]  = x[n] + g · y[n - M]              (peaks at k/D)
+ *   y_ff[n]  = x[n] - g · x[n - M]              (notches at (k+0.5)/D)
+ *
+ * 'mode' picks fb / ff. 'g' is the (single) feedback or feedforward
+ * gain; the example deliberately exposes ONE knob so the math is
+ * legible. 'D' (delay in ms) is LFO-modulated between dmin and dmax.
  */
 
 #include "al_playground_compat.hpp"
-#include "Gamma/Effects.h"
-#include "Gamma/Filter.h"
+#include "al_WebSamplePlayer.hpp"
 #include "Gamma/Noise.h"
 #include "Gamma/Oscillator.h"
 
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <vector>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -1329,139 +1354,336 @@ using namespace al;
 
 class CombSwept : public App {
 public:
-  Parameter delay_min {"delay_min_ms", "",  2.0f,   0.5f,  20.0f};
-  Parameter delay_max {"delay_max_ms", "", 20.0f,   5.0f, 100.0f};
-  Parameter lfo_hz    {"lfo_hz",       "",  0.30f,  0.05f, 5.0f};
-  Parameter feedback  {"feedback",     "",  0.85f,  0.0f,  0.99f};
-  Parameter feedforward{"feedforward", "",  0.0f,   0.0f,  1.0f};
-  Parameter amp       {"amplitude",    "",  0.20f,  0.0f,  1.0f};
+  ParameterMenu source     {"source",       ""};
+  ParameterMenu mode       {"mode",         ""};
+  ParameterBool playing    {"playing",      "", true};
+  Parameter     delay_min  {"delay_min_ms", "",  2.0f,   0.5f,  20.0f};
+  Parameter     delay_max  {"delay_max_ms", "", 20.0f,   5.0f, 100.0f};
+  Parameter     lfo_hz     {"lfo_hz",       "",  0.30f,  0.0f,  5.0f};
+  Parameter     g_gain     {"g",            "",  0.85f, -0.99f, 0.99f};
+  Parameter     amp        {"amplitude",    "",  0.30f,  0.0f,  1.0f};
+  Trigger       fire_pulse {"fire_pulse",   ""};
 
   ControlGUI gui;
 
-  gam::NoiseWhite<>      noise;
-  gam::Comb<float, gam::ipl::Linear> comb{0.1f};   // 100 ms max delay
-  gam::LFO<>             lfo;
+  // ------------- Comb filter delay line (manual, so we can also
+  // ------------- use a separate clone for the impulse-response view).
+  static constexpr int   MAX_DELAY = 8192;
+  std::array<float, MAX_DELAY> dline{};
+  int dlineW = 0;
 
-  // Wallclock LFO phase for the visualizer — so the spectrum animates
-  // even when AudioContext hasn't started yet.
+  // Source state
+  gam::NoiseWhite<> nw;
+  WebSamplePlayer mixed;
+  // Pink noise state (Voss-McCartney-ish via 7-pole IIR averaging of white).
+  std::array<float, 7> pinkRows{};
+  // Sine sweep state
+  double sweepPhase = 0.0;
+  // Pulse-train trigger
+  std::atomic<int> firePulsePending{0};
+  int   pulseCountdown = 0;
+  int   autoPulseCounter = 0;
+
+  // Wallclock LFO phase
   double vizLfoPhase = 0.0;
-  // Last known sample rate from audio thread (for converting delay
-  // seconds -> integer sample-delay in the transfer function).
   std::atomic<float> sampleRateHz{48000.f};
 
-  Mesh spectrum, gridMesh, notchMarks;
+  // Audio→graphics ring for the live-output panel
+  static constexpr int RING = 512;
+  std::array<float, RING> outRing{};
+  std::atomic<int> ringW{0};
+
+  // Smoothed gate gain to avoid clicks on play/stop
+  float gateGain = 0.0f;
+
+  Mesh spectrum, irMesh, outWave, gridMesh, notchMarks, modeBadge;
 
   void onInit() override {
-    gui << delay_min << delay_max << lfo_hz << feedback << feedforward << amp;
+    source.setElements({"white noise", "pink noise", "impulse train",
+                        "sine sweep", "mixed loop"});
+    source.set(0);
+    mode.setElements({"feedback (peaks)", "feedforward (notches)"});
+    mode.set(0);
+
+    gui << source << mode << playing
+        << delay_min << delay_max << lfo_hz << g_gain << amp << fire_pulse;
+
+    fire_pulse.registerChangeCallback([this](float){
+      firePulsePending.store(1, std::memory_order_release);
+    });
   }
 
   void onCreate() override {
     gui.init();
+    mixed.load("mixed_loop.wav");
     nav().pos(0, 0, 4.0f);
   }
 
+  // --- source generators ----------------------------------------------
+  float pinkNoise() {
+    // Voss-McCartney 7-row pink. Rolling rng + sum of rows.
+    static unsigned int rngState = 0x1234567u;
+    rngState = rngState * 1664525u + 1013904223u;
+    int row = __builtin_ctz((rngState | 0x80) & 0x7F);
+    if (row >= 7) row = 0;
+    pinkRows[row] = (((rngState >> 8) & 0xFFFF) / 32768.f - 1.f);
+    float sum = 0.f;
+    for (float v : pinkRows) sum += v;
+    return sum * (1.0f / 7.0f);
+  }
+
+  float renderSource(int srcIdx, float sr, float& playhead, int nFrames) {
+    switch (srcIdx) {
+      case 0: return nw() * 0.5f;
+      case 1: return pinkNoise() * 1.2f;
+      case 2: {
+        // Impulse train: one pulse per ~250 ms, plus user-fired pulses.
+        if (firePulsePending.exchange(0, std::memory_order_acquire))
+          pulseCountdown = 1;
+        if (pulseCountdown > 0) { --pulseCountdown; return 0.95f; }
+        if (++autoPulseCounter >= static_cast<int>(sr * 0.25f)) {
+          autoPulseCounter = 0;
+          return 0.85f;
+        }
+        return 0.0f;
+      }
+      case 3: {
+        // 6-second log sweep 100 -> 4000 Hz.
+        const double sweepDur = 6.0;
+        const double t = std::fmod(sweepPhase / sr, sweepDur);
+        const double fStart = 100.0, fEnd = 4000.0;
+        const double f = fStart * std::pow(fEnd / fStart, t / sweepDur);
+        sweepPhase += 1.0;
+        return std::sin(2.0 * M_PI * f * t) * 0.6f;
+      }
+      case 4: {
+        if (!mixed.ready() || nFrames <= 0) return 0.f;
+        const float s = mixed.readInterp(0, playhead);
+        playhead += mixed.sampleRate() / sr;
+        if (playhead >= nFrames) playhead -= nFrames;
+        return s;
+      }
+    }
+    return 0.0f;
+  }
+
+  // Tap delay line at sample-distance M behind writeIdx.
+  static inline float tap(const std::array<float, MAX_DELAY>& buf,
+                          int writeIdx, int M) {
+    int idx = writeIdx - M;
+    while (idx < 0) idx += MAX_DELAY;
+    return buf[idx % MAX_DELAY];
+  }
+
+  // --- audio -----------------------------------------------------------
+  float mixedPlayhead = 0.0f;
+
   void onSound(AudioIOData& io) override {
     sampleRateHz.store(io.framesPerSecond(), std::memory_order_relaxed);
-    lfo.freq(lfo_hz.get());
+    const float sr = io.framesPerSecond();
     const float dmin = delay_min.get() * 0.001f;
     const float dmax = delay_max.get() * 0.001f;
-    const float fb   = feedback.get();
-    const float ff   = feedforward.get();
+    const float lfoF = lfo_hz.get();
+    const float g    = g_gain.get();
     const float a    = amp.get();
+    const int   srcIdx = (int)source.get();
+    const bool  isFB = ((int)mode.get() == 0);
+    const float targetGate = playing.get() ? 1.0f : 0.0f;
+    const float gateA = std::exp(-1.0f / (0.005f * sr));   // ~5 ms
+    const int   nFrames = mixed.frames();
 
+    double phase = 0.0;
     while (io()) {
-      const float u = lfo.cos() * 0.5f + 0.5f;
+      // Modulated delay (audio-rate, smooth).
+      phase += lfoF / sr;
+      if (phase > 1.0) phase -= std::floor(phase);
+      const float u = 0.5f + 0.5f * std::cos(2.0f * (float)M_PI * (float)phase);
       const float dSec = dmin + u * (dmax - dmin);
-      comb.delay(dSec);
-      comb.fbk(fb);
-      comb.ffd(ff);
+      const int M = std::max(1, std::min(MAX_DELAY - 1,
+                              static_cast<int>(std::round(dSec * sr))));
 
-      const float n = noise() * 0.4f;
-      const float s = comb(n) * a;
-      io.out(0) = s;
-      io.out(1) = s;
+      const float x = renderSource(srcIdx, sr, mixedPlayhead, nFrames);
+
+      float y;
+      if (isFB) {
+        const float yPrev = tap(dline, dlineW, M);
+        y = x + g * yPrev;
+        dlineW = (dlineW + 1) % MAX_DELAY;
+        dline[dlineW] = y;
+      } else {
+        const float xPrev = tap(dline, dlineW, M);
+        y = x - g * xPrev;
+        dlineW = (dlineW + 1) % MAX_DELAY;
+        dline[dlineW] = x;
+      }
+
+      gateGain = targetGate + gateA * (gateGain - targetGate);
+      const float out = y * a * gateGain;
+      io.out(0) = out;
+      io.out(1) = out;
+
+      const int w = ringW.load(std::memory_order_relaxed);
+      outRing[w] = out;
+      ringW.store((w + 1) % RING, std::memory_order_release);
     }
   }
 
+  // --- visuals ---------------------------------------------------------
   void onAnimate(double dt) override {
-    // Wallclock LFO so the visual animates pre-audio.
     vizLfoPhase += dt * static_cast<double>(lfo_hz.get());
     if (vizLfoPhase > 1.0) vizLfoPhase -= std::floor(vizLfoPhase);
-    const float u = 0.5f + 0.5f * std::cos(2.0f * static_cast<float>(M_PI)
-                                           * static_cast<float>(vizLfoPhase));
+    const float u = 0.5f + 0.5f * std::cos(2.0f * (float)M_PI * (float)vizLfoPhase);
 
-    const float sr   = sampleRateHz.load(std::memory_order_relaxed);
+    const float sr = sampleRateHz.load(std::memory_order_relaxed);
     const float dmin = delay_min.get() * 0.001f;
     const float dmax = delay_max.get() * 0.001f;
     const float dSec = dmin + u * (dmax - dmin);
-    const float g    = feedback.get();
-    const float c    = feedforward.get();
-    const int   M    = std::max(1, static_cast<int>(std::round(dSec * sr)));
+    const float g = g_gain.get();
+    const bool  isFB = ((int)mode.get() == 0);
+    const int   M = std::max(1, static_cast<int>(std::round(dSec * sr)));
 
-    // Plot |H(e^jω)| at NB equally-spaced ω in [0, π].
+    // ------- TOP: |H(e^jω)|
     constexpr int NB = 256;
     spectrum.reset();
     spectrum.primitive(Mesh::TRIANGLE_STRIP);
+    const float yTop_b = +0.30f, yTop_t = +1.30f;
     for (int k = 0; k < NB; ++k) {
-      const float w = static_cast<float>(M_PI) * k / (NB - 1);
+      const float w = (float)M_PI * k / (NB - 1);
       const float wM = w * M;
-      // numerator   N(e^jω) = 1 + c e^-jωM   -> |N|^2 = 1 + 2c cos(ωM) + c²
-      const float numMag2 = 1.f + 2.f * c * std::cos(wM) + c * c;
-      // denominator D(e^jω) = 1 - g e^-jωM   -> |D|^2 = 1 - 2g cos(ωM) + g²
-      const float denMag2 = std::max(1e-6f,
-                            1.f - 2.f * g * std::cos(wM) + g * g);
-      const float H = std::sqrt(numMag2 / denMag2);
-      // dB-ish vertical scale: log compresses the resonance peaks so
-      // they don't shoot off-screen at high feedback.
-      const float h  = std::min(1.6f, std::log10(1.f + H * 4.f) * 1.4f);
-
-      const float xx = -1.4f + (static_cast<float>(k) / (NB - 1)) * 2.8f;
-      const float yb = -1.0f, yt = -1.0f + h;
-      spectrum.vertex(xx, yb, 0.f);
-      spectrum.vertex(xx, yt, 0.f);
-      const float t = static_cast<float>(k) / (NB - 1);
-      // Bottom row darker, top row brighter — gives the peaks a clear
-      // glow against the baseline.
-      spectrum.color(0.20f + 0.20f * t, 0.20f + 0.30f * (1.f - t), 0.45f);
-      spectrum.color(0.65f + 0.35f * t, 0.45f + 0.50f * (1.f - t), 0.95f);
-    }
-
-    // Mark the harmonic notch positions fk = k / D as dim vertical
-    // ticks along the baseline. Helps the eye lock onto the math.
-    notchMarks.reset();
-    notchMarks.primitive(Mesh::LINES);
-    if (dSec > 1e-6f && sr > 1.f) {
-      const float fundamental = 1.f / dSec;     // Hz
-      const float nyquist = 0.5f * sr;
-      for (int kk = 1; kk < 64; ++kk) {
-        const float fk = (kk - 0.5f) * fundamental;   // notch midpoints
-        if (fk >= nyquist) break;
-        const float xx = -1.4f + (fk / nyquist) * 2.8f;
-        notchMarks.vertex(xx, -1.0f, 0.f);
-        notchMarks.vertex(xx, -0.92f, 0.f);
-        notchMarks.color(0.55f, 0.30f, 0.30f);
-        notchMarks.color(0.55f, 0.30f, 0.30f);
+      float magSq;
+      if (isFB) {
+        // |1 / (1 - g e^-jωM)|² = 1 / (1 - 2g cos(ωM) + g²)
+        const float den = std::max(1e-6f, 1.f - 2.f * g * std::cos(wM) + g * g);
+        magSq = 1.f / den;
+      } else {
+        // |1 - g e^-jωM|² = 1 - 2g cos(ωM) + g²
+        magSq = 1.f - 2.f * g * std::cos(wM) + g * g;
+      }
+      const float H = std::sqrt(std::max(magSq, 1e-9f));
+      const float h = std::min(1.0f, std::log10(1.f + H * 4.f) * 1.0f);
+      const float xx = -1.4f + ((float)k / (NB - 1)) * 2.8f;
+      spectrum.vertex(xx, yTop_b, 0.f);
+      spectrum.vertex(xx, yTop_b + h * (yTop_t - yTop_b), 0.f);
+      const float t = (float)k / (NB - 1);
+      // Color by mode: feedback warm orange/red, feedforward cool cyan/blue.
+      if (isFB) {
+        spectrum.color(0.30f, 0.10f, 0.10f);
+        spectrum.color(0.95f, 0.55f + 0.40f * t, 0.20f);
+      } else {
+        spectrum.color(0.10f, 0.10f, 0.30f);
+        spectrum.color(0.30f + 0.30f * t, 0.65f, 0.95f);
       }
     }
 
+    // ------- MIDDLE: impulse response (live)
+    // Compute IR_len = min(2 * M + 64, 512) samples by simulating the
+    // filter on a delta.
+    constexpr int IR_LEN = 512;
+    std::array<float, IR_LEN> irBuf{};
+    std::array<float, MAX_DELAY> irDline{};
+    int irW = 0;
+    for (int n = 0; n < IR_LEN; ++n) {
+      const float x = (n == 0) ? 1.0f : 0.0f;
+      float y;
+      if (isFB) {
+        const float yPrev = tap(irDline, irW, M);
+        y = x + g * yPrev;
+        irW = (irW + 1) % MAX_DELAY;
+        irDline[irW] = y;
+      } else {
+        const float xPrev = tap(irDline, irW, M);
+        y = x - g * xPrev;
+        irW = (irW + 1) % MAX_DELAY;
+        irDline[irW] = x;
+      }
+      irBuf[n] = y;
+    }
+    irMesh.reset();
+    irMesh.primitive(Mesh::LINES);
+    const float yMid_c = -0.05f;
+    const float irScale = 0.25f;
+    for (int n = 0; n < IR_LEN; ++n) {
+      const float xx = -1.4f + ((float)n / (IR_LEN - 1)) * 2.8f;
+      const float v = irBuf[n] * irScale;
+      irMesh.vertex(xx, yMid_c, 0.f);
+      irMesh.vertex(xx, yMid_c + v, 0.f);
+      const float fade = 1.0f - (float)n / (IR_LEN - 1);
+      if (isFB) {
+        irMesh.color(0.95f, 0.55f, 0.20f);
+        irMesh.color(0.95f, 0.55f, 0.20f * fade + 0.05f);
+      } else {
+        irMesh.color(0.30f, 0.85f, 0.95f);
+        irMesh.color(0.30f, 0.85f, 0.95f * fade + 0.05f);
+      }
+    }
+
+    // ------- BOTTOM: live audio trace
+    outWave.reset();
+    outWave.primitive(Mesh::LINE_STRIP);
+    const int wHead = ringW.load(std::memory_order_acquire);
+    constexpr int W = 256;
+    const float yBot_c = -0.85f;
+    for (int i = 0; i < W; ++i) {
+      const int idx = (wHead - W + i + RING) % RING;
+      const float xx = -1.4f + ((float)i / (W - 1)) * 2.8f;
+      const float v = outRing[idx] * 0.25f;
+      outWave.vertex(xx, yBot_c + v, 0.f);
+      outWave.color(0.85f, 0.85f, 0.40f);
+    }
+
+    // ------- Notch / peak markers (theory)
+    notchMarks.reset();
+    notchMarks.primitive(Mesh::LINES);
+    if (dSec > 1e-6f && sr > 1.f) {
+      const float fundamental = 1.0f / dSec;
+      const float nyquist = 0.5f * sr;
+      // Feedback: peaks at k * fundamental. Feedforward: notches at
+      // (k + 0.5) * fundamental. Show whichever applies.
+      for (int kk = 1; kk < 64; ++kk) {
+        const float fk = isFB ? (float)kk * fundamental
+                              : ((float)kk - 0.5f) * fundamental;
+        if (fk >= nyquist) break;
+        const float xx = -1.4f + (fk / nyquist) * 2.8f;
+        notchMarks.vertex(xx, yTop_b, 0.f);
+        notchMarks.vertex(xx, yTop_b + 0.05f, 0.f);
+        if (isFB) {
+          notchMarks.color(1.0f, 0.85f, 0.30f);
+          notchMarks.color(1.0f, 0.85f, 0.30f);
+        } else {
+          notchMarks.color(0.85f, 0.30f, 0.30f);
+          notchMarks.color(0.85f, 0.30f, 0.30f);
+        }
+      }
+    }
+
+    // ------- Grid: panel dividers
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(-1.4f, -1.0f, 0.f); gridMesh.vertex(1.4f, -1.0f, 0.f);
-    gridMesh.color(0.25f, 0.25f, 0.25f); gridMesh.color(0.25f, 0.25f, 0.25f);
-    // Mid-line and 0-dB-ish reference at h = log10(1 + 1*4) * 1.4 ≈ 0.98.
-    const float refY = -1.0f + std::min(1.6f, std::log10(5.f) * 1.4f);
-    gridMesh.vertex(-1.4f, refY, 0.f); gridMesh.vertex(1.4f, refY, 0.f);
-    gridMesh.color(0.25f, 0.25f, 0.25f); gridMesh.color(0.25f, 0.25f, 0.25f);
+    auto hline = [&](float y, float r, float gC, float b) {
+      gridMesh.vertex(-1.4f, y, 0.f); gridMesh.color(r, gC, b);
+      gridMesh.vertex( 1.4f, y, 0.f); gridMesh.color(r, gC, b);
+    };
+    hline(yTop_b,    0.35f, 0.35f, 0.40f);   // top panel base
+    hline(yMid_c,    0.30f, 0.30f, 0.35f);   // mid axis
+    hline(yMid_c+0.30f, 0.18f, 0.18f, 0.22f);
+    hline(yMid_c-0.30f, 0.18f, 0.18f, 0.22f);
+    hline(yBot_c,    0.30f, 0.30f, 0.35f);   // bottom axis
   }
 
   void onDraw(Graphics& g) override {
-    g.clear(0.04f, 0.06f, 0.07f);
+    g.clear(0.04f, 0.05f, 0.07f);
     g.meshColor();
     g.draw(gridMesh);
-    g.draw(spectrum);
     g.draw(notchMarks);
+    g.draw(spectrum);
+    g.draw(irMesh);
+    g.draw(outWave);
     gui.draw(g);
   }
+
+  bool onMouseDown(const Mouse&) override { return false; }
+  bool onMouseDrag(const Mouse&) override { return false; }
+  bool onMouseUp  (const Mouse&) override { return false; }
 };
 
 ALLOLIB_WEB_MAIN(CombSwept)
@@ -1506,6 +1728,7 @@ using namespace al;
 
 class DrawableWavetable : public App {
 public:
+  ParameterBool  playing    {"playing",    "", true};
   Parameter      carrier_hz {"carrier_hz", "", 220.0f,  20.0f, 2000.0f};
   Parameter      amp        {"amplitude",  "",  0.30f,  0.0f,  1.0f};
   Parameter      smoothing  {"smoothing",  "",  0.20f,  0.0f,  0.95f};
@@ -1536,7 +1759,7 @@ public:
   Mesh tableMesh, spectrum, gridMesh, playMarker;
 
   void onInit() override {
-    gui << carrier_hz << amp << smoothing << clearTbl << randomize;
+    gui << playing << carrier_hz << amp << smoothing << clearTbl << randomize;
 
     clearTbl.registerChangeCallback([this](float) {
       for (int i = 0; i < TBL; ++i) {
@@ -1568,6 +1791,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const float sr = io.framesPerSecond();
     const float dPh = TBL * carrier_hz.get() / sr;
     const float a   = amp.get();
@@ -1753,6 +1980,7 @@ using namespace al;
 
 class Waveshaper : public App {
 public:
+  ParameterBool playing {"playing", "", true};
   Parameter     freq    {"freq",     "", 220.0f,  50.0f, 2000.0f};
   Parameter     drive   {"drive",    "",   2.0f,   0.1f,  20.0f};
   Parameter     output  {"output",   "",   0.30f,  0.0f,  1.0f};
@@ -1785,7 +2013,7 @@ public:
   void onInit() override {
     shape.setElements({"tanh", "atan", "hardclip", "cubic", "sin"});
     shape.set(0);
-    gui << freq << drive << output << shape;
+    gui << playing << freq << drive << output << shape;
   }
 
   void onCreate() override {
@@ -1794,6 +2022,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     osc.freq(freq.get());
     const float dr = drive.get();
     const float og = output.get();
@@ -2628,6 +2860,7 @@ using namespace al;
 class GranularCloud : public App {
 public:
   ParameterMenu source         {"source",          ""};
+  ParameterBool playing        {"playing",         "", true};
   Parameter     density_hz     {"density_hz",      "",  8.0f,  1.0f,  50.0f};
   Parameter     grain_ms       {"grain_ms",        "", 80.0f, 10.0f, 500.0f};
   Parameter     position_spread{"position_spread", "",  0.30f, 0.0f,   1.0f};
@@ -2675,7 +2908,7 @@ public:
     source.setElements({"drums", "pad", "mixed"});
     source.set(0);
 
-    gui << source << density_hz << grain_ms << position_spread
+    gui << source << playing << density_hz << grain_ms << position_spread
         << centerPos << pitch_spread << pan_spread << amp;
 
     source.registerChangeCallback([this](float v) {
@@ -2704,7 +2937,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
-    if (!current || !current->ready()) {
+    if (!playing.get() || !current || !current->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -2911,6 +3144,7 @@ public:
   ControlGUI gui;
 
   ParameterMenu source{"source"};
+  ParameterBool playing{"playing", "", true};
   Parameter amp{"amp", "", 0.5f, 0.f, 1.f};
   Parameter zoom_short_ms{"zoom_short_ms", "", 10.f, 1.f, 50.f};
   Parameter zoom_med_ms{"zoom_med_ms", "", 1000.f, 100.f, 3000.f};
@@ -2936,7 +3170,7 @@ public:
 
   void onInit() override {
     source.setElements({"drums", "pad", "mixed"});
-    gui << source << amp << zoom_short_ms << zoom_med_ms << retrigger;
+    gui << source << playing << amp << zoom_short_ms << zoom_med_ms << retrigger;
 
     source.registerChangeCallback([this](int v) {
       switch (v) {
@@ -3003,7 +3237,7 @@ public:
 
   void onSound(AudioIOData& io) override {
     float a = amp.get();
-    if (!current || current->frames() <= 0) {
+    if (!playing.get() || !current || current->frames() <= 0) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -3198,6 +3432,7 @@ using namespace al;
 class MasteringAB : public App {
 public:
   ParameterMenu source         {"source",         ""};
+  ParameterBool playing        {"playing",        "", true};
   ParameterBool playB          {"playB",          "", false};
   Parameter     gain_dB        {"gain_dB",        "",  0.0f, -12.0f, 12.0f};
   Parameter     tiltAmount_dB  {"tiltAmount_dB",  "",  0.0f,  -6.0f,  6.0f};
@@ -3239,7 +3474,7 @@ public:
                         "edm full", "jazz full", "orchestral full"});
     source.set(3);   // default to EDM full mix — most useful for mastering work
 
-    gui << source << playB << gain_dB << tiltAmount_dB << tiltPivot_hz
+    gui << source << playing << playB << gain_dB << tiltAmount_dB << tiltPivot_hz
         << saturation << loudness_match << retrigger;
 
     source.registerChangeCallback([this](float v) {
@@ -3278,7 +3513,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
-    if (!current || !current->ready()) {
+    if (!playing.get() || !current || !current->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -3495,6 +3730,7 @@ using namespace al;
 class MixThermometer : public App {
 public:
   ParameterMenu source        {"source",         ""};
+  ParameterBool playing       {"playing",        "", true};
   Parameter     amp           {"amp",            "",  1.0f,   0.0f,   2.0f};
   Parameter     windowSec     {"window_sec",     "",  3.0f,   0.5f,  10.0f};
   Parameter     target_dB     {"target_dB",      "", -18.0f, -28.0f,  -9.0f};
@@ -3527,7 +3763,7 @@ public:
     source.setElements({"drums", "pad", "mixed"});
     source.set(0);
 
-    gui << source << amp << windowSec << target_dB << sweetWidth_dB << retrigger;
+    gui << source << playing << amp << windowSec << target_dB << sweetWidth_dB << retrigger;
 
     source.registerChangeCallback([this](float v) {
       switch (static_cast<int>(v)) {
@@ -3602,7 +3838,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
-    if (!current || !current->ready()) {
+    if (!playing.get() || !current || !current->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -3777,6 +4013,7 @@ public:
   std::array<gam::Sine<>, N_PARTIALS> oscs;
   std::array<std::atomic<float>, N_PARTIALS> partialAmps;
 
+  ParameterBool playing {"playing", "", true};
   Parameter f0      {"f0_Hz",       "",        110.0f,  40.0f,  440.0f};
   Parameter master  {"master",      "",          0.25f,  0.0f,    1.0f};
   Parameter a1{"a1","partials",1.00f,0.f,1.f}; Parameter a2{"a2","partials",0.f,0.f,1.f};
@@ -3830,7 +4067,7 @@ public:
       for (int i = 8; i < N_PARTIALS; ++i) partialAmps[i].store(0.0f);
     });
 
-    gui << f0 << master
+    gui << playing << f0 << master
         << a1 << a2 << a3 << a4 << a5 << a6 << a7 << a8
         << tailDecay << rotate << R0 << wireframe
         << sawPreset << squarePreset << clearPreset;
@@ -3983,6 +4220,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const float amp = master.get();
     const float decay = tailDecay.get();
     float amps[N_PARTIALS];
@@ -4066,6 +4307,7 @@ static const int WAVE_SAMPLES = 384;
 
 class AdditiveSculptor : public App {
 public:
+  ParameterBool playing {"playing", "", true};
   Parameter pitch_hz   {"pitch_hz",   "", 110.0f, 40.0f, 1200.0f};
   Parameter master_amp {"master_amp", "", 0.25f,   0.0f,    1.0f};
   Trigger reset            {"reset",            ""};
@@ -4111,7 +4353,7 @@ public:
       }
     });
 
-    gui << pitch_hz << master_amp << reset
+    gui << playing << pitch_hz << master_amp << reset
         << preset_saw << preset_square << preset_triangle;
   }
 
@@ -4122,6 +4364,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const float f0  = pitch_hz.get();
     const float amp = master_amp.get();
     for (int i = 0; i < NUM_PARTIALS; ++i) osc[i].freq(f0 * float(i + 1));
@@ -4379,6 +4625,7 @@ public:
   WebSamplePlayer pDrums, pPad, pMixed;
 
   ParameterMenu source         {"source",          ""};
+  ParameterBool playing        {"playing",         "", true};
   Parameter     stretch        {"stretch",         "",  1.0f,  0.25f, 4.0f};
   Parameter     pitch_semitones{"pitch_semitones", "",  0.0f, -12.0f, 12.0f};
   Parameter     grain_ms       {"grain_ms",        "", 80.0f,  30.0f, 200.0f};
@@ -4431,7 +4678,7 @@ public:
     source.setElements({"drums", "pad", "mixed"});
     source.set(0);
 
-    gui << source << stretch << pitch_semitones << grain_ms
+    gui << source << playing << stretch << pitch_semitones << grain_ms
         << density_hz << jitter << amp << retrigger;
 
     retrigger.registerChangeCallback([this](float){
@@ -4479,7 +4726,7 @@ public:
   void onSound(AudioIOData& io) override {
     hostSR = (float)io.framesPerSecond();
     WebSamplePlayer* sp = current();
-    if (!sp || !sp->ready()) {
+    if (!playing.get() || !sp || !sp->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
@@ -4720,6 +4967,7 @@ public:
   WebSamplePlayer* current = &drums;
 
   ParameterMenu source     {"source",        ""};
+  ParameterBool playing    {"playing",       "", true};
   ParameterMenu size_src   {"size_src",      ""};
   ParameterMenu hue_src    {"hue_src",       ""};
   ParameterMenu posY_src   {"posY_src",      ""};
@@ -4763,7 +5011,7 @@ public:
     posY_src.setElements(feats); posY_src.set(2);
     rot_src.setElements(feats);  rot_src.set(3);
 
-    gui << source << size_src << hue_src << posY_src << rot_src
+    gui << source << playing << size_src << hue_src << posY_src << rot_src
         << num_glyphs << amp << retrigger;
   }
 
@@ -4776,7 +5024,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
-    if (!current || !current->ready()) {
+    if (!playing.get() || !current || !current->ready()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
