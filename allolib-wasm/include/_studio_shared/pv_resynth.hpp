@@ -31,7 +31,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace al {
+// v0.10.3: dropped surrounding `namespace al` to match the other helpers (file-scope ::studio)
 namespace studio {
 
 struct PVBin {
@@ -152,4 +152,4 @@ private:
 };
 
 }  // namespace studio
-}  // namespace al
+// (close of removed `namespace al`)

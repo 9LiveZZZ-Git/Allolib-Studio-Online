@@ -22,7 +22,7 @@
 #include <cstring>
 #include <vector>
 
-namespace al {
+// v0.10.3: dropped surrounding `namespace al` to match the other helpers (file-scope ::studio)
 namespace studio {
 
 class PixelAudioBridge {
@@ -92,4 +92,4 @@ private:
 };
 
 }  // namespace studio
-}  // namespace al
+// (close of removed `namespace al`)

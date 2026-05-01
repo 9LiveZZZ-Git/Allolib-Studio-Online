@@ -57,7 +57,7 @@
 #define AL_STUDIO_AUTOMATION_HAS_WEBFONT 0
 #endif
 
-namespace al {
+// v0.10.3: dropped surrounding `namespace al` to match the other helpers (file-scope ::studio)
 namespace studio {
 
 struct Breakpoint {
@@ -537,4 +537,4 @@ public:
 };
 
 }  // namespace studio
-}  // namespace al
+// (close of removed `namespace al`)

@@ -52,7 +52,7 @@
 #include "al_WebApp.hpp"  // for screenToRay()
 #endif
 
-namespace al {
+// v0.10.3: dropped surrounding `namespace al` to match the other helpers (file-scope ::studio)
 namespace studio {
 
 struct Hit {
@@ -522,4 +522,4 @@ inline Ray screenToRay(al::WebApp& app, al::Vec2f screen) {
 #endif  // ALLOLIB_STUDIO_PICKABLE_NO_WEBAPP
 
 }  // namespace studio
-}  // namespace al
+// (close of removed `namespace al`)
