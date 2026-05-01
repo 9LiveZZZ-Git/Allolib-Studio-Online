@@ -1376,6 +1376,599 @@ public:
 ALLOLIB_WEB_MAIN(CombSwept)
 `,
   },
+  {
+    id: 'mat-drawable-wavetable',
+    title: 'Drawable Wavetable',
+    description:
+      'Click-and-drag in the canvas to draw a 256-point waveform; the oscillator plays it back at the carrier pitch. Visual layered: the table you drew (top, with playhead marker) + live spectrum (bottom, inline 256-point DFT). Drag from anywhere — when the mouse is in the canvas, x maps to table index, y maps to sample value.',
+    category: 'mat-synthesis',
+    subcategory: 'wavetable',
+    code: `/**
+ * Drawable Wavetable — MAT200B Phase 2
+ *
+ * 256-point wavetable indexed by a phase accumulator at 'carrier_hz'.
+ * onMouseDrag writes mouse_y into the table at index = mouse_x (mapped
+ * to [0..255]), giving you a paintbrush over the waveform. Clearing
+ * resets to a sine; randomize fills with shaped noise; the smoothing
+ * knob runs a small one-zero lowpass over the table on each redraw
+ * so brush strokes don't alias too hard.
+ *
+ * Visual:
+ *   top    — the table itself, drawn at y in [0.2 .. 1.4]
+ *            with a playhead marker showing where the oscillator is.
+ *   bottom — live magnitude spectrum from a 256-pt inline DFT of
+ *            the recent audio block. Shape the table, watch the
+ *            harmonics bloom.
+ */
+
+#include "al_playground_compat.hpp"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class DrawableWavetable : public App {
+public:
+  Parameter      carrier_hz {"carrier_hz", "", 220.0f,  20.0f, 2000.0f};
+  Parameter      amp        {"amplitude",  "",  0.30f,  0.0f,  1.0f};
+  Parameter      smoothing  {"smoothing",  "",  0.20f,  0.0f,  0.95f};
+  Trigger        clearTbl   {"clear_to_sine", ""};
+  Trigger        randomize  {"randomize", ""};
+
+  ControlGUI gui;
+
+  // Wavetable + phase accumulator.
+  static constexpr int TBL = 256;
+  std::array<float, TBL> table{};
+  double phase = 0.0;
+
+  // Input audio capture for spectrum.
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  // Smoothed playhead index (atomic-published from audio thread).
+  std::atomic<float> playheadIdx{0.0f};
+
+  // Mouse interaction state. The latest dragged-to (idx, value) pair
+  // gets applied next animation frame so the audio thread doesn't have
+  // to touch the table mid-block.
+  std::atomic<int>   pendingIdx{-1};
+  std::atomic<float> pendingVal{0.f};
+
+  Mesh tableMesh, spectrum, gridMesh, playMarker;
+
+  void onInit() override {
+    gui << carrier_hz << amp << smoothing << clearTbl << randomize;
+
+    clearTbl.registerChangeCallback([this](float) {
+      for (int i = 0; i < TBL; ++i) {
+        table[i] = std::sin(2.0f * M_PI * i / TBL);
+      }
+    });
+    randomize.registerChangeCallback([this](float) {
+      for (int i = 0; i < TBL; ++i) {
+        table[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+      }
+      // Two passes of one-zero LPF to take the harshest edges off.
+      for (int pass = 0; pass < 2; ++pass) {
+        float prev = table[0];
+        for (int i = 1; i < TBL; ++i) {
+          const float y = 0.5f * (prev + table[i]);
+          prev = table[i];
+          table[i] = y;
+        }
+      }
+    });
+
+    // Init to sine.
+    for (int i = 0; i < TBL; ++i) table[i] = std::sin(2.0f * M_PI * i / TBL);
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    const float sr = io.framesPerSecond();
+    const float dPh = TBL * carrier_hz.get() / sr;
+    const float a   = amp.get();
+
+    while (io()) {
+      const int i0 = static_cast<int>(phase) % TBL;
+      const int i1 = (i0 + 1) % TBL;
+      const float frac = static_cast<float>(phase - std::floor(phase));
+      const float s = (table[i0] + (table[i1] - table[i0]) * frac) * a;
+      io.out(0) = s;
+      io.out(1) = s;
+
+      phase += dPh;
+      if (phase >= TBL) phase -= TBL;
+
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = s;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+    playheadIdx.store(static_cast<float>(phase), std::memory_order_release);
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = blockBuf[idx] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    // Apply any pending drag write.
+    const int pIdx = pendingIdx.exchange(-1, std::memory_order_acquire);
+    if (pIdx >= 0 && pIdx < TBL) {
+      table[pIdx] = std::max(-1.0f, std::min(1.0f, pendingVal.load()));
+      // Optional smoothing pass blended by knob amount.
+      const float s = smoothing.get();
+      if (s > 0.f) {
+        const int j0 = (pIdx - 1 + TBL) % TBL;
+        const int j2 = (pIdx + 1)        % TBL;
+        const float avg = (table[j0] + table[pIdx] + table[j2]) / 3.f;
+        table[pIdx] = table[pIdx] * (1.f - s) + avg * s;
+      }
+    }
+
+    // Render the table as a LINE_STRIP across the top half.
+    tableMesh.reset();
+    tableMesh.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < TBL; ++i) {
+      const float xx = -1.4f + (static_cast<float>(i) / (TBL - 1)) * 2.8f;
+      const float yy = 0.8f + table[i] * 0.55f;
+      tableMesh.vertex(xx, yy, 0.f);
+      tableMesh.color(0.6f, 0.95f, 0.4f);
+    }
+
+    // Spectrum across the bottom.
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float h  = std::min(1.4f, mag[k] * 7.0f);
+      const float yy = -1.0f + h;
+      spectrum.vertex(xx, yy, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
+    }
+
+    // Grid + a small dot showing the current playhead within the table.
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    gridMesh.vertex(-1.4f, 0.8f, 0.f); gridMesh.vertex(1.4f, 0.8f, 0.f);
+    gridMesh.vertex(-1.4f,-1.0f, 0.f); gridMesh.vertex(1.4f,-1.0f, 0.f);
+    for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
+
+    const float p = playheadIdx.load(std::memory_order_acquire) / TBL;   // 0..1
+    const float px = -1.4f + p * 2.8f;
+    const int idx = static_cast<int>(p * (TBL - 1));
+    const float py = 0.8f + table[idx] * 0.55f;
+    playMarker.reset();
+    playMarker.primitive(Mesh::TRIANGLES);
+    Mesh d; addDisc(d, 0.05f, 12);
+    for (size_t v = 0; v < d.vertices().size(); ++v) {
+      const auto& q = d.vertices()[v];
+      playMarker.vertex(q.x + px, q.y + py, 0.f);
+      playMarker.color(1.0f, 0.85f, 0.2f);
+    }
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.05f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(tableMesh);
+    g.draw(playMarker);
+    g.draw(spectrum);
+    gui.draw(g);
+  }
+
+  // Map mouse pixel coords (origin top-left) to table index + value.
+  void writeFromMouse(const Mouse& m) {
+    const float w = static_cast<float>(width());
+    const float h = static_cast<float>(height());
+    if (w < 1.f || h < 1.f) return;
+    const float u  = std::max(0.0f, std::min(1.0f, m.x() / w));
+    const float vy = std::max(0.0f, std::min(1.0f, m.y() / h));
+    // Only react when the mouse is in the table's vertical band — top
+    // ~60% of the canvas.
+    if (vy > 0.7f) return;
+    const int idx = std::min(TBL - 1, static_cast<int>(u * TBL));
+    // Map [0..0.7] -> [+1..-1] (y is down in pixels, up in audio amplitude).
+    const float val = 1.0f - 2.0f * (vy / 0.7f);
+    pendingIdx.store(idx, std::memory_order_release);
+    pendingVal.store(val, std::memory_order_release);
+  }
+
+  bool onMouseDown(const Mouse& m) override { writeFromMouse(m); return false; }
+  bool onMouseDrag(const Mouse& m) override { writeFromMouse(m); return false; }
+  bool onMouseUp(const Mouse&)     override { return false; }
+};
+
+ALLOLIB_WEB_MAIN(DrawableWavetable)
+`,
+  },
+  {
+    id: 'mat-waveshaper',
+    title: 'Waveshaper Distortion Explorer',
+    description:
+      'Pure waveshaping: input sine -> arbitrary memoryless transfer function -> output. Pick the shape from a menu (tanh, atan, hard-clip, soft-cubic, sin) and drive it with the gain knob to watch how harmonic content blooms. Three panels stacked: the transfer function, the input waveform, the output waveform. Live spectrum at the bottom.',
+    category: 'mat-signal',
+    subcategory: 'dynamics',
+    code: `/**
+ * Waveshaper Distortion Explorer — MAT200B Phase 2
+ *
+ * Memoryless nonlinearity y = f(drive * x). The 'shape' menu picks
+ * which f() to use:
+ *   tanh        soft saturation (smooth knee), classic tube model
+ *   atan        slightly sharper than tanh
+ *   hardclip    discontinuous; lots of high-order harmonics
+ *   cubic       y = x - x^3 / 3 (Chebyshev-ish); odd harmonics only
+ *   sin         folder y = sin(pi/2 * x); aliasing-prone, fun
+ *
+ * Visual: transfer curve (top), input waveform (middle), output
+ * waveform (below it), live magnitude spectrum (bottom). Crank
+ * 'drive' to watch the input get pushed toward the curve's
+ * saturation regions and the spectrum fan out into harmonics.
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Oscillator.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class Waveshaper : public App {
+public:
+  Parameter     freq    {"freq",     "", 220.0f,  50.0f, 2000.0f};
+  Parameter     drive   {"drive",    "",   2.0f,   0.1f,  20.0f};
+  Parameter     output  {"output",   "",   0.30f,  0.0f,  1.0f};
+  ParameterMenu shape   {"shape",    ""};
+
+  ControlGUI gui;
+
+  gam::Sine<> osc;
+
+  static constexpr int N = 256;
+  std::array<float, N> blockIn{}, blockOut{};
+  std::atomic<int> blockW{0};
+
+  Mesh transferCurve, waveIn, waveOut, spectrum, gridMesh;
+
+  static float shapeFn(int s, float x) {
+    switch (s) {
+      case 0: return std::tanh(x);
+      case 1: return (2.0f / M_PI) * std::atan(x);
+      case 2: return std::max(-1.0f, std::min(1.0f, x));
+      case 3: {
+        const float y = std::max(-1.5f, std::min(1.5f, x));
+        return y - (y * y * y) / 3.0f;
+      }
+      case 4: return std::sin((M_PI * 0.5f) * std::max(-1.0f, std::min(1.0f, x)));
+      default: return std::tanh(x);
+    }
+  }
+
+  void onInit() override {
+    shape.setElements({"tanh", "atan", "hardclip", "cubic", "sin"});
+    shape.set(0);
+    gui << freq << drive << output << shape;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  void onSound(AudioIOData& io) override {
+    osc.freq(freq.get());
+    const float dr = drive.get();
+    const float og = output.get();
+    const int   sh = shape.get();
+    while (io()) {
+      const float xin = osc();
+      const float y   = shapeFn(sh, dr * xin) * og;
+      io.out(0) = y;
+      io.out(1) = y;
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockIn[w]  = xin;
+      blockOut[w] = y;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag, const std::array<float, N>& src) {
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = src[i] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const int sh = shape.get();
+    const float dr = drive.get();
+
+    // Transfer curve sampled at 240 points across [-1, +1] input.
+    transferCurve.reset();
+    transferCurve.primitive(Mesh::LINE_STRIP);
+    constexpr int TC = 240;
+    for (int i = 0; i < TC; ++i) {
+      const float xin = -1.0f + 2.0f * i / (TC - 1);
+      const float y   = shapeFn(sh, dr * xin);
+      // Map (-1..+1) input to x in [-1.4, +1.4]; (-1..+1) output to y in [0.4, 1.4].
+      const float xx = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
+      const float yy = 0.4f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.5f;
+      transferCurve.vertex(xx, yy, 0.f);
+      transferCurve.color(0.4f, 0.95f, 0.6f);
+    }
+
+    // Input + output waveforms, in/out side by side stacked vertically.
+    const int w = blockW.load(std::memory_order_acquire);
+    waveIn.reset(); waveOut.reset();
+    waveIn.primitive(Mesh::LINE_STRIP);
+    waveOut.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
+      waveIn.vertex (xx, blockIn[idx]  * 0.18f - 0.10f, 0.f);
+      waveIn.color(0.5f, 0.7f, 0.95f);
+      waveOut.vertex(xx, blockOut[idx] * 0.18f - 0.45f, 0.f);
+      waveOut.color(0.95f, 0.6f, 0.35f);
+    }
+
+    // Spectrum of the OUTPUT (most interesting visually).
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag, blockOut);
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float h  = std::min(0.7f, mag[k] * 4.0f);
+      spectrum.vertex(xx, -1.0f + h, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.95f - 0.3f * t, 0.55f, 0.4f + 0.5f * t);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    // Identity diagonal in the transfer area
+    gridMesh.vertex(-1.4f, 0.4f, 0.f); gridMesh.vertex(1.4f, 1.4f, 0.f);
+    gridMesh.vertex(-1.4f,-0.10f,0.f); gridMesh.vertex(1.4f,-0.10f,0.f);
+    gridMesh.vertex(-1.4f,-0.45f,0.f); gridMesh.vertex(1.4f,-0.45f,0.f);
+    gridMesh.vertex(-1.4f,-1.00f,0.f); gridMesh.vertex(1.4f,-1.00f,0.f);
+    for (int k = 0; k < 8; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.05f, 0.06f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(transferCurve);
+    g.draw(waveIn);
+    g.draw(waveOut);
+    g.draw(spectrum);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(Waveshaper)
+`,
+  },
+  {
+    id: 'mat-allpass-dispersion',
+    title: 'Allpass Dispersion Plot',
+    description:
+      'A cascade of N first-order allpass sections has flat magnitude (1.0 at every frequency) but non-trivial phase response. The phase plot shows the dispersion that gives allpass chains their characteristic "phasiness" sound — useful for reverbs, smear-filters, and Schroeder-style decorrelators. Audio: white noise through the cascade. Visual: the analytic phase curve across frequency.',
+    category: 'mat-signal',
+    subcategory: 'delay',
+    code: `/**
+ * Allpass Dispersion Plot — MAT200B Phase 2
+ *
+ * First-order allpass section:
+ *   H(z) = (a + z^-1) / (1 + a*z^-1)     |H(e^jw)| = 1 for all w
+ * Phase response (for one section):
+ *   phi(w) = -w - 2 * atan2(a*sin(w), 1 + a*cos(w))
+ * For an N-section cascade with the same coefficient, total phase is
+ * N * phi(w). Different a's (or alternating signs) give richer
+ * dispersion patterns; here all sections share one 'coefficient' so
+ * the plot stays readable.
+ *
+ * Audio: white noise -> cascade -> output. The magnitude is flat so
+ * tone colour stays constant; what changes is transient smearing
+ * — increase 'sections' from 1 to 12 and you can hear the high-end
+ * become more diffuse even though no frequencies are filtered out.
+ *
+ * Visual: phase curve in red across the lower half of the canvas
+ * (range -2pi..+2pi mapped to y range), reference flat-magnitude
+ * line in dim grey, and a live spectrum of the output for sanity
+ * (should remain near-flat).
+ */
+
+#include "al_playground_compat.hpp"
+#include "Gamma/Filter.h"
+#include "Gamma/Noise.h"
+
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <vector>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+using namespace al;
+
+class AllpassDispersion : public App {
+public:
+  Parameter      coefficient {"coefficient", "",  0.7f, -0.95f, 0.95f};
+  ParameterInt   sections    {"sections",    "",  4,    1,     12};
+  Parameter      amp         {"amplitude",   "",  0.20f, 0.0f, 1.0f};
+
+  ControlGUI gui;
+
+  gam::NoiseWhite<> noise;
+
+  static constexpr int N = 256;
+  std::array<float, N> blockBuf{};
+  std::atomic<int> blockW{0};
+
+  // Per-stage state for the manual allpass cascade. Inline implementation
+  // keeps us portable across gam::AllPass1 API differences between Gamma
+  // versions; the math is small enough to write directly.
+  //   y[n] = -a*x[n] + x[n-1] + a*y[n-1]
+  std::array<float, 12> stateX{}, stateY{};
+
+  Mesh phaseCurve, spectrum, gridMesh;
+
+  void onInit() override {
+    gui << coefficient << sections << amp;
+  }
+
+  void onCreate() override {
+    gui.init();
+    nav().pos(0, 0, 4.0f);
+  }
+
+  inline float runStage(int i, float x, float a) {
+    const float y = -a * x + stateX[i] + a * stateY[i];
+    stateX[i] = x;
+    stateY[i] = y;
+    return y;
+  }
+
+  void onSound(AudioIOData& io) override {
+    const int   n = sections.get();
+    const float a = coefficient.get();
+    const float g = amp.get();
+    while (io()) {
+      float s = noise() * 0.4f;
+      for (int i = 0; i < n; ++i) s = runStage(i, s, a);
+      const float y = s * g;
+      io.out(0) = y;
+      io.out(1) = y;
+      const int w = blockW.load(std::memory_order_relaxed);
+      blockBuf[w] = y;
+      blockW.store((w + 1) % N, std::memory_order_release);
+    }
+  }
+
+  void computeSpectrum(std::array<float, N / 2>& mag) {
+    const int w = blockW.load(std::memory_order_acquire);
+    std::array<float, N> x{};
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      x[i] = blockBuf[idx] * win;
+    }
+    for (int k = 0; k < N / 2; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.0f * M_PI * k / N;
+      for (int n = 0; n < N; ++n) {
+        re += x[n] * std::cos(ang * n);
+        im += x[n] * std::sin(ang * n);
+      }
+      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+    }
+  }
+
+  void onAnimate(double /*dt*/) override {
+    const int n  = sections.get();
+    const float a = coefficient.get();
+
+    // Analytic phase response: 240 freq points across (0, pi).
+    phaseCurve.reset();
+    phaseCurve.primitive(Mesh::LINE_STRIP);
+    constexpr int W2 = 240;
+    for (int k = 0; k < W2; ++k) {
+      const float w = (M_PI * (k + 1)) / W2;
+      // One-section phase: phi = -w - 2 * atan2(a*sin(w), 1+a*cos(w))
+      const float phi1 = -w - 2.0f * std::atan2(a * std::sin(w), 1.0f + a * std::cos(w));
+      const float phiN = phi1 * n;
+      // Map phase from [-2pi*N..+2pi*N] to y in [-0.95..+0.40].
+      const float yScale = std::max(1.0f, 2.0f * M_PI * static_cast<float>(n));
+      const float yy = -0.275f + 0.675f * (phiN / yScale);
+      const float xx = -1.4f + (static_cast<float>(k) / (W2 - 1)) * 2.8f;
+      phaseCurve.vertex(xx, yy, 0.f);
+      phaseCurve.color(0.95f, 0.45f, 0.4f);
+    }
+
+    // Live magnitude spectrum (should stay near-flat — that's the point).
+    std::array<float, N / 2> mag{};
+    computeSpectrum(mag);
+    spectrum.reset();
+    spectrum.primitive(Mesh::LINE_STRIP);
+    for (int k = 0; k < N / 2; ++k) {
+      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+      const float h  = std::min(0.6f, mag[k] * 8.0f);
+      spectrum.vertex(xx, -1.05f + h, 0.f);
+      const float t = static_cast<float>(k) / (N / 2);
+      spectrum.color(0.4f + 0.5f * t, 0.85f, 0.5f);
+    }
+
+    gridMesh.reset();
+    gridMesh.primitive(Mesh::LINES);
+    // Phase axis baseline + zero line at midpoint.
+    gridMesh.vertex(-1.4f, -0.275f, 0.f); gridMesh.vertex(1.4f, -0.275f, 0.f);
+    gridMesh.vertex(-1.4f, -1.05f,  0.f); gridMesh.vertex(1.4f, -1.05f,  0.f);
+    for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
+  }
+
+  void onDraw(Graphics& g) override {
+    g.clear(0.04f, 0.04f, 0.07f);
+    g.meshColor();
+    g.draw(gridMesh);
+    g.draw(phaseCurve);
+    g.draw(spectrum);
+    gui.draw(g);
+  }
+};
+
+ALLOLIB_WEB_MAIN(AllpassDispersion)
+`,
+  },
 ]
 
 // Multi-file MAT200B entries (e.g., examples that ship with auxiliary .glsl
