@@ -52,6 +52,13 @@ const BUNDLED_ASSETS = new Map<string, string>([
   ['Box.glb',           '/assets/meshes/Box.glb'],
   ['Duck.glb',          '/assets/meshes/Duck.glb'],
   ['RiggedSimple.glb',  '/assets/meshes/RiggedSimple.glb'],
+  // MAT200B test audio (CC0, procedurally generated — see
+  // frontend/public/assets/mat200b/audio/CREDITS.md). Used by the
+  // compressor lab and any other example that wants real signal
+  // material.
+  ['drum_loop_120bpm.wav', '/assets/mat200b/audio/drum_loop_120bpm.wav'],
+  ['pad_loop.wav',         '/assets/mat200b/audio/pad_loop.wav'],
+  ['mixed_loop.wav',       '/assets/mat200b/audio/mixed_loop.wav'],
   ['bunny.obj',   '/assets/meshes/bunny.obj'],
   ['spot.obj',    '/assets/meshes/spot.obj'],
   ['suzanne.obj', '/assets/meshes/suzanne.obj'],
