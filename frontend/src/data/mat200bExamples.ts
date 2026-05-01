@@ -704,6 +704,7 @@ class CompressorLab : public App {
 public:
   ParameterMenu source     {"source",      ""};
   ParameterBool upwardMode {"upwardMode",  "", false};
+  ParameterBool autoNormalize {"auto_normalize", "", true};
   Parameter     threshold  {"threshold_dB","", -20.0f, -60.0f, 0.0f};
   Parameter     ratio      {"ratio",       "",  4.0f,   1.0f, 20.0f};
   Parameter     attackMs   {"attack_ms",   "",  5.0f,   0.1f, 200.0f};
@@ -722,6 +723,16 @@ public:
   // Envelope follower state (linear).
   float envState = 0.f;
 
+  // Auto-normalize state. Two slow RMS detectors (input and output)
+  // converge an LF gain that equalises perceived loudness — so when the
+  // listener toggles the compressor on, the only thing they hear is the
+  // dynamic-shaping effect, not a level change. ~500 ms time constant
+  // keeps it from pumping with the program material; another ~200 ms
+  // smooths the gain-correction itself.
+  float rmsInSq  = 1e-8f;
+  float rmsOutSq = 1e-8f;
+  float autoGainLin = 1.0f;
+
   // Audio -> graphics ringbuffers (mono before/after).
   static constexpr int RING = 1024;
   std::array<float, RING> beforeRing{};
@@ -739,7 +750,8 @@ public:
     source.setElements({"drums", "pad", "mixed"});
     source.set(0);
 
-    gui << source << upwardMode << threshold << ratio
+    gui << source << upwardMode << autoNormalize
+        << threshold << ratio
         << attackMs << releaseMs << makeup_dB << retrigger;
 
     source.registerChangeCallback([this](float v) {
@@ -779,8 +791,13 @@ public:
     const float r      = ratio.get();
     const float makeupLin = std::pow(10.0f, makeup_dB.get() / 20.0f);
     const bool  upward = upwardMode.get();
+    const bool  autoOn = autoNormalize.get();
     const float noiseFloorDB = -60.0f;
     const int   nFrames = current->frames();
+
+    // RMS one-pole coefs (~500 ms) and gain-smoothing coef (~200 ms).
+    const float rmsCoef  = std::exp(-1.0f / (0.500f * sr));
+    const float gainCoef = std::exp(-1.0f / (0.200f * sr));
 
     float lastInDB = -60.f, lastOutDB = -60.f, lastGRDB = 0.f;
 
@@ -811,7 +828,21 @@ public:
       }
 
       const float gainLin = std::pow(10.0f, grDB / 20.0f) * makeupLin;
-      const float out     = in * gainLin;
+      float out = in * gainLin;
+
+      // Auto-normalize: keep dual RMS estimators on the *post-makeup-but-
+      // pre-autogain* signal vs. the dry input, then drive the auto gain
+      // toward sqrt(rmsIn / rmsOut). When ratio=1 (no compression) the
+      // ratio is 1 and autoGain stays at unity. When the compressor
+      // reduces level, autoGain rises to match — so the listener hears
+      // just the dynamic shaping.
+      rmsInSq  = in  * in  + rmsCoef * (rmsInSq  - in  * in);
+      rmsOutSq = out * out + rmsCoef * (rmsOutSq - out * out);
+      const float rIn  = std::sqrt(std::max(rmsInSq,  1e-10f));
+      const float rOut = std::sqrt(std::max(rmsOutSq, 1e-10f));
+      const float corrTarget = std::min(8.0f, rIn / std::max(rOut, 1e-6f));
+      autoGainLin = corrTarget + gainCoef * (autoGainLin - corrTarget);
+      if (autoOn) out *= autoGainLin;
 
       io.out(0) = out;
       io.out(1) = out;
@@ -822,7 +853,8 @@ public:
       ringW.store((w + 1) % RING, std::memory_order_release);
 
       lastInDB  = lvlDB;
-      lastOutDB = lvlDB + grDB + makeup_dB.get();
+      lastOutDB = lvlDB + grDB + makeup_dB.get()
+                + (autoOn ? 20.0f * std::log10(std::max(autoGainLin, 1e-6f)) : 0.0f);
       lastGRDB  = grDB;
     }
 
@@ -1997,7 +2029,7 @@ public:
       const float phi1 = -w - 2.0f * std::atan2(a * std::sin(w), 1.0f + a * std::cos(w));
       const float phiN = phi1 * n;
       // Map phase from [-2pi*N..+2pi*N] to y in [-0.95..+0.40].
-      const float yScale = std::max(1.0f, 2.0f * M_PI * static_cast<float>(n));
+      const float yScale = std::max(1.0f, 2.0f * static_cast<float>(M_PI) * static_cast<float>(n));
       const float yy = -0.275f + 0.675f * (phiN / yScale);
       const float xx = -1.4f + (static_cast<float>(k) / (W2 - 1)) * 2.8f;
       phaseCurve.vertex(xx, yy, 0.f);
