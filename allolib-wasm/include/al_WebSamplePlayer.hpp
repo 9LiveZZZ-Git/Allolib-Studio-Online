@@ -172,18 +172,11 @@ private:
 
 } // namespace al
 
-// C callback for JavaScript. EMSCRIPTEN_KEEPALIVE prevents dead-code
-// elimination before the linker's EXPORTED_FUNCTIONS list applies, so the
-// symbol is reliably callable via Module.ccall regardless of TU ordering.
-extern "C" {
-    EMSCRIPTEN_KEEPALIVE
-    void _al_web_sample_loaded(al::WebSamplePlayer* player, float* samples,
-                                int channels, int frames, float sampleRate, int totalSamples) {
-        if (player) {
-            player->_onLoaded(samples, channels, frames, sampleRate, totalSamples);
-            free(samples);  // Free the malloc'd buffer
-        }
-    }
-}
+// The C callback for JavaScript (_al_web_sample_loaded) lives in
+// allolib-wasm/src/al_WebSamplePlayer.cpp so it's always linked into
+// libal_web.a, even for examples that don't include this header. If it
+// were defined inline here it would only exist in TUs that include
+// the header, and wasm-ld would error when EXPORTED_FUNCTIONS demands
+// it but no including TU is in the link.
 
 #endif // AL_WEB_SAMPLE_PLAYER_HPP
