@@ -239,7 +239,7 @@ public:
   }
 
 #if AL_STUDIO_PARAM_GRAPH_HAS_WEBFONT
-  void setFont(WebFont* f) { mFont = f; }
+  void setFont(al::WebFont* f) { mFont = f; }
 #endif
 
   // Mark a node so the user can call setSampler() later. Useful after
@@ -616,7 +616,7 @@ private:
   float mRubberX{0.f}, mRubberY{0.f};
   bool mPrintedLabels{false};
 #if AL_STUDIO_PARAM_GRAPH_HAS_WEBFONT
-  WebFont* mFont{nullptr};
+  al::WebFont* mFont{nullptr};
 #endif
 
   inline static al::Graphics* sLastGraphics = nullptr;

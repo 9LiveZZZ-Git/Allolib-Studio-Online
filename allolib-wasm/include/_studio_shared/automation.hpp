@@ -208,7 +208,7 @@ public:
 
   // ----------------------- font label (optional) -----------------------
 #if AL_STUDIO_AUTOMATION_HAS_WEBFONT
-  void setFont(WebFont* f) { mFont = f; }
+  void setFont(al::WebFont* f) { mFont = f; }
 #endif
 
   // ----------------------- drawing -------------------------------------
@@ -389,7 +389,7 @@ private:
   size_t mPlayCursor{0};
   al::Color mColor{0.4f, 0.85f, 1.f, 1.f};
 #if AL_STUDIO_AUTOMATION_HAS_WEBFONT
-  WebFont* mFont{nullptr};
+  al::WebFont* mFont{nullptr};
 #endif
 };
 
