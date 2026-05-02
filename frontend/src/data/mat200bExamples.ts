@@ -254,9 +254,9 @@ export const mat200bExamples: Example[] = [
       // 5-chip Parameter-type HUD across the top.
       hud.reset();
       hud.primitive(Mesh::TRIANGLES);
-      const float chipW = 0.42f, chipH = 0.10f, gap = 0.04f;
-      const float row = 1.36f;
-      float x = -1.5f + 0.05f;
+      const float chipW = 0.52f, chipH = 0.10f, gap = 0.04f;
+      const float row = 0.85f;
+      float x = -1.13f;
       auto drawChip = [&](float fillFrac, float r, float gC, float b) {
         // Frame
         pushChipBar(hud, x, row, chipW, chipH, 0.10f, 0.10f, 0.14f);
@@ -539,14 +539,14 @@ export const mat200bExamples: Example[] = [
       const float litG = lit ? 0.90f : 0.40f;
       const float litB = lit ? 0.50f : 0.45f;
       // Background panel for the ratio readout.
-      pushBar(hud, -0.55f, 1.20f, 1.10f, 0.20f, 0.06f, 0.06f, 0.10f);
+      pushBar(hud, -0.55f, 0.78f, 1.10f, 0.17f, 0.06f, 0.06f, 0.10f);
       // Render integers as bar stacks ("a : b"); colon = two small dot bars.
       const int aClamp = a > 12 ? 12 : a;
       const int bClamp = b > 12 ? 12 : b;
-      pushIntStack(hud, -0.50f, 1.27f, aClamp, litR, litG, litB);
-      pushBar     (hud, -0.02f, 1.31f, 0.03f, 0.03f, litR, litG, litB);
-      pushBar     (hud, -0.02f, 1.25f, 0.03f, 0.03f, litR, litG, litB);
-      pushIntStack(hud,  0.06f, 1.27f, bClamp, litR, litG, litB);
+      pushIntStack(hud, -0.50f, 0.87f, aClamp, litR, litG, litB);
+      pushBar     (hud, -0.02f, 0.91f, 0.03f, 0.03f, litR, litG, litB);
+      pushBar     (hud, -0.02f, 0.85f, 0.03f, 0.03f, litR, litG, litB);
+      pushIntStack(hud,  0.06f, 0.87f, bClamp, litR, litG, litB);
     }
 
     void onDraw(Graphics& g) override {
@@ -717,7 +717,7 @@ export const mat200bExamples: Example[] = [
         const float frac = logF[i] / static_cast<float>(N);
         const float u    = (logF[i] - 0.5f * (N - 1)) / (sp * N);
         const float env  = std::exp(-u * u);
-        const float r    = 0.4f + 1.4f * env;
+        const float r    = 0.4f + 0.8f * env;
         const float ang  = frac * 2.0f * static_cast<float>(M_PI);
         const float cx   = std::cos(ang) * r;
         const float cy   = std::sin(ang) * r;
@@ -750,7 +750,7 @@ export const mat200bExamples: Example[] = [
       halo.primitive(Mesh::TRIANGLE_STRIP);
       const int   HSEG   = 64;
       const float innerR = 0.30f;
-      const float outerR = 1.95f;
+      const float outerR = 0.95f;
       for (int s = 0; s <= HSEG; ++s) {
         const float a   = (static_cast<float>(s) / HSEG) * 2.0f * static_cast<float>(M_PI);
         const float fr  = static_cast<float>(s) / HSEG;
@@ -777,8 +777,8 @@ export const mat200bExamples: Example[] = [
 
       sidebar.reset();
       sidebar.primitive(Mesh::LINES);
-      const float sbX0 = 1.55f, sbX1 = 1.95f;
-      const float sbY0 = -1.20f, sbY1 = 1.20f;
+      const float sbX0 = 1.05f, sbX1 = 1.35f;
+      const float sbY0 = -0.85f, sbY1 = 0.85f;
       // Frame: four LINES forming a rectangle.
       auto frameSeg = [&](float x0, float y0, float x1, float y1) {
         sidebar.vertex(x0, y0, 0.f); sidebar.color(0.30f, 0.30f, 0.40f);
@@ -898,7 +898,7 @@ export const mat200bExamples: Example[] = [
       gui.init();
       bufA.assign(MAX_DELAY, 0.f);
       bufB.assign(MAX_DELAY, 0.f);
-      nav().pos(0, 0, 3.5f);
+      nav().pos(0, 0, 4.0f);
       stringMesh.primitive(Mesh::LINE_STRIP);
     }
 
@@ -1048,18 +1048,18 @@ export const mat200bExamples: Example[] = [
       markerMesh.reset();
       markerMesh.primitive(Mesh::LINES);
       const float pluckX = -1.4f + 2.8f * pluckPos.get();
-      markerMesh.vertex(pluckX, -1.0f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
-      markerMesh.vertex(pluckX,  1.0f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
-      markerMesh.vertex(-1.4f,  -1.0f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex(-1.4f,   1.0f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex( 1.4f,  -1.0f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex( 1.4f,   1.0f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
+      markerMesh.vertex(pluckX, -0.85f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
+      markerMesh.vertex(pluckX,  0.85f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
+      markerMesh.vertex(-1.4f,  -0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
+      markerMesh.vertex(-1.4f,   0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
+      markerMesh.vertex( 1.4f,  -0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
+      markerMesh.vertex( 1.4f,   0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
 
       std::array<float, 128> mag{};
       computeMiniFFT(mag, activeIdx);
       fftMesh.reset();
       fftMesh.primitive(Mesh::LINE_STRIP);
-      const float fftYBase  = -1.45f;
+      const float fftYBase  = -0.95f;
       const float fftYScale = 0.40f;
       for (int k = 0; k < 128; ++k) {
         const float xx = -1.4f + 2.8f * (static_cast<float>(k) / 127.0f);
@@ -1353,7 +1353,7 @@ export const mat200bExamples: Example[] = [
 
     // Map an input dB value to screen X / Y on the transfer plot.
     static float dbToX(float db) { return -1.4f + (db + 60.0f) / 60.0f * 2.8f; }
-    static float dbToY(float db) { return  0.2f + (db + 60.0f) / 60.0f * 1.8f; }
+    static float dbToY(float db) { return -0.5f + (db + 60.0f) / 60.0f * 1.4f; }
 
     // Inline disc emitter — TRIANGLES fan centred at (cx, cy).
     static void emitDisc(Mesh& m, float cx, float cy, float radius, int segs,
@@ -1486,9 +1486,9 @@ export const mat200bExamples: Example[] = [
       for (int i = 0; i < W; ++i) {
         const int idx = (w - W + i + RING) % RING;
         const float xx = -1.4f + (static_cast<float>(i) / W) * 2.8f;
-        beforeWave.vertex(xx, beforeRing[idx] * 0.18f - 1.20f, 0.f);
+        beforeWave.vertex(xx, beforeRing[idx] * 0.18f - 0.70f, 0.f);
         beforeWave.color(0.4f, 0.6f, 0.9f);
-        afterWave.vertex (xx, afterRing[idx]  * 0.18f - 1.65f, 0.f);
+        afterWave.vertex (xx, afterRing[idx]  * 0.18f - 0.95f, 0.f);
         afterWave.color (0.95f, 0.55f, 0.3f);
       }
 
@@ -1497,7 +1497,7 @@ export const mat200bExamples: Example[] = [
       grBar.primitive(Mesh::TRIANGLES);
       const float grAbs = std::min(24.f, std::abs(currentGRDB.load()));
       const float h     = grAbs / 24.0f * 1.8f;
-      const float x0    = 1.55f, x1 = 1.70f, y0 = 0.2f, y1 = 0.2f + h;
+      const float x0    = 1.30f, x1 = 1.45f, y0 = 0.2f, y1 = 0.2f + h;
       grBar.vertex(x0, y0, 0.f); grBar.vertex(x1, y0, 0.f); grBar.vertex(x1, y1, 0.f);
       grBar.vertex(x0, y0, 0.f); grBar.vertex(x1, y1, 0.f); grBar.vertex(x0, y1, 0.f);
       const float grR = upward ? 0.4f : 1.0f;
@@ -1527,8 +1527,8 @@ export const mat200bExamples: Example[] = [
         if (histIn[i]  > histMax) histMax = histIn[i];
         if (histOut[i] > histMax) histMax = histOut[i];
       }
-      const float histY0 = -1.95f;
-      const float histH  = 0.20f;
+      const float histY0 = -0.95f;
+      const float histH  = 0.08f;
       histInMesh.reset();
       histInMesh.primitive(Mesh::LINE_STRIP);
       histOutMesh.reset();
@@ -1779,7 +1779,7 @@ export const mat200bExamples: Example[] = [
     spectrum.primitive(Mesh::LINE_STRIP);
     for (int k = 0; k < N / 2; ++k) {
       const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float yy = 0.2f + std::min(1.5f, magSmooth[k] * 6.0f);
+      const float yy = 0.2f + std::min(0.7f, magSmooth[k] * 4.0f);
       spectrum.vertex(xx, yy, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.4f + 0.5f * t, 0.9f - 0.4f * t, 0.5f);
@@ -1791,7 +1791,7 @@ export const mat200bExamples: Example[] = [
     for (int i = 0; i < N; ++i) {
       const int idx = (w + i) % N;
       const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
-      const float yy = -0.9f + blockBuf[idx] * 0.6f;
+      const float yy = -0.5f + blockBuf[idx] * 0.4f;
       waveform.vertex(xx, yy, 0.f);
       waveform.color(0.95f, 0.65f, 0.35f);
     }
@@ -1799,7 +1799,7 @@ export const mat200bExamples: Example[] = [
     // Lissajous panel — top-right, plotting (carrier, modulator) over
     // the most recent N samples as a fading LINE_STRIP. Center at
     // (1.05, 1.10), half-extent 0.30.
-    const float lx = 1.05f, ly = 1.10f, lr = 0.30f;
+    const float lx = 1.05f, ly = 0.65f, lr = 0.30f;
     lissajous.reset();
     lissajous.primitive(Mesh::LINE_STRIP);
     for (int i = 0; i < N; ++i) {
@@ -2089,7 +2089,7 @@ export const mat200bExamples: Example[] = [
       spectrum.primitive(Mesh::LINE_STRIP);
       for (int k = 0; k < N / 2; ++k) {
         const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-        const float yy = 0.2f + std::min(1.5f, mag[k] * 6.0f);
+        const float yy = 0.2f + std::min(0.7f, mag[k] * 4.0f);
         spectrum.vertex(xx, yy, 0.f);
         const float t = static_cast<float>(k) / (N / 2);
         spectrum.color(0.5f + 0.4f * t, 0.4f + 0.5f * t, 1.0f - 0.3f * t);
@@ -2112,7 +2112,7 @@ export const mat200bExamples: Example[] = [
         if (fx < -1.4f || fx > 1.4f) return;
         const float bw = 0.012f;
         const float y0 = 0.2f;
-        const float y1 = 0.2f + std::min(1.5f, h * 6.0f);
+        const float y1 = 0.2f + std::min(0.7f, h * 4.0f);
         const float x0 = fx - bw, x1 = fx + bw;
         // TRIANGLES quad in a contrasting orange.
         const float rC = 1.0f, gC = 0.55f, bC = 0.15f;
@@ -2139,7 +2139,7 @@ export const mat200bExamples: Example[] = [
       for (int i = 0; i < N; ++i) {
         const int idx2 = (w + i) % N;
         const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
-        const float yy = -0.9f + blockBuf[idx2] * 0.6f;
+        const float yy = -0.55f + blockBuf[idx2] * 0.35f;
         waveform.vertex(xx, yy, 0.f);
         waveform.color(0.4f, 0.85f, 0.6f);
       }
@@ -2154,7 +2154,7 @@ export const mat200bExamples: Example[] = [
       // ---------- modulator circle (top-right corner) ----------
       // Centre at (cx, cy), radius R. Unit-circle outline + moving dot +
       // fading trail.
-      const float cx = 1.05f, cy = 1.05f, R = 0.30f;
+      const float cx = 1.20f, cy = 0.60f, R = 0.25f;
       circleMesh.reset();
       circleMesh.primitive(Mesh::LINE_STRIP);
       constexpr int CSEG = 64;
@@ -2464,7 +2464,7 @@ public:
     constexpr int NB = 256;
     spectrum.reset();
     spectrum.primitive(Mesh::TRIANGLE_STRIP);
-    const float yTop_b = +0.30f, yTop_t = +1.30f;
+    const float yTop_b = +0.30f, yTop_t = +0.95f;
     for (int k = 0; k < NB; ++k) {
       const float w = (float)M_PI * k / (NB - 1);
       const float wM = w * M;
@@ -2540,7 +2540,7 @@ public:
     outWave.primitive(Mesh::LINE_STRIP);
     const int wHead = ringW.load(std::memory_order_acquire);
     constexpr int W = 256;
-    const float yBot_c = -0.85f;
+    const float yBot_c = -0.75f;
     for (int i = 0; i < W; ++i) {
       const int idx = (wHead - W + i + RING) % RING;
       const float xx = -1.4f + ((float)i / (W - 1)) * 2.8f;
@@ -2873,7 +2873,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     for (int k = 0; k < N / 2; ++k) {
       const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
       const float h  = std::min(1.0f, mag[k] * 7.0f);
-      const float yy = -0.95f + h;
+      const float yy = -0.90f + h;
       spectrum.vertex(xx, yy, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
@@ -2882,14 +2882,14 @@ ALLOLIB_WEB_MAIN(CombSwept)
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
     gridMesh.vertex(-1.4f, 0.55f, 0.f); gridMesh.vertex(1.4f, 0.55f, 0.f);
-    gridMesh.vertex(-1.4f,-0.95f, 0.f); gridMesh.vertex(1.4f,-0.95f, 0.f);
+    gridMesh.vertex(-1.4f,-0.90f, 0.f); gridMesh.vertex(1.4f,-0.90f, 0.f);
     for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
 
     // Dashed-rectangle draw zone — top of canvas (matches writeFromMouse).
     drawZone.reset();
     drawZone.primitive(Mesh::LINES);
     {
-      const float top = 0.95f, bot = 0.15f;
+      const float top = 0.90f, bot = 0.20f;
       const float left = -1.4f, right = 1.4f;
       const int   hDashes = 28;
       const float dx = (right - left) / hDashes;
@@ -3160,7 +3160,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
       const float xin = -1.0f + 2.0f * i / (TC - 1);
       const float y   = shapeFn(sh, dr * xin);
       const float xx = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
-      const float yy = 0.4f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.5f;
+      const float yy = 0.30f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.32f;
       transferCurve.vertex(xx, yy, 0.f);
       transferCurve.color(0.4f, 0.95f, 0.6f);
     }
@@ -3617,7 +3617,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
       gui.init();
       rightGoing.assign(MAX_DELAY, 0.f);
       leftGoing.assign(MAX_DELAY, 0.f);
-      nav().pos(0, 0, 3.5f);
+      nav().pos(0, 0, 4.5f);
     }
 
     static inline float tap(const std::vector<float>& buf, int writeIdx, int pos) {
@@ -3706,14 +3706,14 @@ ALLOLIB_WEB_MAIN(CombSwept)
         rightStripVals[count] = vr;
         leftStripVals [count] = vl;
 
-        rightStrip.vertex(x, 0.5f + vr * 0.6f, 0.f);
+        rightStrip.vertex(x, 0.5f + vr * 0.3f, 0.f);
         rightStrip.color(0.95f, 0.55f + 0.3f * t, 0.30f);
 
-        leftStrip.vertex(x, -0.5f + vl * 0.6f, 0.f);
+        leftStrip.vertex(x, -0.5f + vl * 0.3f, 0.f);
         leftStrip.color(0.30f, 0.65f + 0.3f * t, 0.95f);
 
         const float sumV = vr + vl;
-        sumStrip.vertex(x, -0.85f + sumV * 0.30f, 0.f);
+        sumStrip.vertex(x, -0.78f + sumV * 0.15f, 0.f);
         sumStrip.color(0.85f, 0.85f, 0.40f);
       }
       for (int k = count; k < VN; ++k) {
@@ -3747,10 +3747,10 @@ ALLOLIB_WEB_MAIN(CombSwept)
       };
       {
         const float xR = -1.4f + 2.8f * (static_cast<float>(rPeak) / VN);
-        const float yR = 0.5f + rightStripVals[rPeak] * 0.6f;
+        const float yR = 0.5f + rightStripVals[rPeak] * 0.3f;
         pushTri(xR, yR, +1.0f, 0.05f, 1.0f, 0.85f, 0.30f);
         const float xL = -1.4f + 2.8f * (static_cast<float>(lPeak) / VN);
-        const float yL = -0.5f + leftStripVals[lPeak] * 0.6f;
+        const float yL = -0.5f + leftStripVals[lPeak] * 0.3f;
         pushTri(xL, yL, -1.0f, 0.05f, 0.40f, 0.90f, 1.0f);
       }
 
@@ -4104,7 +4104,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     for (int k = 0; k < N / 2; ++k) {
       const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
       const float h  = std::min(0.95f, mag[k] * 6.0f);
-      spectrum.vertex(xx, -1.05f + h, 0.f);
+      spectrum.vertex(xx, -0.95f + h, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.55f + 0.35f * t, 0.45f + 0.45f * t, 0.95f - 0.3f * t);
     }
@@ -4114,7 +4114,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     cutoffLine.primitive(Mesh::LINES);
     const float fcRel = std::min(1.0f, std::max(0.0f, fc / nyq));
     const float fcX   = -1.4f + fcRel * 2.8f;
-    cutoffLine.vertex(fcX, -1.05f, 0.f);
+    cutoffLine.vertex(fcX, -0.95f, 0.f);
     cutoffLine.vertex(fcX, -0.10f, 0.f);
     cutoffLine.color(1.0f, 0.85f, 0.30f);
     cutoffLine.color(1.0f, 0.85f, 0.30f);
@@ -4131,9 +4131,9 @@ ALLOLIB_WEB_MAIN(CombSwept)
       const float h  = 0.025f;
       const float w  = 0.012f;
       // Small upward triangle sitting on the spectrum baseline.
-      tickMesh.vertex(x - w, -1.08f, 0.f);
-      tickMesh.vertex(x + w, -1.08f, 0.f);
-      tickMesh.vertex(x,     -1.08f + h, 0.f);
+      tickMesh.vertex(x - w, -0.98f, 0.f);
+      tickMesh.vertex(x + w, -0.98f, 0.f);
+      tickMesh.vertex(x,     -0.98f + h, 0.f);
       tickMesh.color(0.65f, 0.65f, 0.75f);
       tickMesh.color(0.65f, 0.65f, 0.75f);
       tickMesh.color(0.65f, 0.65f, 0.75f);
@@ -4145,8 +4145,8 @@ ALLOLIB_WEB_MAIN(CombSwept)
     gridMesh.vertex(CX + R + 0.05f, CY, 0.f);
     gridMesh.vertex(CX, CY - R - 0.05f, 0.f);
     gridMesh.vertex(CX, CY + R + 0.05f, 0.f);
-    gridMesh.vertex(-1.4f, -1.05f, 0.f);
-    gridMesh.vertex( 1.4f, -1.05f, 0.f);
+    gridMesh.vertex(-1.4f, -0.95f, 0.f);
+    gridMesh.vertex( 1.4f, -0.95f, 0.f);
     for (int k = 0; k < 6; ++k) gridMesh.color(0.22f, 0.22f, 0.28f);
   }
 
@@ -4502,8 +4502,8 @@ ALLOLIB_WEB_MAIN(CombSwept)
       envStripMesh.reset();
       envStripMesh.primitive(Mesh::LINES);
       if (static_cast<int>(envMin.size()) == kEnvBins) {
-        const float stripY  = 1.20f;
-        const float stripH  = 0.12f;
+        const float stripY  = 0.85f;
+        const float stripH  = 0.08f;
         for (int i = 0; i < kEnvBins; ++i) {
           const float xx = -1.4f + (static_cast<float>(i) / (kEnvBins - 1)) * 2.8f;
           envStripMesh.vertex(xx, stripY + envMin[i] * stripH, 0.f);
@@ -4751,7 +4751,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     float t = (db + 60.f) / 60.f;
     if (t < 0.f) t = 0.f;
     if (t > 1.f) t = 1.f;
-    return t * 0.7f;
+    return t * 0.30f;
   }
 
   // Helper: emit a filled rectangle (TRIANGLES) into a mesh.
@@ -4777,7 +4777,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
   void onDraw(Graphics& g) override {
     g.clear(0.06f, 0.07f, 0.09f);
 
-    const float xL = -1.4f, xR = 1.25f;
+    const float xL = -1.4f, xR = 1.40f;
 
     // ---- Grid lines ----
     mGrid.reset();
@@ -4786,9 +4786,9 @@ ALLOLIB_WEB_MAIN(CombSwept)
       mGrid.vertex(xL, y, 0); mGrid.color(r, gG, b);
       mGrid.vertex(xR, y, 0); mGrid.color(r, gG, b);
     };
-    hline(+1.35f, 0.3f, 0.3f, 0.35f);
-    hline(+0.65f, 0.3f, 0.3f, 0.35f);
-    hline(+0.55f, 0.3f, 0.3f, 0.35f);
+    hline(+0.95f, 0.3f, 0.3f, 0.35f);
+    hline(+0.50f, 0.3f, 0.3f, 0.35f);
+    hline(+0.40f, 0.3f, 0.3f, 0.35f);
     hline(-0.05f, 0.3f, 0.3f, 0.35f);
     hline(-0.15f, 0.3f, 0.3f, 0.35f);
     hline(-0.85f, 0.3f, 0.3f, 0.35f);
@@ -4810,8 +4810,8 @@ ALLOLIB_WEB_MAIN(CombSwept)
     if ((int)envMin.size() == kFullCols) {
       for (int c = 0; c < kFullCols; ++c) {
         float fx = xL + ((float)c / (float)(kFullCols - 1)) * panelW;
-        float yMin = +1.00f + envMin[(size_t)c] * 0.33f;
-        float yMax = +1.00f + envMax[(size_t)c] * 0.33f;
+        float yMin = +0.72f + envMin[(size_t)c] * 0.22f;
+        float yMax = +0.72f + envMax[(size_t)c] * 0.22f;
         mFull.vertex(fx, yMax, 0); mFull.color(0.45f, 0.85f, 1.0f);
         mFull.vertex(fx, yMin, 0); mFull.color(0.25f, 0.55f, 0.8f);
       }
@@ -5236,7 +5236,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
       // ---- Background grid ----
       gridMesh.reset();
       gridMesh.primitive(Mesh::LINES);
-      const float rowYs[3] = { 0.85f, 0.10f, -0.65f };
+      const float rowYs[3] = { 0.75f, 0.10f, -0.55f };
       for (float y : rowYs) {
         gridMesh.vertex(-1.4f, y, 0.f);
         gridMesh.vertex( 1.4f, y, 0.f);
@@ -5253,7 +5253,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
         const float xx = -1.4f + (static_cast<float>(i) / (W - 1)) * 2.8f;
         const float a  = ringA[idx];
         const float b  = ringB[idx];
-        waveA.vertex(xx, rowYs[0] + a * 0.20f, 0.f);
+        waveA.vertex(xx, 0.75f + a * 0.10f, 0.f);
         waveA.color(0.45f, 0.65f, 0.95f);
         waveB.vertex(xx, rowYs[1] + b * 0.20f, 0.f);
         waveB.color(0.95f, 0.6f, 0.30f);
@@ -5396,7 +5396,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
       // ---- RMS bar + scale ticks + numeric value bar (right edge) ----
       const float diffDB = std::max(-12.0f, std::min(12.0f, dispRmsDiffDB.load()));
-      const float barX0 = 1.55f, barX1 = 1.70f;
+      const float barX0 = 1.30f, barX1 = 1.45f;
       const float barCenter = 0.10f;
       const float barH = (diffDB / 12.0f) * 0.6f;
       const float by0 = barCenter;
@@ -5450,7 +5450,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
       {
         const float vbY0 = -0.55f;
         const float vbY1 = -0.50f;
-        const float vbX0 = 1.55f;
+        const float vbX0 = 1.30f;
         const float frac = std::min(1.0f, std::fabs(diffDB) / 12.0f);
         const float vbX1 = vbX0 + frac * 0.20f;
         const float vR = (diffDB >= 0.f) ? 0.95f : 0.45f;
@@ -5479,7 +5479,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
         const float r0 = baseR + (1.0f - baseR) * ease * 0.6f;
         const float g0 = baseG + (1.0f - baseG) * ease * 0.6f;
         const float b0 = baseB + (1.0f - baseB) * ease * 0.6f;
-        emitDisc(badge, 1.30f, 1.20f, radius, 24, r0, g0, b0);
+        emitDisc(badge, 1.25f, 0.85f, radius, 24, r0, g0, b0);
       }
     }
 
@@ -5587,7 +5587,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     Mesh histLine, histTarget, histBg, histSweet;
     Mesh liveValueBar, targetValueBar;
 
-    static constexpr float TH_X0 = -1.30f, TH_X1 = -1.00f;
+    static constexpr float TH_X0 = -1.30f, TH_X1 = -0.85f;
     static constexpr float TH_Y0 = -0.90f, TH_Y1 =  0.90f;
     static constexpr float HS_X0 = -0.70f, HS_X1 =  1.40f;
     static constexpr float HS_Y0 = -0.40f, HS_Y1 =  0.40f;
@@ -5860,8 +5860,8 @@ ALLOLIB_WEB_MAIN(CombSwept)
       targetValueBar.reset();
       targetValueBar.primitive(Mesh::TRIANGLE_STRIP);
       {
-        const float vbY0 = -1.02f;
-        const float vbY1 = -1.00f;
+        const float vbY0 = -1.00f;
+        const float vbY1 = -0.98f;
         const float vbX0 = TH_X0;
         const float frac = (tgt + 60.0f) / 60.0f;
         const float fracC = clamp01(frac);
@@ -5958,7 +5958,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
     Parameter a7{"a7","partials",0.00f,0.f,1.f}; Parameter a8{"a8","partials",0.f,0.f,1.f};
     Parameter tailDecay {"tail_decay","",  0.5f, 0.0f, 1.0f};
     Parameter rotate    {"rotate",    "",  0.3f, -2.0f, 2.0f};
-    Parameter R0        {"base_radius","", 1.0f, 0.2f, 2.0f};
+    Parameter R0        {"base_radius","", 0.7f, 0.2f, 2.0f};
     Parameter atk_ms    {"attack_ms",  "",  10.0f, 1.0f, 500.0f};
     Parameter dec_ms    {"decay_ms",   "", 200.0f, 5.0f, 2000.0f};
     Parameter rel_ms    {"release_ms", "", 600.0f, 5.0f, 4000.0f};
@@ -5982,7 +5982,7 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
     // Mini-spectrum world rect (top-right corner, billboarded by depth-off draw).
     static constexpr float SPEC_X0 =  0.55f, SPEC_X1 = 1.55f;
-    static constexpr float SPEC_Y0 =  0.85f, SPEC_Y1 = 1.45f;
+    static constexpr float SPEC_Y0 =  0.55f, SPEC_Y1 = 0.95f;
     bool painting = false;
 
     std::atomic<float> sampleRateHz{48000.f};
