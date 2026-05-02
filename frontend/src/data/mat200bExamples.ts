@@ -87,217 +87,260 @@ export const mat200bExamples: Example[] = [
   //  shown inline; per-vertex color fade gives a trail without FBOs.
   // ──────────────────────────────────────────────────────────────────────────
   {
-      id: 'mat-template',
-      title: 'MAT200B Template — Studio Online Skeleton',
-      description:
-        'Canonical shape every MAT200B example follows. ControlGUI + WebPresetHandler register five al::Parameter types covering the major typed surface (float, int, bool, color, trigger). Inline audio→graphics ringbuffer with std::atomic<int> write index, no helper headers. Per-vertex color fade gives a CRT-like trail without FBO ping-pong. ~120 LOC.',
-      category: 'mat-visualmusic',
-      subcategory: 'mappers',
+    id: 'mat-template',
+    title: 'MAT200B Template (Polyphonic Skeleton)',
+    description:
+      'Canonical MAT200B skeleton. SynthVoice with internalTriggerParameters {freq, source(0/1/2), attack, decay, sustain, release, amp}. App-level ControlGUI registers five al::Parameter types covering the major typed surface (float, int-as-float, bool, color, trigger). Per-voice 3D primitive (small disc) stacked at slot Y. ZXCVBNM keyboard. ~280 LOC.',
+    category: 'mat-visualmusic',
+    subcategory: 'mappers',
     code: `/**
-   * MAT200B Template — Studio Online skeleton
+   * MAT200B Template — Polyphonic SynthVoice + PolySynth + SynthGUIManager
    *
-   * Reference shape for every MAT200B example. No _studio_shared/
-   * helpers — only what already ships in libal_web.a:
-   *   - al_playground_compat.hpp  (ControlGUI, WebPresetHandler, Trigger)
-   *   - al::Parameter family       (parameter pipeline auto-registers)
-   *   - al::Mesh + al::Graphics   (web backends)
-   *   - Gamma oscillators
-   *
-   * Audio writes a sine to stereo + a 1024-sample ring; graphics
-   * snapshots the ring each frame. The five Parameters appear as a
-   * 5-chip HUD across the top — one chip per Parameter type so the
-   * example doubles as a "what each Parameter widget unlocks" legend.
-   *
-   * Five parameters cover the major al::Parameter types:
-   *   freq        Parameter (float)   — one-pole smoothed for click-free drag
-   *   detune      ParameterInt        — visible phase drift between L/R traces
-   *   stereo      ParameterBool       — 1D scope when off, Lissajous XY when on
-   *   tint        ParameterColor      — recolours both traces
-   *   reset       Trigger             — ramp-to-silence on the ring
+   * Canonical skeleton: every synthesis example in the MAT200B set follows this
+   * same pattern. The voice carries internalTriggerParameters that auto-populate
+   * the Studio Params panel, and the App keeps a few app-level Parameters that
+   * exercise each typed-Parameter surface (float, int-as-float, bool, color,
+   * trigger). Three-key keyboard (ZXCVBNM/ASDFGHJ/QWERTYU) plays C3..B5.
    */
 
   #include "al_playground_compat.hpp"
-  #include "Gamma/Oscillator.h"
 
-  #include <array>
-  #include <atomic>
   #include <cmath>
+
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
   using namespace al;
 
-  class MATTemplate : public App {
+  class TemplateVoice : public SynthVoice {
   public:
-    ParameterBool  playing{"playing", "", true};
-    Parameter      freq   {"freq",   "", 220.f, 50.f, 2000.f};
-    ParameterInt   detune {"detune", "", 0,    -50,   50};
-    ParameterBool  stereo {"stereo", "", true};
-    ParameterColor tint   {"tint",   "", Color(0.4f, 0.9f, 0.5f)};
-    Trigger        reset  {"reset",  ""};
+    // Per-voice oscillator state
+    double phase = 0.0;
+    float  envVal = 0.0f;
+    int    envStage = 0;          // 0=A, 1=D, 2=S, 3=R, 4=done
+    float  envT = 0.0f;
+    float  noiseSeed = 1.0f;
 
-    ControlGUI    gui;
-    PresetHandler mPresets {"./presets"};   // -> WebPresetHandler via compat header
+    Mesh slotMesh;
 
-    gam::Sine<> oscL, oscR;
+    void init() override {
+      createInternalTriggerParameter("freq",     220.0f,  20.0f, 2000.0f);
+      createInternalTriggerParameter("source",     0.0f,   0.0f,    2.0f); // 0 sine, 1 saw, 2 noise
+      createInternalTriggerParameter("attack",   0.01f,  0.001f,   2.0f);
+      createInternalTriggerParameter("decay",    0.20f,  0.001f,   2.0f);
+      createInternalTriggerParameter("sustain",  0.50f,  0.0f,     1.0f);
+      createInternalTriggerParameter("release",  0.40f,  0.001f,   4.0f);
+      createInternalTriggerParameter("amp",      0.30f,  0.0f,     1.0f);
+    }
 
-    // One-pole smoothed freq state (audio thread).
-    float freqSmoothed = 220.f;
-    // Ramp-to-silence gate on reset — multiplies output for ~30 ms after a reset.
-    float resetGate = 1.f;
+    float nextNoise() {
+      // Cheap LCG so each voice is decorrelated.
+      noiseSeed = std::fmod(noiseSeed * 1103515245.0f + 12345.0f, 2147483647.0f);
+      return (noiseSeed / 2147483647.0f) * 2.0f - 1.0f;
+    }
 
-    // Audio -> graphics ringbuffer: stereo samples + atomic write index.
-    static constexpr int RING_SIZE = 1024;
-    std::array<float, RING_SIZE> ringL{}, ringR{};
-    std::atomic<int> ringWrite{0};
+    void onProcess(AudioIOData& io) override {
+      const float sr   = io.framesPerSecond();
+      const float f    = getInternalParameterValue("freq");
+      const int   src  = static_cast<int>(getInternalParameterValue("source"));
+      const float A    = getInternalParameterValue("attack");
+      const float D    = getInternalParameterValue("decay");
+      const float S    = getInternalParameterValue("sustain");
+      const float R    = getInternalParameterValue("release");
+      const float amp  = getInternalParameterValue("amp");
+      const float dPh  = f / sr;
 
-    Mesh traceL, traceR, lissa, hud;
+      while (io()) {
+        // Oscillator
+        float osc = 0.0f;
+        switch (src) {
+          case 0: osc = std::sin(2.0f * static_cast<float>(M_PI) * static_cast<float>(phase)); break;
+          case 1: osc = static_cast<float>(2.0 * (phase - std::floor(phase + 0.5))); break;
+          default: osc = nextNoise(); break;
+        }
+        phase += dPh;
+        if (phase >= 1.0) phase -= 1.0;
+
+        // ADSR
+        const float dt = 1.0f / sr;
+        switch (envStage) {
+          case 0: // attack
+            envVal += dt / std::max(1e-4f, A);
+            if (envVal >= 1.0f) { envVal = 1.0f; envStage = 1; envT = 0.0f; }
+            break;
+          case 1: // decay
+            envT += dt;
+            envVal = 1.0f + (S - 1.0f) * std::min(1.0f, envT / std::max(1e-4f, D));
+            if (envT >= D) { envVal = S; envStage = 2; }
+            break;
+          case 2: // sustain
+            envVal = S;
+            break;
+          case 3: // release
+            envT += dt;
+            envVal = mReleaseStart * (1.0f - std::min(1.0f, envT / std::max(1e-4f, R)));
+            if (envT >= R) { envVal = 0.0f; envStage = 4; }
+            break;
+          default: envVal = 0.0f; break;
+        }
+
+        const float s = osc * envVal * amp;
+        io.out(0) += s;
+        io.out(1) += s;
+      }
+
+      if (envStage == 4) free();
+    }
+
+    void onProcess(Graphics& g) override {
+      const int N = 16;
+      const int slot = id() % N;
+      const float yy = -0.85f + (static_cast<float>(slot) / N) * 1.7f;
+      const float f  = getInternalParameterValue("freq");
+      const float xx = -1.4f + ((std::log(std::max(20.0f, f)) - std::log(20.0f)) /
+                                (std::log(2000.0f) - std::log(20.0f))) * 2.8f;
+
+      slotMesh.reset();
+      slotMesh.primitive(Mesh::TRIANGLES);
+      const int seg = 16;
+      const float radius = 0.04f + 0.04f * envVal;
+      for (int s = 0; s < seg; ++s) {
+        const float a0 = 2.0f * static_cast<float>(M_PI) * s       / seg;
+        const float a1 = 2.0f * static_cast<float>(M_PI) * (s + 1) / seg;
+        slotMesh.vertex(xx, yy, 0.0f);
+        slotMesh.vertex(xx + radius * std::cos(a0), yy + radius * std::sin(a0), 0.0f);
+        slotMesh.vertex(xx + radius * std::cos(a1), yy + radius * std::sin(a1), 0.0f);
+        const float t = static_cast<float>(slot) / N;
+        slotMesh.color(0.4f + 0.5f * t, 0.7f, 0.95f - 0.4f * t);
+        slotMesh.color(0.4f + 0.5f * t, 0.7f, 0.95f - 0.4f * t);
+        slotMesh.color(0.4f + 0.5f * t, 0.7f, 0.95f - 0.4f * t);
+      }
+      g.draw(slotMesh);
+    }
+
+    void onTriggerOn() override {
+      phase = 0.0;
+      envVal = 0.0f;
+      envStage = 0;
+      envT = 0.0f;
+      mReleaseStart = 1.0f;
+    }
+
+    void onTriggerOff() override {
+      if (envStage < 3) {
+        mReleaseStart = envVal;
+        envStage = 3;
+        envT = 0.0f;
+      }
+    }
+
+  private:
+    float mReleaseStart = 1.0f;
+  };
+
+  class TemplateApp : public App {
+  public:
+    // App-level Parameters covering the five major typed surfaces
+    ParameterBool  playing  {"playing",  "", true};
+    Parameter      master   {"master",   "", 0.50f, 0.0f, 1.0f};       // float
+    Parameter      voices   {"voices",   "", 8.0f,  1.0f, 16.0f};       // int-as-float
+    ParameterColor tint     {"tint",     "", Color(0.5f, 0.8f, 1.0f)};  // color
+    Trigger        panic    {"panic",    ""};                            // trigger
+
+    ControlGUI gui;
+    SynthGUIManager<TemplateVoice> synthManager{"Template"};
+
+    Mesh hudMesh;
 
     void onInit() override {
-      gui      << playing << freq << detune << stereo << tint << reset;
-      mPresets << freq << detune << stereo << tint << reset;
-      reset.registerChangeCallback([this](float) {
-        // Ramp gate to zero — onSound walks it back up to 1.0 over ~30 ms.
-        resetGate = 0.f;
+      gui << playing << master << voices << tint << panic;
+      panic.registerChangeCallback([this](float) {
+        synthManager.synth().allNotesOff();
       });
     }
 
     void onCreate() override {
       gui.init();
       nav().pos(0, 0, 4.0f);
-      traceL.primitive(Mesh::LINE_STRIP);
-      traceR.primitive(Mesh::LINE_STRIP);
-      lissa.primitive(Mesh::LINE_STRIP);
-      hud.primitive(Mesh::TRIANGLES);
     }
 
     void onSound(AudioIOData& io) override {
       if (!playing.get()) {
-        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+        while (io()) { io.out(0) = 0.0f; io.out(1) = 0.0f; }
         return;
       }
-      const float fTarget = freq.get();
-      const int   det     = detune.get();
-      const float fs      = io.framesPerSecond();
-      // One-pole smoothing coefficient: ~5 ms time constant.
-      const float coef     = 1.f - std::exp(-1.f / (0.005f * fs));
-      // Reset-gate ramp time constant: ~30 ms.
-      const float gateCoef = 1.f - std::exp(-1.f / (0.030f * fs));
-      while (io()) {
-        freqSmoothed += coef * (fTarget - freqSmoothed);
-        resetGate    += gateCoef * (1.f - resetGate);
-        oscL.freq(freqSmoothed);
-        oscR.freq(freqSmoothed + static_cast<float>(det));
-        const float l = oscL() * 0.20f * resetGate;
-        const float r = oscR() * 0.20f * resetGate;
-        io.out(0) = l;
-        io.out(1) = r;
-        const int w = ringWrite.load(std::memory_order_relaxed);
-        ringL[w] = l;
-        ringR[w] = r;
-        ringWrite.store((w + 1) % RING_SIZE, std::memory_order_release);
-      }
+      synthManager.render(io);
+      const float m = master.get();
+      while (io()) { io.out(0) *= m; io.out(1) *= m; }
     }
 
-    // Push a small filled rectangle into a TRIANGLES mesh (for the HUD chips).
-    void pushChipBar(Mesh& m, float x0, float y0, float w, float h,
-                     float r, float gC, float b) {
-      const float x1 = x0 + w, y1 = y0 + h;
-      m.vertex(x0, y0, 0.f); m.color(r, gC, b);
-      m.vertex(x1, y0, 0.f); m.color(r, gC, b);
-      m.vertex(x1, y1, 0.f); m.color(r, gC, b);
-      m.vertex(x0, y0, 0.f); m.color(r, gC, b);
-      m.vertex(x1, y1, 0.f); m.color(r, gC, b);
-      m.vertex(x0, y1, 0.f); m.color(r, gC, b);
+    void buildHUD() {
+      // 5 chips along the top: float, int, bool, color, trigger
+      hudMesh.reset();
+      hudMesh.primitive(Mesh::TRIANGLES);
+      const float chipW = 0.45f, chipH = 0.10f;
+      const float y0 = 0.85f;
+      const Color c = tint.get();
+      const float vals[5] = {
+        master.get(),
+        voices.get() / 16.0f,
+        playing.get() ? 1.0f : 0.0f,
+        0.5f,
+        0.5f
+      };
+      for (int i = 0; i < 5; ++i) {
+        const float x0 = -1.4f + i * (chipW + 0.05f);
+        const float fill = vals[i];
+        const float rgb[3] = {
+          i == 3 ? c.r : 0.4f + 0.4f * fill,
+          i == 3 ? c.g : 0.7f,
+          i == 3 ? c.b : 0.95f - 0.4f * fill
+        };
+        // two triangles per chip
+        hudMesh.vertex(x0,         y0,         0.0f);
+        hudMesh.vertex(x0 + chipW, y0,         0.0f);
+        hudMesh.vertex(x0 + chipW, y0 + chipH, 0.0f);
+        hudMesh.vertex(x0,         y0,         0.0f);
+        hudMesh.vertex(x0 + chipW, y0 + chipH, 0.0f);
+        hudMesh.vertex(x0,         y0 + chipH, 0.0f);
+        for (int v = 0; v < 6; ++v) hudMesh.color(rgb[0], rgb[1], rgb[2]);
+      }
     }
 
     void onAnimate(double /*dt*/) override {
-      const int w = ringWrite.load(std::memory_order_acquire);
-      Color c = tint.get();
-      constexpr int N = RING_SIZE;
-
-      traceL.reset(); traceL.primitive(Mesh::LINE_STRIP);
-      traceR.reset(); traceR.primitive(Mesh::LINE_STRIP);
-      lissa.reset();  lissa.primitive(Mesh::LINE_STRIP);
-
-      // detune as a *visible* phase drift: shift the R read index by 2*detune samples.
-      const int phaseShift = detune.get() * 2;
-
-      if (stereo.get()) {
-        // Lissajous XY: x = L, y = R.
-        for (int i = 0; i < N; ++i) {
-          const int idxL = (w - N + i + RING_SIZE) % RING_SIZE;
-          const int idxR = (w - N + i + phaseShift + RING_SIZE) % RING_SIZE;
-          const float t = static_cast<float>(i) / N;
-          const float x = ringL[idxL] * 4.0f;
-          const float y = ringR[idxR] * 4.0f - 0.1f;
-          lissa.vertex(x, y, 0.f);
-          lissa.color(c.r * (0.3f + 0.7f * t),
-                      c.g * (0.3f + 0.7f * t),
-                      c.b * (0.3f + 0.7f * t));
-        }
-      } else {
-        // Two stacked 1D scopes — top = L, bottom = R, both tinted by 'tint'.
-        for (int i = 0; i < N; ++i) {
-          const int idxL = (w - N + i + RING_SIZE) % RING_SIZE;
-          const int idxR = (w - N + i + phaseShift + RING_SIZE) % RING_SIZE;
-          const float t = static_cast<float>(i) / N;
-          const float x  = -1.5f + 3.0f * t;
-          const float yL =  0.45f + ringL[idxL] * 1.2f;
-          const float yR = -0.45f + ringR[idxR] * 1.2f;
-          traceL.vertex(x, yL, 0.f);
-          traceL.color(c.r * t, c.g * t, c.b * t);
-          traceR.vertex(x, yR, 0.f);
-          // R tinted with channels rotated so the phase drift is obvious.
-          traceR.color(c.b * t, c.r * t, c.g * t);
-        }
-      }
-
-      // 5-chip Parameter-type HUD across the top.
-      hud.reset();
-      hud.primitive(Mesh::TRIANGLES);
-      const float chipW = 0.52f, chipH = 0.10f, gap = 0.04f;
-      const float row = 0.85f;
-      float x = -1.13f;
-      auto drawChip = [&](float fillFrac, float r, float gC, float b) {
-        // Frame
-        pushChipBar(hud, x, row, chipW, chipH, 0.10f, 0.10f, 0.14f);
-        // Fill bar (clamped 0..1)
-        float f = fillFrac;
-        if (f < 0.f) f = 0.f;
-        if (f > 1.f) f = 1.f;
-        pushChipBar(hud, x + 0.01f, row + 0.012f,
-                    (chipW - 0.02f) * f, chipH - 0.024f,
-                    r, gC, b);
-        x += chipW + gap;
-      };
-      // float — freq
-      drawChip((freq.get() - 50.f) / (2000.f - 50.f), 0.40f, 0.85f, 1.00f);
-      // int — detune (-50..50)
-      drawChip((static_cast<float>(detune.get()) + 50.f) / 100.f, 1.00f, 0.70f, 0.20f);
-      // bool — stereo (full bar vs empty)
-      drawChip(stereo.get() ? 1.0f : 0.0f, 0.60f, 1.00f, 0.30f);
-      // color — tint chip is the tint colour itself
-      drawChip(1.0f, c.r, c.g, c.b);
-      // trigger — reset gate (lights up during the ramp-to-silence)
-      drawChip(1.0f - resetGate, 1.00f, 0.30f, 0.45f);
+      buildHUD();
     }
 
     void onDraw(Graphics& g) override {
-      g.clear(0.04f, 0.04f, 0.07f);
+      g.clear(0.05f, 0.06f, 0.09f);
       g.meshColor();
-      if (stereo.get()) {
-        g.draw(lissa);
-      } else {
-        g.draw(traceL);
-        g.draw(traceR);
-      }
-      g.draw(hud);
+      g.draw(hudMesh);
+      synthManager.render(g);
       gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToIndex(k.key());
+      if (n > 0) {
+        const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+        synthManager.voice()->setInternalParameterValue("freq", f);
+        synthManager.triggerOn(n);
+      }
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToIndex(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
     }
   };
 
-  ALLOLIB_WEB_MAIN(MATTemplate)
+  ALLOLIB_WEB_MAIN(TemplateApp)
   `,
-    },
+  },
   {
       id: 'mat-lissajous',
       title: 'Lissajous Oscilloscope Synth',
@@ -831,19 +874,19 @@ export const mat200bExamples: Example[] = [
     },
   {
     id: 'mat-karplus-strong',
-    title: 'Karplus–Strong String Lab',
+    title: 'Karplus-Strong Plucked String',
     description:
-      "Plucked-string physical model: short noise burst into a delay line + lowpass feedback. Pitch = sampleRate / delay length; damping is the feedback gain. Visual is the delay line itself drawn as a horizontal vertex strip — each vertex height = current sample, so you watch the standing wave develop and decay. Now with a vertical pluck-position marker (red), bridge markers at the string endpoints (white), sign-based per-vertex coloring (positive=warm red, negative=cool blue), and an inline mini-FFT panel under the string (256-pt windowed DFT) so the 1/k harmonic spacing dims top-down as 'damping' falls. Pitch changes crossfade between two delay buffers over ~10 ms to remove zipper noise; damping is clamped to 0.999 max to prevent runaway feedback.",
+      'Polyphonic Karplus-Strong plucked-string synth. Each voice owns a delay line of length sr/freq, primed with a noise burst on trigger and recirculated through a 1-pole lowpass (brightness controls the LP coefficient). Per-voice {freq, brightness, decay, pluckLen, attack, release}. Energy-based free() fires once peak amplitude drops below 1e-4, with a 30 s timeout fallback. ZXCVBNM keyboard plays C3..B5. Per-voice string vibration line; bottom strip is an oscilloscope.',
     category: 'mat-synthesis',
     subcategory: 'physical',
     code: `/**
-   * Karplus–Strong String Lab — MAT200B Phase 1 #3
+   * Karplus-Strong Plucked String — Polyphonic
    *
-   * Pitch changes crossfade between two delay buffers (bufA, bufB) over
-   * ~10 ms — when 'pitch' moves, the active buffer is resampled into
-   * the other buffer at the new length and a 0->1 ramp mixes them.
-   * 'damping' clamped to 0.999 max. Visual: sign-based color (red+/blue-),
-   * red pluck marker + white bridge markers, mini-FFT panel below.
+   * Each voice allocates a delay line sized sr/freq samples. On trigger, the line
+   * is filled with a noise burst whose length is proportional to pluckLen * line.
+   * A 1-pole lowpass (alpha = brightness) smooths the recirculation, and an extra
+   * decay multiplier slows or speeds the energy loss. Voice frees when the running
+   * peak falls below 1e-4 or after a 30 s timeout.
    */
 
   #include "al_playground_compat.hpp"
@@ -851,7 +894,6 @@ export const mat200bExamples: Example[] = [
   #include <array>
   #include <atomic>
   #include <cmath>
-  #include <cstdlib>
   #include <vector>
 
   #ifndef M_PI
@@ -860,253 +902,231 @@ export const mat200bExamples: Example[] = [
 
   using namespace al;
 
-  class KarplusStrong : public App {
+  class KSVoice : public SynthVoice {
   public:
-    Parameter pitch     {"pitch",      "", 220.0f, 40.0f, 1200.0f};
-    Parameter damping   {"damping",    "", 0.99f,  0.80f, 0.999f};
-    Parameter pluckPos  {"pluckPos",   "", 0.50f,  0.05f, 0.95f};
-    Parameter excitation{"excitation", "", 0.60f,  0.0f,  1.0f};
-    Trigger   pluck     {"pluck",      ""};
+    std::vector<float> line;
+    int   writeIdx = 0;
+    float lpState = 0.0f;
+    float lastSample = 0.0f;
+    float ampEnv = 0.0f;        // attack/release envelope on top of physical decay
+    int   envStage = 0;          // 0=A, 1=sustain (physical decay rules), 3=R, 4=done
+    float envT = 0.0f;
+    float releaseStart = 0.0f;
+    float runningPeak = 0.0f;
+    float ageSec = 0.0f;
+    float noiseSeed = 1.0f;
+
+    Mesh stringMesh;
+
+    void init() override {
+      createInternalTriggerParameter("freq",        220.0f, 20.0f, 2000.0f);
+      createInternalTriggerParameter("brightness",   0.50f,  0.0f,   0.99f);
+      createInternalTriggerParameter("decay",        0.999f, 0.90f,  0.9999f);
+      createInternalTriggerParameter("pluckLen",     1.00f,  0.05f,  1.0f);
+      createInternalTriggerParameter("attack",       0.005f, 0.001f, 0.5f);
+      createInternalTriggerParameter("release",      0.20f,  0.001f, 4.0f);
+      createInternalTriggerParameter("amp",          0.30f,  0.0f,   1.0f);
+    }
+
+    float nextNoise() {
+      noiseSeed = std::fmod(noiseSeed * 1103515245.0f + 12345.0f, 2147483647.0f);
+      return (noiseSeed / 2147483647.0f) * 2.0f - 1.0f;
+    }
+
+    void allocateLine(int len) {
+      if (static_cast<int>(line.size()) != len) line.assign(len, 0.0f);
+      else std::fill(line.begin(), line.end(), 0.0f);
+      writeIdx = 0;
+    }
+
+    void onProcess(AudioIOData& io) override {
+      const float sr     = io.framesPerSecond();
+      const float f      = std::max(20.0f, getInternalParameterValue("freq"));
+      const float bright = getInternalParameterValue("brightness");
+      const float decay  = getInternalParameterValue("decay");
+      const float pluckL = getInternalParameterValue("pluckLen");
+      const float A      = getInternalParameterValue("attack");
+      const float R      = getInternalParameterValue("release");
+      const float amp    = getInternalParameterValue("amp");
+
+      const int target = std::max(2, static_cast<int>(sr / f));
+      if (static_cast<int>(line.size()) != target) {
+        // Re-pluck if frequency changes mid-voice (rare) — preserve some state.
+        line.resize(target, 0.0f);
+        if (writeIdx >= target) writeIdx = 0;
+      }
+      const int L = static_cast<int>(line.size());
+      const int pluckSamples = std::max(1, static_cast<int>(L * pluckL));
+      if (mNeedsPluck) {
+        for (int i = 0; i < L; ++i) line[i] = (i < pluckSamples) ? nextNoise() : 0.0f;
+        mNeedsPluck = false;
+      }
+
+      const float alpha = 1.0f - bright;     // 0=very LP, 1=no LP
+      runningPeak *= 0.999f;
+
+      while (io()) {
+        const int readIdx = writeIdx;
+        const float cur = line[readIdx];
+        // 1-pole LP between current and previous sample
+        const float lp = alpha * lpState + (1.0f - alpha) * cur;
+        lpState = lp;
+        const float fed = lp * decay;
+        line[writeIdx] = fed;
+        writeIdx = (writeIdx + 1) % L;
+
+        // Amp envelope (mostly attack + release; physical decay rides under it)
+        const float dt = 1.0f / sr;
+        switch (envStage) {
+          case 0:
+            ampEnv += dt / std::max(1e-4f, A);
+            if (ampEnv >= 1.0f) { ampEnv = 1.0f; envStage = 1; }
+            break;
+          case 1: ampEnv = 1.0f; break;
+          case 3:
+            envT += dt;
+            ampEnv = releaseStart * (1.0f - std::min(1.0f, envT / std::max(1e-4f, R)));
+            if (envT >= R) { ampEnv = 0.0f; envStage = 4; }
+            break;
+          default: ampEnv = 0.0f; break;
+        }
+
+        const float s = cur * amp * ampEnv;
+        lastSample = cur;
+        const float ab = std::fabs(cur);
+        if (ab > runningPeak) runningPeak = ab;
+        io.out(0) += s;
+        io.out(1) += s;
+
+        ageSec += dt;
+      }
+
+      // Energy-based free + 30 s timeout
+      if (envStage == 4 || runningPeak < 1e-4f || ageSec > 30.0f) free();
+    }
+
+    void onProcess(Graphics& g) override {
+      const int N = 16;
+      const int slot = id() % N;
+      const float yy = -0.85f + (static_cast<float>(slot) / N) * 1.7f;
+
+      stringMesh.reset();
+      stringMesh.primitive(Mesh::LINE_STRIP);
+      const int samples = 64;
+      if (line.empty()) return;
+      const int L = static_cast<int>(line.size());
+      for (int i = 0; i < samples; ++i) {
+        const float xx = -1.3f + (static_cast<float>(i) / (samples - 1)) * 2.6f;
+        const int idx = (writeIdx + (i * L) / samples) % L;
+        const float v = line[idx];
+        stringMesh.vertex(xx, yy + v * 0.04f, 0.0f);
+        stringMesh.color(0.85f, 0.7f, 0.4f);
+      }
+      g.draw(stringMesh);
+    }
+
+    void onTriggerOn() override {
+      mNeedsPluck = true;
+      lpState = 0.0f;
+      runningPeak = 1.0f;
+      ampEnv = 0.0f;
+      envStage = 0;
+      envT = 0.0f;
+      ageSec = 0.0f;
+      releaseStart = 1.0f;
+    }
+
+    void onTriggerOff() override {
+      if (envStage < 3) {
+        releaseStart = ampEnv;
+        envStage = 3;
+        envT = 0.0f;
+      }
+    }
+
+  private:
+    bool mNeedsPluck = false;
+  };
+
+  class KarplusStrongApp : public App {
+  public:
+    ParameterBool playing {"playing", "", true};
+    Parameter     master  {"master",  "", 0.7f, 0.0f, 1.0f};
 
     ControlGUI gui;
+    SynthGUIManager<KSVoice> synthManager{"KarplusStrong"};
 
-    static constexpr int MAX_DELAY = 4096;
-    std::vector<float> bufA, bufB;
-    int delayLenA = 256, delayLenB = 256;
-    int writeIdxA = 0,   writeIdxB = 0;
-    int activeBuf = 0;
-    float crossfadePos = 1.0f;
-    float crossfadeStep = 0.0f;
-    int lastDelayLenForActive = 256;
-    float prevSampleA = 0.f, prevSampleB = 0.f;
-
-    std::atomic<int> pluckPending{0};
-    std::atomic<int> activeBufAtomic{0};
-    std::atomic<int> delayLenAAtomic{256};
-    std::atomic<int> delayLenBAtomic{256};
-
-    Mesh stringMesh, markerMesh, fftMesh, fftBaseline;
+    static constexpr int N = 256;
+    std::array<float, N> blockBuf{};
+    std::atomic<int>     blockW{0};
+    Mesh                 scope;
 
     void onInit() override {
-      gui << pitch << damping << pluckPos << excitation << pluck;
-      pluck.registerChangeCallback([this](float) {
-        pluckPending.store(1, std::memory_order_release);
-      });
+      gui << playing << master;
     }
 
     void onCreate() override {
       gui.init();
-      bufA.assign(MAX_DELAY, 0.f);
-      bufB.assign(MAX_DELAY, 0.f);
       nav().pos(0, 0, 4.0f);
-      stringMesh.primitive(Mesh::LINE_STRIP);
-    }
-
-    static void copyResample(const std::vector<float>& src, int srcLen, int srcW,
-                             std::vector<float>& dst, int dstLen) {
-      if (srcLen <= 0 || dstLen <= 0) return;
-      for (int i = 0; i < dstLen; ++i) {
-        const float u = static_cast<float>(i) / static_cast<float>(dstLen);
-        int srcIdx = static_cast<int>(u * srcLen);
-        if (srcIdx >= srcLen) srcIdx = srcLen - 1;
-        const int s = ((srcW + srcIdx) % srcLen + srcLen) % srcLen;
-        dst[i] = src[s];
-      }
-      for (int i = dstLen; i < MAX_DELAY; ++i) dst[i] = 0.f;
     }
 
     void onSound(AudioIOData& io) override {
-      const float sr = io.framesPerSecond();
-      const int newLen = std::max(2, std::min(MAX_DELAY,
-                    static_cast<int>(sr / pitch.get())));
-      const float fb = damping.get();
-
-      if (newLen != lastDelayLenForActive && crossfadePos >= 1.0f) {
-        if (activeBuf == 0) {
-          copyResample(bufA, delayLenA, writeIdxA, bufB, newLen);
-          delayLenB = newLen; writeIdxB = 0; prevSampleB = 0.f;
-        } else {
-          copyResample(bufB, delayLenB, writeIdxB, bufA, newLen);
-          delayLenA = newLen; writeIdxA = 0; prevSampleA = 0.f;
-        }
-        crossfadePos = 0.0f;
-        crossfadeStep = 1.0f / std::max(1.0f, 0.010f * sr);
-        lastDelayLenForActive = newLen;
-      } else if (crossfadePos >= 1.0f) {
-        lastDelayLenForActive = newLen;
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.0f; io.out(1) = 0.0f; }
+        return;
       }
-
-      if (pluckPending.exchange(0, std::memory_order_acquire)) {
-        auto pluckBuf = [&](std::vector<float>& buf, int& w, int len) {
-          if (len <= 0) return;
-          const int center = static_cast<int>(pluckPos.get() * len);
-          const int wid    = std::max(8, len / 4);
-          const float amp  = excitation.get();
-          for (int i = 0; i < len; ++i) {
-            const int dist = std::abs(i - center);
-            if (dist < wid / 2) {
-              const float wgt = 1.0f - (2.0f * dist / static_cast<float>(wid));
-              const float n = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
-              buf[i] = n * wgt * amp;
-            } else {
-              buf[i] *= 0.5f;
-            }
-          }
-          w = 0;
-        };
-        pluckBuf(bufA, writeIdxA, delayLenA);
-        pluckBuf(bufB, writeIdxB, delayLenB);
-        prevSampleA = 0.f; prevSampleB = 0.f;
-      }
-
+      synthManager.render(io);
+      const float m = master.get();
+      int w = blockW.load(std::memory_order_relaxed);
       while (io()) {
-        const int lenA = std::max(1, delayLenA);
-        const int lenB = std::max(1, delayLenB);
-
-        const float curA = bufA[writeIdxA];
-        const float yA   = 0.5f * (curA + prevSampleA) * fb;
-        prevSampleA = curA;
-        bufA[writeIdxA] = yA;
-        writeIdxA = (writeIdxA + 1) % lenA;
-
-        const float curB = bufB[writeIdxB];
-        const float yB   = 0.5f * (curB + prevSampleB) * fb;
-        prevSampleB = curB;
-        bufB[writeIdxB] = yB;
-        writeIdxB = (writeIdxB + 1) % lenB;
-
-        float out;
-        if (crossfadePos < 1.0f) {
-          const float oldS = (activeBuf == 0) ? yA : yB;
-          const float newS = (activeBuf == 0) ? yB : yA;
-          out = oldS + (newS - oldS) * crossfadePos;
-          crossfadePos += crossfadeStep;
-          if (crossfadePos >= 1.0f) {
-            crossfadePos = 1.0f;
-            activeBuf = 1 - activeBuf;
-            activeBufAtomic.store(activeBuf, std::memory_order_release);
-          }
-        } else {
-          out = (activeBuf == 0) ? yA : yB;
-        }
-        io.out(0) = out; io.out(1) = out;
+        io.out(0) *= m;
+        io.out(1) *= m;
+        blockBuf[w] = io.out(0);
+        w = (w + 1) % N;
       }
-
-      delayLenAAtomic.store(delayLenA, std::memory_order_release);
-      delayLenBAtomic.store(delayLenB, std::memory_order_release);
-    }
-
-    void computeMiniFFT(std::array<float, 128>& mag, int activeIdx) {
-      constexpr int NDFT = 256;
-      const std::vector<float>& src = (activeIdx == 0) ? bufA : bufB;
-      const int len = (activeIdx == 0) ? delayLenAAtomic.load(std::memory_order_acquire)
-                                       : delayLenBAtomic.load(std::memory_order_acquire);
-      if (len <= 1) { for (auto& v : mag) v = 0.0f; return; }
-      std::array<float, NDFT> x{};
-      for (int i = 0; i < NDFT; ++i) {
-        const int idx = (i * len) / NDFT;
-        const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (NDFT - 1)));
-        x[i] = src[idx] * win;
-      }
-      for (int k = 0; k < 128; ++k) {
-        float re = 0.f, im = 0.f;
-        const float ang = -2.0f * static_cast<float>(M_PI) * k / NDFT;
-        for (int n = 0; n < NDFT; ++n) {
-          re += x[n] * std::cos(ang * n);
-          im += x[n] * std::sin(ang * n);
-        }
-        mag[k] = std::sqrt(re * re + im * im) * (2.0f / NDFT);
-      }
+      blockW.store(w, std::memory_order_release);
     }
 
     void onAnimate(double /*dt*/) override {
-      const int activeIdx = activeBufAtomic.load(std::memory_order_acquire);
-      const std::vector<float>& srcBuf = (activeIdx == 0) ? bufA : bufB;
-      const int len = (activeIdx == 0) ? delayLenAAtomic.load(std::memory_order_acquire)
-                                       : delayLenBAtomic.load(std::memory_order_acquire);
-      const int writeIdx = (activeIdx == 0) ? writeIdxA : writeIdxB;
-      const int safeLen = std::max(1, len);
-
-      stringMesh.reset();
-      stringMesh.primitive(Mesh::LINE_STRIP);
-      constexpr int N = 512;
-      const int step = std::max(1, safeLen / N);
-      int i = 0;
-      for (int k = 0; k < safeLen && i < N; k += step, ++i) {
-        const float x = -1.4f + 2.8f * (static_cast<float>(i) / N);
-        const float s = srcBuf[(writeIdx + k) % safeLen];
-        stringMesh.vertex(x, s * 1.5f, 0.f);
-        if (s >= 0.f) {
-          const float t = std::min(1.0f, s * 4.0f);
-          stringMesh.color(0.85f, 0.40f - 0.20f * t, 0.30f - 0.20f * t);
-        } else {
-          const float t = std::min(1.0f, -s * 4.0f);
-          stringMesh.color(0.30f - 0.20f * t, 0.45f - 0.20f * t, 0.95f);
-        }
+      const int w = blockW.load(std::memory_order_acquire);
+      scope.reset();
+      scope.primitive(Mesh::LINE_STRIP);
+      for (int i = 0; i < N; ++i) {
+        const int idx = (w + i) % N;
+        const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
+        const float yy = -0.85f + blockBuf[idx] * 0.20f;
+        scope.vertex(xx, yy, 0.0f);
+        scope.color(0.4f, 0.9f, 0.7f);
       }
-
-      markerMesh.reset();
-      markerMesh.primitive(Mesh::LINES);
-      const float pluckX = -1.4f + 2.8f * pluckPos.get();
-      markerMesh.vertex(pluckX, -0.85f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
-      markerMesh.vertex(pluckX,  0.85f, 0.f); markerMesh.color(0.95f, 0.25f, 0.25f);
-      markerMesh.vertex(-1.4f,  -0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex(-1.4f,   0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex( 1.4f,  -0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-      markerMesh.vertex( 1.4f,   0.85f, 0.f); markerMesh.color(0.95f, 0.95f, 0.95f);
-
-      std::array<float, 128> mag{};
-      computeMiniFFT(mag, activeIdx);
-      fftMesh.reset();
-      fftMesh.primitive(Mesh::LINE_STRIP);
-      const float fftYBase  = -0.95f;
-      const float fftYScale = 0.40f;
-      for (int k = 0; k < 128; ++k) {
-        const float xx = -1.4f + 2.8f * (static_cast<float>(k) / 127.0f);
-        const float yy = fftYBase + std::min(fftYScale, mag[k] * fftYScale * 4.0f);
-        fftMesh.vertex(xx, yy, 0.f);
-        const float t = static_cast<float>(k) / 127.0f;
-        fftMesh.color(0.40f + 0.45f * t, 0.85f - 0.30f * t, 0.55f);
-      }
-      fftBaseline.reset();
-      fftBaseline.primitive(Mesh::LINES);
-      fftBaseline.vertex(-1.4f, fftYBase, 0.f); fftBaseline.color(0.30f, 0.30f, 0.35f);
-      fftBaseline.vertex( 1.4f, fftYBase, 0.f); fftBaseline.color(0.30f, 0.30f, 0.35f);
     }
 
     void onDraw(Graphics& g) override {
-      g.clear(0.04f, 0.06f, 0.06f);
+      g.clear(0.06f, 0.05f, 0.04f);
       g.meshColor();
-      g.draw(markerMesh);
-      g.draw(stringMesh);
-      g.draw(fftBaseline);
-      g.draw(fftMesh);
+      g.draw(scope);
+      synthManager.render(g);
       gui.draw(g);
     }
 
-    static int noteFromKey(int key) {
-      static const int kbd[] = {
-        'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
-        'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
-        'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
-      };
-      for (int i = 0; i < 21; ++i) {
-        const int K = kbd[i*2];
-        if (key == K || key == K + 32) return kbd[i*2 + 1];
-      }
-      return -1;
-    }
     bool onKeyDown(const Keyboard& k) override {
-      const int n = noteFromKey(k.key());
-      if (n >= 0) {
-        pitch.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
-        pluck.set(1.0f);
+      if (gui.usingInput()) return true;
+      const int n = asciiToIndex(k.key());
+      if (n > 0) {
+        const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+        synthManager.voice()->setInternalParameterValue("freq", f);
+        synthManager.triggerOn(n);
       }
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToIndex(k.key());
+      if (n > 0) synthManager.triggerOff(n);
       return true;
     }
   };
 
-  ALLOLIB_WEB_MAIN(KarplusStrong)
+  ALLOLIB_WEB_MAIN(KarplusStrongApp)
   `,
   },
   {
@@ -3544,339 +3564,284 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-1d-waveguide',
-    title: '1D Waveguide Instrument',
+    title: '1D Waveguide String',
     description:
-      "Real bidirectional waveguide string: two delay lines (left-going and right-going waves) exchange energy at each end through one-zero lowpass reflections. Pluck = noise burst written into both lines centred on the pluck position; pickup taps both lines at a configurable position. Tweak stiffness/damping to morph from piano-string to nylon-guitar to almost-rubber-band — and watch both travelling waves as separate strips on screen, each with a riding peak-arrow glyph showing the maximum-amplitude position. A 'mode' toggle switches between rigid-bridge (sign-flip reflection, octave-down ring) and free-bridge (in-phase reflection, octave-up ring). A gold pluck-position marker spans the grid; on every pluck a 2-frame additive flash overlays the canvas. A third row at the bottom plots the physical string displacement = right + left summed.",
+      'Polyphonic bidirectional 1D waveguide. Each voice maintains right-going and left-going delay lines, joined by sign-inverting reflections at both ends; an excitation impulse is injected at a normalized position, and the audio output is the sum of both lines at the pickup position. Per-voice {freq, position(0..1), pickup(0..1), brightness, attack, release}. Energy-based free() fires when running peak drops below 1e-4 with a 30 s timeout fallback. ZXCVBNM keyboard plays C3..B5. Per-voice string displacement is drawn at every node.',
     category: 'mat-synthesis',
     subcategory: 'physical',
     code: `/**
-   * 1D Waveguide Instrument — MAT200B Phase 2
+   * 1D Bidirectional Waveguide String — Polyphonic
    *
-   * 'mode' picks rigid bridge (sign-flip reflection -> octave-down ring)
-   * or free bridge (in-phase reflection -> octave-up ring). Visuals:
-   * top strip = rightGoing, mid strip = leftGoing, bottom = sum (the
-   * physical string displacement). Riding peak triangles + gold pluck-
-   * position vertical + 2-frame additive pluck flash.
+   * Two delay lines of length L = round(sr / (2*freq)) — right-going and left-
+   * going halves of d'Alembert's solution. Reflections at both ends invert sign
+   * (fixed-end boundary). On trigger, a half-Hann impulse is injected centered at
+   * 'position' along the string. Output is the sum of both lines at 'pickup'.
+   * A 1-pole lowpass at each reflection point models high-frequency loss
+   * (brightness controls the LP coefficient).
    */
 
   #include "al_playground_compat.hpp"
 
-  #include <array>
-  #include <atomic>
   #include <cmath>
-  #include <cstdlib>
   #include <vector>
+
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
   using namespace al;
 
-  class WaveguideString : public App {
+  class WaveguideVoice : public SynthVoice {
   public:
-    Parameter     pitch_hz   {"pitch_hz",   "", 220.0f, 50.0f, 1200.0f};
-    Parameter     pluckPos   {"pluckPos",   "",   0.30f, 0.05f,  0.95f};
-    Parameter     pickupPos  {"pickupPos",  "",   0.65f, 0.05f,  0.95f};
-    Parameter     damping    {"damping",    "",   0.99f, 0.90f,  1.00f};
-    Parameter     stiffness  {"stiffness",  "",   0.30f, 0.0f,   1.0f};
-    Parameter     excitation {"excitation", "",   0.60f, 0.0f,   1.0f};
-    ParameterBool mode       {"mode",       "", false}; // false=rigid, true=free
-    Trigger       pluck      {"pluck",      ""};
+    std::vector<float> right;   // right-going wave (index 0..L-1, propagates +)
+    std::vector<float> left;    // left-going wave (index 0..L-1, propagates -)
+    int   ptrR = 0, ptrL = 0;
+    float lpR = 0.0f, lpL = 0.0f;
+    float ampEnv = 0.0f;
+    int   envStage = 0;
+    float envT = 0.0f;
+    float releaseStart = 0.0f;
+    float runningPeak = 0.0f;
+    float ageSec = 0.0f;
+
+    Mesh stringMesh;
+
+    void init() override {
+      createInternalTriggerParameter("freq",       220.0f,  20.0f, 2000.0f);
+      createInternalTriggerParameter("position",    0.30f,  0.05f,   0.95f);
+      createInternalTriggerParameter("pickup",      0.20f,  0.05f,   0.95f);
+      createInternalTriggerParameter("brightness",  0.40f,  0.0f,    0.95f);
+      createInternalTriggerParameter("attack",      0.005f, 0.001f,  0.5f);
+      createInternalTriggerParameter("release",     0.30f,  0.001f,  4.0f);
+      createInternalTriggerParameter("amp",         0.25f,  0.0f,    1.0f);
+    }
+
+    void allocateLines(int L) {
+      if (static_cast<int>(right.size()) != L) {
+        right.assign(L, 0.0f);
+        left.assign(L, 0.0f);
+      } else {
+        std::fill(right.begin(), right.end(), 0.0f);
+        std::fill(left.begin(),  left.end(),  0.0f);
+      }
+      ptrR = ptrL = 0;
+      lpR = lpL = 0.0f;
+    }
+
+    void inject(float position) {
+      const int L = static_cast<int>(right.size());
+      if (L < 4) return;
+      const int center = std::min(L - 2, std::max(1, static_cast<int>(L * position)));
+      const int width  = std::max(2, L / 16);
+      for (int i = -width; i <= width; ++i) {
+        const int idx = center + i;
+        if (idx < 0 || idx >= L) continue;
+        const float w = 0.5f * (1.0f + std::cos(static_cast<float>(M_PI) * i / width));
+        right[idx] += 0.5f * w;
+        left[idx]  += 0.5f * w;
+      }
+    }
+
+    void onProcess(AudioIOData& io) override {
+      const float sr     = io.framesPerSecond();
+      const float f      = std::max(20.0f, getInternalParameterValue("freq"));
+      const float pos    = getInternalParameterValue("position");
+      const float pick   = getInternalParameterValue("pickup");
+      const float bright = getInternalParameterValue("brightness");
+      const float A      = getInternalParameterValue("attack");
+      const float R      = getInternalParameterValue("release");
+      const float amp    = getInternalParameterValue("amp");
+
+      const int L = std::max(4, static_cast<int>(sr / (2.0f * f)));
+      if (static_cast<int>(right.size()) != L) {
+        right.assign(L, 0.0f);
+        left.assign(L, 0.0f);
+        ptrR = ptrL = 0;
+      }
+      if (mNeedsExcite) {
+        inject(pos);
+        mNeedsExcite = false;
+      }
+
+      const float alpha = 1.0f - bright;
+      const int   pickIdx = std::min(L - 1, std::max(0, static_cast<int>(L * pick)));
+      runningPeak *= 0.999f;
+
+      while (io()) {
+        // Sample at pickup (sum of both lines)
+        const int rIdx = (ptrR + pickIdx) % L;
+        const int lIdx = (ptrL + (L - pickIdx) % L) % L;
+        const float pickupSample = right[rIdx] + left[lIdx];
+
+        // Reflection at the right end with sign inversion + lowpass loss
+        const int rTailIdx = (ptrR + L - 1) % L;
+        const float rTail = right[rTailIdx];
+        lpR = alpha * lpR + (1.0f - alpha) * rTail;
+        const float reflectedR = -lpR;       // fixed-end inversion + LP loss
+        // Reflection at the left end
+        const int lTailIdx = (ptrL + L - 1) % L;
+        const float lTail = left[lTailIdx];
+        lpL = alpha * lpL + (1.0f - alpha) * lTail;
+        const float reflectedL = -lpL;
+
+        // Advance pointers (delay lines tick by 1 sample)
+        ptrR = (ptrR + L - 1) % L;
+        ptrL = (ptrL + L - 1) % L;
+        // Inject reflected energy into the OTHER line at the boundary.
+        left[ptrL]  = reflectedR * 0.998f;
+        right[ptrR] = reflectedL * 0.998f;
+
+        // Envelope
+        const float dt = 1.0f / sr;
+        switch (envStage) {
+          case 0:
+            ampEnv += dt / std::max(1e-4f, A);
+            if (ampEnv >= 1.0f) { ampEnv = 1.0f; envStage = 1; }
+            break;
+          case 1: ampEnv = 1.0f; break;
+          case 3:
+            envT += dt;
+            ampEnv = releaseStart * (1.0f - std::min(1.0f, envT / std::max(1e-4f, R)));
+            if (envT >= R) { ampEnv = 0.0f; envStage = 4; }
+            break;
+          default: ampEnv = 0.0f; break;
+        }
+
+        const float s = pickupSample * amp * ampEnv;
+        const float ab = std::fabs(pickupSample);
+        if (ab > runningPeak) runningPeak = ab;
+        io.out(0) += s;
+        io.out(1) += s;
+
+        ageSec += dt;
+      }
+
+      if (envStage == 4 || runningPeak < 1e-4f || ageSec > 30.0f) free();
+    }
+
+    void onProcess(Graphics& g) override {
+      const int N = 16;
+      const int slot = id() % N;
+      const float yy = -0.85f + (static_cast<float>(slot) / N) * 1.7f;
+
+      stringMesh.reset();
+      stringMesh.primitive(Mesh::LINE_STRIP);
+      const int L = static_cast<int>(right.size());
+      if (L < 2) return;
+      const int samples = std::min(96, L);
+      for (int i = 0; i < samples; ++i) {
+        const float t = static_cast<float>(i) / (samples - 1);
+        const int idx = std::min(L - 1, static_cast<int>(t * L));
+        const int rI = (ptrR + idx) % L;
+        const int lI = (ptrL + (L - idx) % L) % L;
+        const float disp = right[rI] + left[lI];
+        const float xx = -1.3f + t * 2.6f;
+        stringMesh.vertex(xx, yy + disp * 0.06f, 0.0f);
+        stringMesh.color(0.55f, 0.85f, 0.95f);
+      }
+      g.draw(stringMesh);
+    }
+
+    void onTriggerOn() override {
+      if (right.empty()) right.assign(64, 0.0f);
+      if (left.empty())  left.assign(64,  0.0f);
+      std::fill(right.begin(), right.end(), 0.0f);
+      std::fill(left.begin(),  left.end(),  0.0f);
+      ptrR = ptrL = 0;
+      lpR = lpL = 0.0f;
+      runningPeak = 1.0f;
+      ampEnv = 0.0f;
+      envStage = 0;
+      envT = 0.0f;
+      ageSec = 0.0f;
+      releaseStart = 1.0f;
+      mNeedsExcite = true;
+    }
+
+    void onTriggerOff() override {
+      if (envStage < 3) {
+        releaseStart = ampEnv;
+        envStage = 3;
+        envT = 0.0f;
+      }
+    }
+
+  private:
+    bool mNeedsExcite = false;
+  };
+
+  class WaveguideApp : public App {
+  public:
+    ParameterBool playing {"playing", "", true};
+    Parameter     master  {"master",  "", 0.6f, 0.0f, 1.0f};
 
     ControlGUI gui;
-
-    static constexpr int MAX_DELAY = 4096;
-    std::vector<float> rightGoing;
-    std::vector<float> leftGoing;
-
-    int   delayLen = 256;
-    int   writeIdxR = 0;
-    int   writeIdxL = 0;
-    float lpStateLeft  = 0.f;
-    float lpStateRight = 0.f;
-
-    std::atomic<int> pluckPending{0};
-    std::atomic<int> delayLenAtomic{256};
-    std::atomic<int> pluckFlashSet{0};
-
-    static constexpr int VN = 384;
-    std::array<float, VN> rightStripVals{};
-    std::array<float, VN> leftStripVals{};
-    int pluckFlashCounter = 0;
-
-    Mesh rightStrip, leftStrip, sumStrip, gridMesh, pickupMarker, peakMarkers,
-         pluckLineMesh, flashMesh;
+    SynthGUIManager<WaveguideVoice> synthManager{"Waveguide"};
 
     void onInit() override {
-      gui << pitch_hz << pluckPos << pickupPos
-          << damping << stiffness << excitation << mode << pluck;
-      pluck.registerChangeCallback([this](float) {
-        pluckPending.store(1, std::memory_order_release);
-        pluckFlashSet.store(2, std::memory_order_release);
-      });
+      gui << playing << master;
     }
 
     void onCreate() override {
       gui.init();
-      rightGoing.assign(MAX_DELAY, 0.f);
-      leftGoing.assign(MAX_DELAY, 0.f);
-      nav().pos(0, 0, 4.5f);
-    }
-
-    static inline float tap(const std::vector<float>& buf, int writeIdx, int pos) {
-      int idx = writeIdx - pos;
-      while (idx < 0) idx += MAX_DELAY;
-      return buf[idx % MAX_DELAY];
+      nav().pos(0, 0, 4.0f);
     }
 
     void onSound(AudioIOData& io) override {
-      const float sr = io.framesPerSecond();
-      const int   D  = std::max(4, std::min(MAX_DELAY - 1,
-                         static_cast<int>(sr / pitch_hz.get())));
-      delayLen = D;
-      delayLenAtomic.store(D, std::memory_order_release);
-
-      const float fb       = damping.get();
-      const float aLP      = 0.5f - 0.5f * stiffness.get();
-      // Rigid bridge: sign-flip reflection (-1). Free bridge: in-phase (+1).
-      const float reflSign = mode.get() ? +1.0f : -1.0f;
-
-      if (pluckPending.exchange(0, std::memory_order_acquire)) {
-        const int   center = static_cast<int>(pluckPos.get() * D);
-        const int   width  = std::max(8, D / 4);
-        const float amp    = excitation.get() * 0.5f;
-        for (int i = 0; i < D; ++i) {
-          const int dist = std::abs(i - center);
-          const int idxR = ((writeIdxR - i) % MAX_DELAY + MAX_DELAY) % MAX_DELAY;
-          const int idxL = ((writeIdxL - i) % MAX_DELAY + MAX_DELAY) % MAX_DELAY;
-          if (dist < width / 2) {
-            const float w = 1.0f - (2.0f * dist / static_cast<float>(width));
-            const float n = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
-            const float v = n * w * amp;
-            rightGoing[idxR] = v;
-            leftGoing[idxL]  = v;
-          } else {
-            rightGoing[idxR] *= 0.5f;
-            leftGoing[idxL]  *= 0.5f;
-          }
-        }
-        lpStateLeft = lpStateRight = 0.f;
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.0f; io.out(1) = 0.0f; }
+        return;
       }
-
-      const int pickupTap = std::max(1, std::min(D - 2,
-                              static_cast<int>(pickupPos.get() * D)));
-
-      while (io()) {
-        const float rAtRight = tap(rightGoing, writeIdxR, D - 1);
-        const float lAtLeft  = tap(leftGoing,  writeIdxL, D - 1);
-
-        const float lpLeft  = (1.0f - aLP) * lAtLeft  + aLP * lpStateLeft;
-        lpStateLeft = lAtLeft;
-        const float lpRight = (1.0f - aLP) * rAtRight + aLP * lpStateRight;
-        lpStateRight = rAtRight;
-
-        const float intoRight = reflSign * lpLeft  * fb;
-        const float intoLeft  = reflSign * lpRight * fb;
-
-        const float pR = tap(rightGoing, writeIdxR, pickupTap);
-        const float pL = tap(leftGoing,  writeIdxL, D - 1 - pickupTap);
-        const float out = (pR + pL) * 0.5f;
-
-        writeIdxR = (writeIdxR + 1) % MAX_DELAY;
-        writeIdxL = (writeIdxL + 1) % MAX_DELAY;
-        rightGoing[writeIdxR] = intoRight;
-        leftGoing[writeIdxL]  = intoLeft;
-
-        io.out(0) = out; io.out(1) = out;
-      }
-    }
-
-    void onAnimate(double /*dt*/) override {
-      const int D = delayLenAtomic.load(std::memory_order_acquire);
-      const int step = std::max(1, D / VN);
-
-      rightStrip.reset(); rightStrip.primitive(Mesh::LINE_STRIP);
-      leftStrip.reset();  leftStrip.primitive(Mesh::LINE_STRIP);
-      sumStrip.reset();   sumStrip.primitive(Mesh::LINE_STRIP);
-
-      int count = 0;
-      for (int k = 0; k < D && count < VN; k += step, ++count) {
-        const float t = static_cast<float>(count) / VN;
-        const float x = -1.4f + 2.8f * t;
-
-        const float vr = tap(rightGoing, writeIdxR, k);
-        const float vl = tap(leftGoing,  writeIdxL, D - 1 - k);
-        rightStripVals[count] = vr;
-        leftStripVals [count] = vl;
-
-        rightStrip.vertex(x, 0.5f + vr * 0.3f, 0.f);
-        rightStrip.color(0.95f, 0.55f + 0.3f * t, 0.30f);
-
-        leftStrip.vertex(x, -0.5f + vl * 0.3f, 0.f);
-        leftStrip.color(0.30f, 0.65f + 0.3f * t, 0.95f);
-
-        const float sumV = vr + vl;
-        sumStrip.vertex(x, -0.78f + sumV * 0.15f, 0.f);
-        sumStrip.color(0.85f, 0.85f, 0.40f);
-      }
-      for (int k = count; k < VN; ++k) {
-        rightStripVals[k] = 0.f;
-        leftStripVals [k] = 0.f;
-      }
-
-      int rPeak = 0, lPeak = 0;
-      float rMax = 0.f, lMax = 0.f;
-      const int activeCount = std::max(1, count);
-      for (int k = 0; k < activeCount; ++k) {
-        const float ar  = std::fabs(rightStripVals[k]);
-        const float al2 = std::fabs(leftStripVals [k]);
-        if (ar  > rMax) { rMax = ar;  rPeak = k; }
-        if (al2 > lMax) { lMax = al2; lPeak = k; }
-      }
-
-      peakMarkers.reset();
-      peakMarkers.primitive(Mesh::TRIANGLES);
-      auto pushTri = [&](float cx, float cy, float dirX, float r,
-                         float cr, float cg, float cb) {
-        const float ax = cx + dirX * r;
-        const float ay = cy;
-        const float bx = cx - dirX * r * 0.5f;
-        const float by = cy - r * 0.7f;
-        const float dx = cx - dirX * r * 0.5f;
-        const float dy = cy + r * 0.7f;
-        peakMarkers.vertex(ax, ay, 0.f); peakMarkers.color(cr, cg, cb);
-        peakMarkers.vertex(bx, by, 0.f); peakMarkers.color(cr, cg, cb);
-        peakMarkers.vertex(dx, dy, 0.f); peakMarkers.color(cr, cg, cb);
-      };
-      {
-        const float xR = -1.4f + 2.8f * (static_cast<float>(rPeak) / VN);
-        const float yR = 0.5f + rightStripVals[rPeak] * 0.3f;
-        pushTri(xR, yR, +1.0f, 0.05f, 1.0f, 0.85f, 0.30f);
-        const float xL = -1.4f + 2.8f * (static_cast<float>(lPeak) / VN);
-        const float yL = -0.5f + leftStripVals[lPeak] * 0.3f;
-        pushTri(xL, yL, -1.0f, 0.05f, 0.40f, 0.90f, 1.0f);
-      }
-
-      gridMesh.reset();
-      gridMesh.primitive(Mesh::LINES);
-      auto hline = [&](float y) {
-        gridMesh.vertex(-1.4f, y, 0.f); gridMesh.color(0.22f, 0.22f, 0.25f);
-        gridMesh.vertex( 1.4f, y, 0.f); gridMesh.color(0.22f, 0.22f, 0.25f);
-      };
-      hline( 0.5f); hline(-0.5f); hline(-0.85f);
-
-      pickupMarker.reset();
-      pickupMarker.primitive(Mesh::TRIANGLES);
-      const float px = -1.4f + 2.8f * pickupPos.get();
-      auto addDot = [&](float cx, float cy, float r) {
-        const int seg = 16;
-        for (int s = 0; s < seg; ++s) {
-          const float a0 = 2.0f * 3.14159265f * s       / seg;
-          const float a1 = 2.0f * 3.14159265f * (s + 1) / seg;
-          pickupMarker.vertex(cx, cy, 0.f);
-          pickupMarker.vertex(cx + r * std::cos(a0), cy + r * std::sin(a0), 0.f);
-          pickupMarker.vertex(cx + r * std::cos(a1), cy + r * std::sin(a1), 0.f);
-          pickupMarker.color(1.0f, 0.85f, 0.20f);
-          pickupMarker.color(1.0f, 0.85f, 0.20f);
-          pickupMarker.color(1.0f, 0.85f, 0.20f);
-        }
-      };
-      addDot(px,  0.5f, 0.04f);
-      addDot(px, -0.5f, 0.04f);
-      addDot(px, -0.85f, 0.035f);
-
-      pluckLineMesh.reset();
-      pluckLineMesh.primitive(Mesh::LINES);
-      const float plX = -1.4f + 2.8f * pluckPos.get();
-      pluckLineMesh.vertex(plX, -1.05f, 0.f); pluckLineMesh.color(0.95f, 0.80f, 0.20f);
-      pluckLineMesh.vertex(plX,  1.05f, 0.f); pluckLineMesh.color(0.95f, 0.80f, 0.20f);
-
-      const int flashRequest = pluckFlashSet.exchange(0, std::memory_order_acquire);
-      if (flashRequest > 0) pluckFlashCounter = flashRequest;
-      flashMesh.reset();
-      flashMesh.primitive(Mesh::TRIANGLE_STRIP);
-      if (pluckFlashCounter > 0) {
-        const float a = 0.18f * static_cast<float>(pluckFlashCounter) / 2.0f;
-        flashMesh.vertex(-1.6f, -1.2f, 0.f); flashMesh.color(a, a, a);
-        flashMesh.vertex( 1.6f, -1.2f, 0.f); flashMesh.color(a, a, a);
-        flashMesh.vertex(-1.6f,  1.2f, 0.f); flashMesh.color(a, a, a);
-        flashMesh.vertex( 1.6f,  1.2f, 0.f); flashMesh.color(a, a, a);
-        --pluckFlashCounter;
-      }
+      synthManager.render(io);
+      const float m = master.get();
+      while (io()) { io.out(0) *= m; io.out(1) *= m; }
     }
 
     void onDraw(Graphics& g) override {
-      g.clear(0.04f, 0.05f, 0.07f);
+      g.clear(0.04f, 0.06f, 0.08f);
       g.meshColor();
-      g.draw(flashMesh);
-      g.draw(gridMesh);
-      g.draw(pluckLineMesh);
-      g.draw(rightStrip);
-      g.draw(leftStrip);
-      g.draw(sumStrip);
-      g.draw(peakMarkers);
-      g.draw(pickupMarker);
+      synthManager.render(g);
       gui.draw(g);
     }
 
-    static int noteFromKey(int key) {
-      static const int kbd[] = {
-        'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
-        'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
-        'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
-      };
-      for (int i = 0; i < 21; ++i) {
-        const int K = kbd[i*2];
-        if (key == K || key == K + 32) return kbd[i*2 + 1];
-      }
-      return -1;
-    }
     bool onKeyDown(const Keyboard& k) override {
-      const int n = noteFromKey(k.key());
-      if (n >= 0) {
-        pitch_hz.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
-        pluck.set(1.0f);
+      if (gui.usingInput()) return true;
+      const int n = asciiToIndex(k.key());
+      if (n > 0) {
+        const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+        synthManager.voice()->setInternalParameterValue("freq", f);
+        synthManager.triggerOn(n);
       }
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToIndex(k.key());
+      if (n > 0) synthManager.triggerOff(n);
       return true;
     }
   };
 
-  ALLOLIB_WEB_MAIN(WaveguideString)
+  ALLOLIB_WEB_MAIN(WaveguideApp)
   `,
   },
   {
     id: 'mat-subtractive',
-    title: 'Subtractive Synth — Saw + Resonant Filter',
+    title: 'Subtractive Synth (Saw -> SVF Lowpass)',
     description:
-      "Classic subtractive synthesis: a sawtooth oscillator whose harmonics are sculpted by a resonant lowpass biquad, with two ADSR envelopes — one shaping amplitude, the other sweeping the filter cutoff for that signature 'wah' motion. Visualization plots the filter's true RBJ-cookbook biquad poles (analytic roots of the denominator) and zeros at z=-1 on the complex z-plane above a live magnitude spectrum, with a sliding cutoff line and log-Hz tick marks at 100 Hz / 1 kHz / 10 kHz so the harmonic carving lines up with the real cutoff frequency. A soft tanh limiter on the output keeps the resonant ringing musical instead of self-oscillating into clipping.",
+      'Polyphonic subtractive synth. Per-voice saw oscillator into a state-variable lowpass filter, with the filter cutoff modulated by a dedicated envelope amount. Per-voice {freq, cutoff, resonance, envAmount, attack, decay, sustain, release, amp}. ZXCVBNM keyboard plays C3..B5. Per-voice cutoff drawn as a horizontal slider; bottom strip is a live spectrum.',
     category: 'mat-synthesis',
     subcategory: 'subtractive',
     code: `/**
-   * Subtractive Synth — Saw + Resonant Filter — MAT200B Phase 2
+   * Subtractive Synth — Polyphonic saw + state-variable LP filter
    *
-   * Source -> filter -> amp envelope is the textbook subtractive
-   * voice. A sawtooth is harmonically dense (1/k spectrum), a
-   * resonant lowpass biquad carves a band, and an ADSR shapes
-   * amplitude. A second ADSR with its own depth ('env_amount') is
-   * summed into the filter cutoff for the classic synth-bass sweep.
-   *
-   * Visualization (top): z-plane unit circle with the EXACT analytic
-   * RBJ-cookbook poles of a resonant lowpass biquad:
-   *     w0 = 2*pi*fc/sr,   alpha = sin(w0)/(2Q)
-   *     a0 = 1+alpha,  a1 = -2cos(w0)/a0,  a2 = (1-alpha)/a0
-   *     pole = (-a1 +/- sqrt(a1^2 - 4*a2)) / 2
-   * For the resonant case the discriminant is negative; |pole| = sqrt(a2)
-   * and theta = atan2(sqrt(-disc)/2, -a1/2). Zeros sit at z=-1 (double).
-   *
-   * Visualization (bottom): 256-pt Hann-windowed inline DFT of the
-   * output, with log-spaced tick marks at 100 Hz, 1 kHz, 10 kHz and a
-   * sliding vertical line at the live (envelope-modulated) cutoff so
-   * the spectral notch lines up with the real cutoff in real time.
-   *
-   * Output: tanh-limited at 1.2x to keep self-oscillation musical.
+   * Each voice has a band-limited-ish saw oscillator (raw saw, no PolyBLEP) feeding
+   * a Chamberlin SVF in lowpass mode. The filter cutoff is a base value plus an
+   * envelope-modulated offset. Free() fires when the amplitude envelope completes
+   * its release stage. ZXCVBNM/ASDFGHJ/QWERTYU spans C3..B5.
    */
 
   #include "al_playground_compat.hpp"
-  #include "Gamma/Filter.h"
-  #include "Gamma/Envelope.h"
-  #include "Gamma/Oscillator.h"
 
   #include <array>
   #include <atomic>
@@ -3888,316 +3853,216 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  class Subtractive : public App {
+  class SubtractiveVoice : public SynthVoice {
   public:
-  ParameterBool playing {"playing", "", true};
-  Parameter pitch_hz   {"pitch_hz",   "",  110.0f,  40.0f, 1200.0f};
-  Parameter cutoff_hz  {"cutoff_hz",  "", 1200.0f,  50.0f,12000.0f};
-  Parameter resonance  {"resonance",  "",    4.0f,   0.5f,   15.0f};
-  Parameter env_amount {"env_amount", "", 1500.0f,   0.0f, 6000.0f};
-  Parameter attack_ms  {"attack_ms",  "",    5.0f,   1.0f, 1000.0f};
-  Parameter decay_ms   {"decay_ms",   "",  250.0f,  10.0f, 2000.0f};
-  Parameter sustain    {"sustain",    "",    0.5f,   0.0f,    1.0f};
-  Parameter release_ms {"release_ms", "",  500.0f,  10.0f, 3000.0f};
-  Parameter amp        {"amplitude",  "",   0.20f,   0.0f,    1.0f};
-  Trigger   noteOn     {"noteOn",     ""};
-  Trigger   noteOff    {"noteOff",    ""};
+    double phase = 0.0;
+    float  lp_low = 0.0f, lp_band = 0.0f;
+    float  envVal = 0.0f;
+    int    envStage = 0;
+    float  envT = 0.0f;
+    float  releaseStart = 0.0f;
+    float  cutoffDisplay = 0.0f;
 
-  ControlGUI gui;
+    Mesh slotMesh;
 
-  gam::Saw<>    saw;
-  gam::Biquad<> lpf;
-  gam::Env<3>   ampEnv;
-  gam::Env<3>   cutEnv;
-
-  std::atomic<int> noteOnPending{0};
-  std::atomic<int> noteOffPending{0};
-
-  std::atomic<float> cutEnvViz{0.f};
-  std::atomic<float> sampleRateHz{48000.f};
-
-  static constexpr int N = 256;
-  std::array<float, N> blockBuf{};
-  std::atomic<int> blockW{0};
-
-  Mesh spectrum, gridMesh, unitCircle, poleMesh, zeroMesh, cutoffLine, tickMesh;
-
-  void onInit() override {
-    gui << playing << pitch_hz << cutoff_hz << resonance << env_amount
-        << attack_ms << decay_ms << sustain << release_ms << amp
-        << noteOn << noteOff;
-
-    noteOn.registerChangeCallback([this](float) {
-      noteOnPending.store(1, std::memory_order_release);
-    });
-    noteOff.registerChangeCallback([this](float) {
-      noteOffPending.store(1, std::memory_order_release);
-    });
-
-    ampEnv.levels(0.f, 1.f, sustain.get(), 0.f);
-    ampEnv.sustainPoint(2);
-    cutEnv.levels(0.f, 1.f, sustain.get(), 0.f);
-    cutEnv.sustainPoint(2);
-
-    lpf.type(gam::LOW_PASS);
-  }
-
-  void onCreate() override {
-    gui.init();
-    nav().pos(0, 0, 4.0f);
-  }
-
-  void onSound(AudioIOData& io) override {
-    if (!playing.get()) {
-      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-      return;
-    }
-    const float sr = io.framesPerSecond();
-    sampleRateHz.store(sr, std::memory_order_relaxed);
-
-    ampEnv.lengths()[0] = attack_ms.get()  / 1000.f;
-    ampEnv.lengths()[1] = decay_ms.get()   / 1000.f;
-    ampEnv.lengths()[2] = release_ms.get() / 1000.f;
-    ampEnv.levels()[2]  = sustain.get();
-    cutEnv.lengths()[0] = attack_ms.get()  / 1000.f;
-    cutEnv.lengths()[1] = decay_ms.get()   / 1000.f;
-    cutEnv.lengths()[2] = release_ms.get() / 1000.f;
-    cutEnv.levels()[2]  = sustain.get();
-
-    if (noteOnPending.exchange(0, std::memory_order_acquire)) {
-      ampEnv.reset();
-      cutEnv.reset();
-    }
-    if (noteOffPending.exchange(0, std::memory_order_acquire)) {
-      ampEnv.release();
-      cutEnv.release();
+    void init() override {
+      createInternalTriggerParameter("freq",       220.0f,  20.0f, 2000.0f);
+      createInternalTriggerParameter("cutoff",    1200.0f, 100.0f, 8000.0f);
+      createInternalTriggerParameter("resonance",   0.30f,  0.0f,    0.95f);
+      createInternalTriggerParameter("envAmount", 2000.0f,  0.0f, 6000.0f);
+      createInternalTriggerParameter("attack",     0.01f,  0.001f,   2.0f);
+      createInternalTriggerParameter("decay",      0.30f,  0.001f,   2.0f);
+      createInternalTriggerParameter("sustain",    0.50f,  0.0f,     1.0f);
+      createInternalTriggerParameter("release",    0.50f,  0.001f,   4.0f);
+      createInternalTriggerParameter("amp",        0.25f,  0.0f,     1.0f);
     }
 
-    saw.freq(pitch_hz.get());
-    const float baseFc  = cutoff_hz.get();
-    const float envAmt  = env_amount.get();
-    const float Q       = resonance.get();
-    const float gain    = amp.get();
+    void onProcess(AudioIOData& io) override {
+      const float sr        = io.framesPerSecond();
+      const float f         = getInternalParameterValue("freq");
+      const float baseCut   = getInternalParameterValue("cutoff");
+      const float res       = getInternalParameterValue("resonance");
+      const float envAmt    = getInternalParameterValue("envAmount");
+      const float A         = getInternalParameterValue("attack");
+      const float D         = getInternalParameterValue("decay");
+      const float S         = getInternalParameterValue("sustain");
+      const float R         = getInternalParameterValue("release");
+      const float amp       = getInternalParameterValue("amp");
+      const float dPh       = f / sr;
+      const float q         = 1.0f - std::min(0.95f, res);
 
-    while (io()) {
-      const float ce = cutEnv();
-      const float fc = std::min(0.49f * sr,
-                                std::max(20.f, baseFc + envAmt * ce));
-      lpf.set(fc, Q);
+      while (io()) {
+        // Saw oscillator (-1..+1)
+        const float saw = static_cast<float>(2.0 * (phase - std::floor(phase + 0.5)));
+        phase += dPh;
+        if (phase >= 1.0) phase -= 1.0;
 
-      const float src = saw();
-      const float filt = lpf(src);
-      const float ae   = ampEnv();
-      const float y    = filt * ae * gain;
+        // Envelope tick
+        const float dt = 1.0f / sr;
+        switch (envStage) {
+          case 0:
+            envVal += dt / std::max(1e-4f, A);
+            if (envVal >= 1.0f) { envVal = 1.0f; envStage = 1; envT = 0.0f; }
+            break;
+          case 1:
+            envT += dt;
+            envVal = 1.0f + (S - 1.0f) * std::min(1.0f, envT / std::max(1e-4f, D));
+            if (envT >= D) { envVal = S; envStage = 2; }
+            break;
+          case 2: envVal = S; break;
+          case 3:
+            envT += dt;
+            envVal = releaseStart * (1.0f - std::min(1.0f, envT / std::max(1e-4f, R)));
+            if (envT >= R) { envVal = 0.0f; envStage = 4; }
+            break;
+          default: envVal = 0.0f; break;
+        }
 
-      // Soft tanh limiter — keeps high-Q self-oscillation musical
-      // instead of clipping/exploding when resonance is cranked.
-      const float yLim = std::tanh(y * 1.2f);
-      io.out(0) = yLim;
-      io.out(1) = yLim;
+        // SVF lowpass with env-modulated cutoff (Chamberlin)
+        float cutoffHz = baseCut + envAmt * envVal;
+        cutoffHz = std::min(sr * 0.45f, std::max(20.0f, cutoffHz));
+        cutoffDisplay = cutoffHz;
+        const float fParam = 2.0f * std::sin(static_cast<float>(M_PI) * cutoffHz / sr);
+        const float high = saw - lp_low - q * lp_band;
+        lp_band += fParam * high;
+        lp_low  += fParam * lp_band;
 
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = yLim;
-      blockW.store((w + 1) % N, std::memory_order_release);
-    }
-
-    cutEnvViz.store(cutEnv.value(), std::memory_order_relaxed);
-  }
-
-  void computeSpectrum(std::array<float, N / 2>& mag) {
-    const int w = blockW.load(std::memory_order_acquire);
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
-      x[i] = blockBuf[idx] * win;
-    }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
+        const float s = lp_low * envVal * amp;
+        io.out(0) += s;
+        io.out(1) += s;
       }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
-    }
-  }
 
-  void addDiscDots(Mesh& m, float cx, float cy, float radius,
-                   float r, float gC, float b) {
-    constexpr int SEG = 12;
-    for (int i = 0; i < SEG; ++i) {
-      const float a0 = 2.0f * static_cast<float>(M_PI) * i       / SEG;
-      const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / SEG;
-      m.vertex(cx, cy, 0.f);
-      m.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
-      m.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
-      m.color(r, gC, b); m.color(r, gC, b); m.color(r, gC, b);
-    }
-  }
-
-  void onAnimate(double /*dt*/) override {
-    const float sr   = sampleRateHz.load(std::memory_order_relaxed);
-    const float Q    = std::max(0.5f, resonance.get());
-    const float ce   = cutEnvViz.load(std::memory_order_relaxed);
-    const float nyq  = 0.5f * sr;
-    const float fc   = std::min(0.49f * sr,
-                       std::max(20.f, cutoff_hz.get() + env_amount.get() * ce));
-
-    constexpr float CX = 0.0f;
-    constexpr float CY = 0.55f;
-    constexpr float R  = 0.45f;
-
-    unitCircle.reset();
-    unitCircle.primitive(Mesh::LINE_STRIP);
-    constexpr int CSEG = 64;
-    for (int i = 0; i <= CSEG; ++i) {
-      const float a = 2.0f * static_cast<float>(M_PI) * i / CSEG;
-      unitCircle.vertex(CX + R * std::cos(a), CY + R * std::sin(a), 0.f);
-      unitCircle.color(0.45f, 0.45f, 0.55f);
+      if (envStage == 4) free();
     }
 
-    // ---- RBJ cookbook biquad LP poles (analytic) ----
-    const float w0    = 2.0f * static_cast<float>(M_PI) * fc / sr;
-    const float alpha = std::sin(w0) / (2.0f * Q);
-    const float a0    = 1.0f + alpha;
-    const float a1    = -2.0f * std::cos(w0) / a0;
-    const float a2    = (1.0f - alpha) / a0;
-    // Roots of z^2 + a1 z + a2 = 0
-    const float disc  = a1 * a1 - 4.0f * a2;
-    float poleR, poleTheta;
-    if (disc < 0.0f) {
-      poleR     = std::sqrt(std::max(0.0f, a2));
-      poleTheta = std::atan2(std::sqrt(-disc) * 0.5f, -a1 * 0.5f);
-    } else {
-      // Real poles fallback (low-Q corner) — use larger-magnitude root.
-      const float s = std::sqrt(disc);
-      const float r1 = (-a1 + s) * 0.5f;
-      const float r2 = (-a1 - s) * 0.5f;
-      poleR     = std::max(std::fabs(r1), std::fabs(r2));
-      poleTheta = (std::fabs(r1) > std::fabs(r2)) ? (r1 < 0 ? static_cast<float>(M_PI) : 0.f)
-                                                  : (r2 < 0 ? static_cast<float>(M_PI) : 0.f);
-    }
-    poleR = std::min(0.999f, poleR);
+    void onProcess(Graphics& g) override {
+      const int N = 16;
+      const int slot = id() % N;
+      const float yy = -0.85f + (static_cast<float>(slot) / N) * 1.10f;
+      const float cN = std::min(1.0f, std::max(0.0f,
+        (std::log(std::max(20.0f, cutoffDisplay)) - std::log(20.0f)) /
+        (std::log(8000.0f) - std::log(20.0f))));
 
-    poleMesh.reset();
-    poleMesh.primitive(Mesh::TRIANGLES);
-    addDiscDots(poleMesh,
-            CX + R * poleR * std::cos(poleTheta),
-            CY + R * poleR * std::sin(poleTheta),
-            0.035f, 0.95f, 0.55f, 0.35f);
-    addDiscDots(poleMesh,
-            CX + R * poleR * std::cos(-poleTheta),
-            CY + R * poleR * std::sin(-poleTheta),
-            0.035f, 0.95f, 0.55f, 0.35f);
-
-    zeroMesh.reset();
-    zeroMesh.primitive(Mesh::TRIANGLES);
-    addDiscDots(zeroMesh, CX - R, CY, 0.030f, 0.30f, 0.85f, 0.95f);
-
-    // ---- Spectrum ----
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag);
-
-    spectrum.reset();
-    spectrum.primitive(Mesh::LINE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(0.95f, mag[k] * 6.0f);
-      spectrum.vertex(xx, -0.95f + h, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      spectrum.color(0.55f + 0.35f * t, 0.45f + 0.45f * t, 0.95f - 0.3f * t);
+      slotMesh.reset();
+      slotMesh.primitive(Mesh::LINES);
+      const float x0 = -1.4f, x1 = -1.4f + 2.8f * cN;
+      slotMesh.vertex(x0, yy, 0.0f); slotMesh.color(0.6f, 0.7f, 0.95f);
+      slotMesh.vertex(x1, yy, 0.0f); slotMesh.color(0.95f, 0.45f, 0.5f);
+      g.draw(slotMesh);
     }
 
-    // ---- Live cutoff line on spectrum: linear k = fc/nyquist mapping ----
-    cutoffLine.reset();
-    cutoffLine.primitive(Mesh::LINES);
-    const float fcRel = std::min(1.0f, std::max(0.0f, fc / nyq));
-    const float fcX   = -1.4f + fcRel * 2.8f;
-    cutoffLine.vertex(fcX, -0.95f, 0.f);
-    cutoffLine.vertex(fcX, -0.10f, 0.f);
-    cutoffLine.color(1.0f, 0.85f, 0.30f);
-    cutoffLine.color(1.0f, 0.85f, 0.30f);
-
-    // ---- Log-Hz tick marks at 100 Hz, 1 kHz, 10 kHz ----
-    tickMesh.reset();
-    tickMesh.primitive(Mesh::TRIANGLES);
-    const float tickFreqs[3] = {100.0f, 1000.0f, 10000.0f};
-    for (int t = 0; t < 3; ++t) {
-      const float f = tickFreqs[t];
-      if (f >= nyq) continue;
-      const float fr = f / nyq;
-      const float x  = -1.4f + fr * 2.8f;
-      const float h  = 0.025f;
-      const float w  = 0.012f;
-      // Small upward triangle sitting on the spectrum baseline.
-      tickMesh.vertex(x - w, -0.98f, 0.f);
-      tickMesh.vertex(x + w, -0.98f, 0.f);
-      tickMesh.vertex(x,     -0.98f + h, 0.f);
-      tickMesh.color(0.65f, 0.65f, 0.75f);
-      tickMesh.color(0.65f, 0.65f, 0.75f);
-      tickMesh.color(0.65f, 0.65f, 0.75f);
+    void onTriggerOn() override {
+      phase = 0.0;
+      lp_low = lp_band = 0.0f;
+      envVal = 0.0f;
+      envStage = 0;
+      envT = 0.0f;
+      releaseStart = 1.0f;
     }
 
-    gridMesh.reset();
-    gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(CX - R - 0.05f, CY, 0.f);
-    gridMesh.vertex(CX + R + 0.05f, CY, 0.f);
-    gridMesh.vertex(CX, CY - R - 0.05f, 0.f);
-    gridMesh.vertex(CX, CY + R + 0.05f, 0.f);
-    gridMesh.vertex(-1.4f, -0.95f, 0.f);
-    gridMesh.vertex( 1.4f, -0.95f, 0.f);
-    for (int k = 0; k < 6; ++k) gridMesh.color(0.22f, 0.22f, 0.28f);
-  }
-
-  void onDraw(Graphics& g) override {
-    g.clear(0.04f, 0.04f, 0.08f);
-    g.meshColor();
-    g.draw(gridMesh);
-    g.draw(unitCircle);
-    g.draw(zeroMesh);
-    g.draw(poleMesh);
-    g.draw(spectrum);
-    g.draw(cutoffLine);
-    g.draw(tickMesh);
-    gui.draw(g);
-  }
-
-  bool onMouseDown(const Mouse&) override { return false; }
-  bool onMouseDrag(const Mouse&) override { return false; }
-  bool onMouseUp  (const Mouse&) override { return false; }
-
-  // Musical keyboard: ZXCVBNM = C3..B3, ASDFGHJ = C4..B4, QWERTYU = C5..B5.
-  static int noteFromKey(int key) {
-    static const int kbd[] = {
-      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
-      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
-      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
-    };
-    for (int i = 0; i < 21; ++i) {
-      const int K = kbd[i*2];
-      if (key == K || key == K + 32) return kbd[i*2 + 1];
+    void onTriggerOff() override {
+      if (envStage < 3) {
+        releaseStart = envVal;
+        envStage = 3;
+        envT = 0.0f;
+      }
     }
-    return -1;
-  }
-  static float freqFromMidi(int n) {
-    return 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
-  }
-  bool onKeyDown(const Keyboard& k) override {
-    const int n = noteFromKey(k.key());
-    if (n >= 0) {
-      pitch_hz.set(freqFromMidi(n));
-      noteOn.set(1.0f);
-    }
-    return true;
-  }
-  bool onKeyUp(const Keyboard& k) override {
-    if (noteFromKey(k.key()) >= 0) noteOff.set(1.0f);
-    return true;
-  }
   };
 
-  ALLOLIB_WEB_MAIN(Subtractive)
+  class SubtractiveApp : public App {
+  public:
+    ParameterBool playing {"playing", "", true};
+    Parameter     master  {"master",  "", 0.6f, 0.0f, 1.0f};
+
+    ControlGUI gui;
+    SynthGUIManager<SubtractiveVoice> synthManager{"Subtractive"};
+
+    static constexpr int N = 256;
+    std::array<float, N> blockBuf{};
+    std::atomic<int>     blockW{0};
+    Mesh                 spectrum;
+
+    void onInit() override {
+      gui << playing << master;
+    }
+
+    void onCreate() override {
+      gui.init();
+      nav().pos(0, 0, 4.0f);
+    }
+
+    void onSound(AudioIOData& io) override {
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.0f; io.out(1) = 0.0f; }
+        return;
+      }
+      synthManager.render(io);
+      const float m = master.get();
+      int w = blockW.load(std::memory_order_relaxed);
+      while (io()) {
+        io.out(0) *= m;
+        io.out(1) *= m;
+        blockBuf[w] = io.out(0);
+        w = (w + 1) % N;
+      }
+      blockW.store(w, std::memory_order_release);
+    }
+
+    void onAnimate(double /*dt*/) override {
+      // 256-pt spectrum from blockBuf
+      const int w = blockW.load(std::memory_order_acquire);
+      std::array<float, N / 2> mag{};
+      for (int k = 0; k < N / 2; ++k) {
+        float re = 0.0f, im = 0.0f;
+        const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
+        for (int n = 0; n < N; ++n) {
+          const int idx = (w + n) % N;
+          const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * n / (N - 1)));
+          const float x = blockBuf[idx] * win;
+          re += x * std::cos(ang * n);
+          im += x * std::sin(ang * n);
+        }
+        mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+      }
+      spectrum.reset();
+      spectrum.primitive(Mesh::LINE_STRIP);
+      for (int k = 0; k < N / 2; ++k) {
+        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+        const float h  = std::min(1.0f, mag[k] * 6.0f);
+        const float yy = -0.95f + h * 0.4f;
+        spectrum.vertex(xx, yy, 0.0f);
+        const float t = static_cast<float>(k) / (N / 2);
+        spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
+      }
+    }
+
+    void onDraw(Graphics& g) override {
+      g.clear(0.05f, 0.05f, 0.08f);
+      g.meshColor();
+      g.draw(spectrum);
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToIndex(k.key());
+      if (n > 0) {
+        const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+        synthManager.voice()->setInternalParameterValue("freq", f);
+        synthManager.triggerOn(n);
+      }
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToIndex(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
+  };
+
+  ALLOLIB_WEB_MAIN(SubtractiveApp)
   `,
   },
   {
