@@ -38,6 +38,7 @@ export const mat200bCategories: ExampleCategory[] = [
       { id: 'physical', title: 'Physical Models' },
       { id: 'granular', title: 'Granular' },
       { id: 'concat', title: 'Concatenative' },
+      { id: 'distortion', title: 'Distortion / Waveshaping' },
     ],
   },
   {
@@ -2973,8 +2974,8 @@ ALLOLIB_WEB_MAIN(CombSwept)
     title: 'Waveshaper Distortion Explorer',
     description:
     'Pure waveshaping: input -> arbitrary memoryless transfer function -> output. Pick the source (sine/saw/noise) and the curve (tanh/atan/hardclip/cubic/sin), then crank "drive" to push the signal into saturation. A memoryless nonlinearity generates harmonics at integer multiples of the input frequency — the moment any harmonic exceeds Nyquist it folds back as inharmonic aliasing. Toggle "oversample" to process at 4x sr (linear-upsample, shape, 4-tap FIR average, decimate). When on, both spectra are drawn: orange = aliased (1x shaping), white = clean (oversampled). The orange spikes above the white curve are exactly the aliasing artifacts the FIR removes. The yellow disc tracks the live input on the transfer curve.',
-    category: 'mat-signal',
-    subcategory: 'dynamics',
+    category: 'mat-synthesis',
+    subcategory: 'distortion',
     code: `/**
    * Waveshaper Distortion Explorer — MAT200B Phase 2 (oversample upgrade)
    *
@@ -4556,12 +4557,12 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-multiscale-stems',
-    title: 'Multiscale Stem Visualizer',
-    description: 'Play a bundled loop and visualize it at three simultaneous time scales (full loop overview, ~1s medium window, ~10ms short window) with per-scale dB-RMS meters, color-framed waveform panels, dB tick markers, a full-height playhead, yellow zoom brackets on the overview, and a phase-heatmap strip that shows where loud transients live in the loop.',
+    title: 'Multiscale Loop Inspector',
+    description: 'Plays a bundled CC0 loop and visualizes it at three simultaneous time scales (full loop overview, ~1s medium window, ~10ms short window) with per-scale dB-RMS meters, color-framed waveform panels, dB tick markers, a full-height playhead, yellow zoom brackets on the overview, and a phase-heatmap strip showing where loud transients live in the loop. Single-source loop inspector — for true multi-stem mixing see mat-mastering-ab.',
     category: 'mat-mixing',
     subcategory: 'stems',
     code: `/**
-   * Multiscale Stem Visualizer
+   * Multiscale Loop Inspector
    *
    * Plays one of three bundled loops (drums, pad, mixed) and renders the
    * audio simultaneously at three time scales stacked vertically:
@@ -5512,28 +5513,34 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-mix-thermometer',
-    title: 'Mix Thermometer (Loudness Sweet-Spot Meter)',
+    title: 'Limiter Headroom Meter',
     description:
-      'Vertical thermometer-style loudness meter with cold/sweet/hot color zones plus a rolling 6-second history strip with sweet-band overlay. A thin red true-peak indicator sits beside the integrated bar (max-hold with 6 dB/s decay) so you see the gap between peak and integrated loudness. Reference ticks at the streaming-platform norms (-23 / -18 / -14 dB) are color-coded by platform — grey for EBU broadcast, dark blue for mastering classic, green for Spotify/streaming. A live cyan target line is driven by the target_dB parameter. Honest caveat: this is RMS-pseudo-LUFS over a tunable window, not a true ITU-R BS.1770 K-weighted reading — qualitatively similar trend, easier to read in real time.',
+      'Vertical headroom meter for the limiter / mastering chain. Cold/sweet/hot color zones map true-peak distance to clipping threshold (0 dBFS = ceiling, -14 dB = streaming target, -23 dB = broadcast). Reference ticks at -23 / -18 / -14 dB are platform-color-coded. The thin red side-bar is true-peak max-hold with 6 dB/s decay — pair with mat-compressor to see how dynamic-range processing trades headroom against loudness. Honest caveat: this is RMS over a tunable window plus true-peak, not ITU-R BS.1770 K-weighted LUFS.',
     category: 'mat-mixing',
     subcategory: 'mastering',
     code: `/**
-   * Mix Thermometer (Loudness Sweet-Spot Meter) — MAT200B Mixing/Mastering
+   * Limiter Headroom Meter — MAT200B Mixing/Mastering
    *
-   * A vertical "thermometer" meter that visualizes the integrated
-   * loudness of the playing loop over a tunable window (default 3 s),
-   * plus a thin true-peak bar to its right (max-hold over 1 s, 6 dB/s
-   * decay). Cold (blue) = too quiet, sweet (green) = inside target band,
-   * hot (red) = too loud. Reference ticks at -23 / -18 / -14 dB are
-   * color-coded by streaming-platform target.
+   * A vertical headroom meter for the limiter / mastering chain. Pair
+   * this with mat-compressor to see how dynamic-range processing trades
+   * headroom against loudness: as the compressor pulls peaks down, the
+   * integrated bar rises and the true-peak side-bar collapses toward
+   * the integrated reading.
+   *
+   * The integrated bar shows RMS over a tunable window (default 3 s).
+   * The thin true-peak bar to its right is sample-peak max-hold (1 s
+   * window, 6 dB/s decay) so the visible gap between the two reports
+   * how much headroom the limiter still has before clipping. Cold
+   * (blue) = lots of headroom / too quiet, sweet (green) = inside
+   * target band, hot (red) = encroaching on the ceiling. Reference
+   * ticks at -23 / -18 / -14 dB are color-coded by streaming-platform
+   * target (broadcast / mastering classic / streaming).
    *
    * IMPORTANT — RMS-pseudo-LUFS caveat: true LUFS (ITU-R BS.1770)
    * needs K-weighting + gating. We skip both and use a one-pole RMS
    * over window_sec. The trend is qualitatively similar; absolute
-   * values are not. Read as "how hot relative to my target," not
-   * as "what would Spotify say." The true-peak bar shows the gap
-   * between sample peak and integrated loudness — half the point of
-   * a real LUFS meter.
+   * values are not. Read this as "how much headroom is left before
+   * the limiter ceiling," not "what would Spotify say."
    */
 
   #include "al_playground_compat.hpp"
