@@ -991,45 +991,48 @@ ALLOLIB_WEB_MAIN(CompressorLab)
     id: 'mat-amrm',
     title: 'AM / RM Sideband Visualizer',
     description:
-      "Amplitude modulation vs. ring modulation, side by side. Two oscillators (carrier + modulator); the 'mode' switch picks AM (output = (1 + modDepth*mod) * carrier) or RM (output = mod * carrier). Spectrum view shows the sidebands appear at carrier±modulator (and the carrier-itself peak in AM mode, which RM removes). Time-domain view below shows the resulting waveform.",
+      "Amplitude modulation vs. ring modulation, side by side. Two oscillators (carrier + modulator); the 'mode' switch picks AM (output = (1 + modDepth*mod) * carrier) or RM (output = mod * carrier). Spectrum view shows the sidebands appear at carrier±modulator (and the carrier-itself peak in AM mode, which RM removes); thin vertical markers show the THEORETICAL peak positions so it's obvious which sideband is which. Time-domain view below shows the resulting waveform. A small Lissajous panel in the top-right plots (carrier, modulator) so AM's envelope-hugging bowtie and RM's balanced figure-8 are visible at a glance. Toggling RM briefly draws a red X through the carrier-frequency marker — visual punch on the change.",
     category: 'mat-synthesis',
     subcategory: 'modulation',
-    code: `/**
- * AM/RM Sideband Visualizer — MAT200B Phase 2
- *
- * Two oscillators:
- *   carrier   gam::Sine at 'carrier_hz'
- *   modulator gam::Sine at 'mod_hz'
- *
- * Mode toggle:
- *   AM (false)  out = (1 + depth * mod) * carrier
- *               -> sidebands at carrier ± mod, plus the carrier itself
- *   RM (true)   out = mod * carrier
- *               -> sidebands at carrier ± mod, NO carrier peak (it's
- *                  cancelled by the multiplication when mod is bipolar)
- *
- * Visual: top half = magnitude spectrum drawn from a small inline DFT
- * of the recent audio block (256-point Hann-windowed) — students see
- * the sideband peaks move as 'mod_hz' is dragged. Bottom half = the
- * raw waveform itself, so the eye sees the AM "hugging" envelope vs.
- * the RM "balanced" zero-crossing pattern.
- */
+        code: `/**
+   * AM/RM Sideband Visualizer — MAT200B Phase 2
+   *
+   * Two oscillators:
+   *   carrier   gam::Sine at 'carrier_hz'
+   *   modulator gam::Sine at 'mod_hz'
+   *
+   * Mode toggle:
+   *   AM (false)  out = (1 + depth * mod) * carrier
+   *               -> sidebands at carrier ± mod, plus the carrier itself
+   *   RM (true)   out = mod * carrier
+   *               -> sidebands at carrier ± mod, NO carrier peak (it's
+   *                  cancelled by the multiplication when mod is bipolar)
+   *
+   * Visual: top half = magnitude spectrum drawn from a small inline DFT
+   * of the recent audio block (256-point Hann-windowed), with thin
+   * theoretical-peak markers overlaid. Bottom half = the raw waveform.
+   * Top-right = a Lissajous panel plotting (carrier, modulator) so the
+   * AM bowtie / RM figure-8 distinction is visible at a glance. A
+   * one-pole magnitude smoother sharpens the peaks across frames; a
+   * frame-counter "X" briefly crosses the carrier marker on every RM
+   * toggle so the change has visual punch.
+   */
 
-#include "al_playground_compat.hpp"
-#include "Gamma/Oscillator.h"
+  #include "al_playground_compat.hpp"
+  #include "Gamma/Oscillator.h"
 
-#include <array>
-#include <atomic>
-#include <cmath>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class AmRmViz : public App {
-public:
+  class AmRmViz : public App {
+  public:
   ParameterBool playing    {"playing",    "", true};
   Parameter     carrier_hz {"carrier_hz", "", 440.0f, 50.0f, 4000.0f};
   Parameter     mod_hz     {"mod_hz",     "",  80.0f,  1.0f, 2000.0f};
@@ -1041,12 +1044,29 @@ public:
 
   gam::Sine<> carrier, modulator;
 
-  // Recent audio block (mono) for the inline DFT.
+  // Recent audio block (mono mix) for the inline DFT and waveform.
   static constexpr int N = 256;
   std::array<float, N> blockBuf{};
+  // Carrier-only and modulator-only ring buffers, used for the
+  // Lissajous plot (carrier vs. modulator without the modulation math
+  // on top).
+  std::array<float, N> carrierBuf{};
+  std::array<float, N> modBuf{};
   std::atomic<int> blockW{0};
 
-  Mesh spectrum, waveform, gridMesh;
+  // One-pole smoothed magnitude spectrum, persisted across frames.
+  std::array<float, N / 2> magSmooth{};
+
+  // Audio-thread published sample rate.
+  std::atomic<float> sampleRateHz{48000.0f};
+
+  // RM toggle countdown — set to ~30 frames each time the toggle flips
+  // so the X-through-carrier marker fades back out after about half a
+  // second at 60 FPS.
+  bool prevRingMod = false;
+  int  toggleFlash = 0;
+
+  Mesh spectrum, waveform, gridMesh, markers, lissajous, toggleFx;
 
   void onInit() override {
     gui << playing << carrier_hz << mod_hz << depth << amp << ringMod;
@@ -1055,9 +1075,12 @@ public:
   void onCreate() override {
     gui.init();
     nav().pos(0, 0, 4.0f);
+    for (auto& v : magSmooth) v = 0.0f;
   }
 
   void onSound(AudioIOData& io) override {
+    sampleRateHz.store(static_cast<float>(io.framesPerSecond()),
+                       std::memory_order_relaxed);
     if (!playing.get()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
@@ -1074,25 +1097,25 @@ public:
       io.out(0) = s;
       io.out(1) = s;
       const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = s;
+      blockBuf[w]   = s;
+      carrierBuf[w] = c;
+      modBuf[w]     = m;
       blockW.store((w + 1) % N, std::memory_order_release);
     }
   }
 
   // Tiny non-FFT magnitude DFT — N=256 = 32k mults, runs once per frame.
-  // Cheap on the graphics thread and avoids needing gam::STFT here.
   void computeSpectrum(std::array<float, N / 2>& mag) {
-    // Snapshot the ring oldest -> newest with Hann window.
     const int w = blockW.load(std::memory_order_acquire);
     std::array<float, N> x{};
     for (int i = 0; i < N; ++i) {
       const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
       x[i] = blockBuf[idx] * win;
     }
     for (int k = 0; k < N / 2; ++k) {
       float re = 0.f, im = 0.f;
-      const float ang = -2.0f * M_PI * k / N;
+      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
       for (int n = 0; n < N; ++n) {
         re += x[n] * std::cos(ang * n);
         im += x[n] * std::sin(ang * n);
@@ -1101,15 +1124,80 @@ public:
     }
   }
 
+  // Map a frequency in Hz to the spectrum panel x coordinate. The
+  // existing spectrum draws bin k = 0..N/2-1 across [-1.4, 1.4]; bin k
+  // corresponds to frequency k * sr / N, so the panel covers
+  // [0, sr/2 * (N/2 - 1)/(N/2)] ~= [0, Nyquist].
+  float freqToX(float hz) const {
+    const float sr = sampleRateHz.load(std::memory_order_relaxed);
+    if (sr <= 0.0f) return -1.4f;
+    const float bin = hz * float(N) / sr;       // continuous bin index
+    const float u   = bin / float(N / 2 - 1);   // 0..1
+    if (u < 0.0f) return -1.4f;
+    if (u > 1.0f) return  1.4f;
+    return -1.4f + u * 2.8f;
+  }
+
+  static void emitRect(Mesh& m, float x0, float y0, float x1, float y1,
+                       float r, float g, float b) {
+    // TRIANGLE_STRIP-friendly winding: 4 vertices in (x0,y0),(x1,y0),
+    // (x0,y1),(x1,y1) order.
+    m.vertex(x0, y0, 0.f); m.color(r, g, b);
+    m.vertex(x1, y0, 0.f); m.color(r, g, b);
+    m.vertex(x0, y1, 0.f); m.color(r, g, b);
+    m.vertex(x1, y1, 0.f); m.color(r, g, b);
+  }
+
   void onAnimate(double /*dt*/) override {
+    // Detect RM toggle and arm the X-flash countdown.
+    const bool rmNow = ringMod.get();
+    if (rmNow != prevRingMod) toggleFlash = 30;
+    prevRingMod = rmNow;
+    if (toggleFlash > 0) --toggleFlash;
+
     std::array<float, N / 2> mag{};
     computeSpectrum(mag);
+    // One-pole magnitude smoothing — sharper, less jittery peaks.
+    for (int k = 0; k < N / 2; ++k) {
+      magSmooth[k] = 0.5f * mag[k] + 0.5f * magSmooth[k];
+    }
+
+    // Theoretical-peak markers FIRST so the live spectrum draws on top.
+    markers.reset();
+    markers.primitive(Mesh::TRIANGLE_STRIP);
+    const float fc = carrier_hz.get();
+    const float fm = mod_hz.get();
+    auto markerBar = [&](float hz, float r, float g, float b) {
+      // Each marker is its own quad with a degenerate triangle separating
+      // it from the next so a single TRIANGLE_STRIP draw stays correct.
+      const float x = freqToX(hz);
+      const float w = 0.006f;
+      // Repeat the first vertex to start the new strip cleanly.
+      markers.vertex(x - w, 0.20f, 0.f); markers.color(r, g, b);
+      markers.vertex(x - w, 0.20f, 0.f); markers.color(r, g, b);
+      markers.vertex(x + w, 0.20f, 0.f); markers.color(r, g, b);
+      markers.vertex(x - w, 1.70f, 0.f); markers.color(r, g, b);
+      markers.vertex(x + w, 1.70f, 0.f); markers.color(r, g, b);
+      // Close the strip with a degenerate so the next marker doesn't
+      // smear into this one.
+      markers.vertex(x + w, 1.70f, 0.f); markers.color(r, g, b);
+    };
+    if (rmNow) {
+      // RM: only sidebands, NO carrier line.
+      markerBar(fc - fm, 0.55f, 0.40f, 0.95f);
+      markerBar(fc + fm, 0.55f, 0.40f, 0.95f);
+    } else {
+      // AM: sidebands + carrier-itself.
+      markerBar(fc - fm, 0.40f, 0.85f, 0.55f);
+      markerBar(fc,      0.95f, 0.80f, 0.30f);
+      markerBar(fc + fm, 0.40f, 0.85f, 0.55f);
+    }
 
     spectrum.reset();
     spectrum.primitive(Mesh::LINE_STRIP);
     for (int k = 0; k < N / 2; ++k) {
       const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float yy = 0.2f + std::min(1.5f, mag[k] * 6.0f);
+      const float yy = 0.2f + std::min(1.5f, magSmooth[k] * 6.0f);
       spectrum.vertex(xx, yy, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.4f + 0.5f * t, 0.9f - 0.4f * t, 0.5f);
@@ -1126,26 +1214,80 @@ public:
       waveform.color(0.95f, 0.65f, 0.35f);
     }
 
-    // Reference baselines.
+    // Lissajous panel — top-right, plotting (carrier, modulator) over
+    // the most recent N samples as a fading LINE_STRIP. Center at
+    // (1.05, 1.10), half-extent 0.30.
+    const float lx = 1.05f, ly = 1.10f, lr = 0.30f;
+    lissajous.reset();
+    lissajous.primitive(Mesh::LINE_STRIP);
+    for (int i = 0; i < N; ++i) {
+      const int idx = (w + i) % N;
+      float cx = carrierBuf[idx];
+      float my = modBuf[idx];
+      if (cx < -1.f) cx = -1.f; else if (cx > 1.f) cx = 1.f;
+      if (my < -1.f) my = -1.f; else if (my > 1.f) my = 1.f;
+      const float xx = lx + cx * lr;
+      const float yy = ly + my * lr;
+      // Fade from dim (oldest) to bright (newest) for a trail effect.
+      const float a = static_cast<float>(i) / static_cast<float>(N - 1);
+      const float r = 0.30f + 0.65f * a;
+      const float gC = 0.55f + 0.40f * a;
+      const float bb = 0.95f - 0.10f * a;
+      lissajous.vertex(xx, yy, 0.f);
+      lissajous.color(r, gC, bb);
+    }
+
+    // Reference baselines + Lissajous frame.
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
     gridMesh.vertex(-1.4f, 0.2f, 0.f); gridMesh.vertex(1.4f, 0.2f, 0.f);
     gridMesh.vertex(-1.4f,-0.9f, 0.f); gridMesh.vertex(1.4f,-0.9f, 0.f);
     for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.25f);
+    // Lissajous box and crosshairs.
+    auto pushLine = [&](float x0, float y0, float x1, float y1,
+                        float r, float gc, float b) {
+      gridMesh.vertex(x0, y0, 0.f); gridMesh.color(r, gc, b);
+      gridMesh.vertex(x1, y1, 0.f); gridMesh.color(r, gc, b);
+    };
+    pushLine(lx - lr, ly - lr, lx + lr, ly - lr, 0.30f, 0.32f, 0.38f);
+    pushLine(lx + lr, ly - lr, lx + lr, ly + lr, 0.30f, 0.32f, 0.38f);
+    pushLine(lx + lr, ly + lr, lx - lr, ly + lr, 0.30f, 0.32f, 0.38f);
+    pushLine(lx - lr, ly + lr, lx - lr, ly - lr, 0.30f, 0.32f, 0.38f);
+    pushLine(lx - lr, ly,       lx + lr, ly,       0.22f, 0.24f, 0.30f);
+    pushLine(lx,       ly - lr, lx,       ly + lr, 0.22f, 0.24f, 0.30f);
+
+    // Mode-toggle X at the carrier marker (decays with toggleFlash).
+    toggleFx.reset();
+    toggleFx.primitive(Mesh::LINES);
+    if (toggleFlash > 0) {
+      const float a = static_cast<float>(toggleFlash) / 30.0f;
+      const float r = 0.95f, gc = 0.20f, b = 0.20f;
+      const float cx = freqToX(fc);
+      const float dx = 0.045f, dy = 0.18f;
+      // Down-right diagonal.
+      toggleFx.vertex(cx - dx, 1.55f, 0.f); toggleFx.color(r * a, gc * a, b * a);
+      toggleFx.vertex(cx + dx, 1.55f - dy, 0.f); toggleFx.color(r * a, gc * a, b * a);
+      // Down-left diagonal.
+      toggleFx.vertex(cx + dx, 1.55f, 0.f); toggleFx.color(r * a, gc * a, b * a);
+      toggleFx.vertex(cx - dx, 1.55f - dy, 0.f); toggleFx.color(r * a, gc * a, b * a);
+    }
   }
 
   void onDraw(Graphics& g) override {
     g.clear(0.04f, 0.05f, 0.07f);
     g.meshColor();
     g.draw(gridMesh);
+    g.draw(markers);
     g.draw(spectrum);
     g.draw(waveform);
+    g.draw(lissajous);
+    g.draw(toggleFx);
     gui.draw(g);
   }
-};
+  };
 
-ALLOLIB_WEB_MAIN(AmRmViz)
-`,
+  ALLOLIB_WEB_MAIN(AmRmViz)
+  `,
   },
   {
     id: 'mat-fm-index',
@@ -1693,42 +1835,49 @@ ALLOLIB_WEB_MAIN(CombSwept)
     id: 'mat-drawable-wavetable',
     title: 'Drawable Wavetable',
     description:
-      'Click-and-drag in the canvas to draw a 256-point waveform; the oscillator plays it back at the carrier pitch. Visual layered: the table you drew (top, with playhead marker) + live spectrum (bottom, inline 256-point DFT). Drag from anywhere — when the mouse is in the canvas, x maps to table index, y maps to sample value.',
+    'Click-and-drag inside the dashed rectangle to draw a 256-point waveform; the oscillator plays it back at the carrier pitch. Linear interp of an arbitrary hand-drawn table aliases hard — every brush stroke injects energy above Nyquist that folds back as inharmonic hash, and "randomize" is a wall of it. Toggle "bandlimit" to filter the table in the frequency domain (256-pt DFT, zero bins above min(64, Nyquist/carrier_hz), IDFT into a separate playTable) and play THAT version. Bright green = the table you drew; dim cyan overlay = the bandlimited table actually playing.',
     category: 'mat-synthesis',
     subcategory: 'wavetable',
     code: `/**
- * Drawable Wavetable — MAT200B Phase 2
- *
- * 256-point wavetable indexed by a phase accumulator at 'carrier_hz'.
- * onMouseDrag writes mouse_y into the table at index = mouse_x (mapped
- * to [0..255]), giving you a paintbrush over the waveform. Clearing
- * resets to a sine; randomize fills with shaped noise; the smoothing
- * knob runs a small one-zero lowpass over the table on each redraw
- * so brush strokes don't alias too hard.
- *
- * Visual:
- *   top    — the table itself, drawn at y in [0.2 .. 1.4]
- *            with a playhead marker showing where the oscillator is.
- *   bottom — live magnitude spectrum from a 256-pt inline DFT of
- *            the recent audio block. Shape the table, watch the
- *            harmonics bloom.
- */
+   * Drawable Wavetable — MAT200B Phase 2 (bandlimit upgrade)
+   *
+   * Drag inside the dashed draw zone to paint a 256-point waveform.
+   * The naive playback path (bandlimit OFF) reads 'table' directly with
+   * linear interpolation — any hand-drawn shape contains harmonics
+   * above Nyquist that alias back as inharmonic hash, especially after
+   * a 'randomize' press.
+   *
+   * The bandlimit path (default ON) runs an inline 256-pt DFT of the
+   * drawn table, zeros all bins above min(64, Nyquist / carrier_hz),
+   * and runs an inline IDFT into a separate 'playTable'. The audio
+   * thread reads playTable when bandlimit is on. We rebuild on any
+   * mutation: drag, clear, randomize, smoothing change, carrier change,
+   * or toggle.
+   *
+   * Visual:
+   *   dashed rectangle — the draw zone (only strokes inside it write).
+   *   bright green     — the table you drew.
+   *   dim cyan         — playTable (bandlimited, only when toggle on).
+   *   bottom strip     — live magnitude spectrum from a 256-pt DFT.
+   */
 
-#include "al_playground_compat.hpp"
+  #include "al_playground_compat.hpp"
 
-#include <array>
-#include <atomic>
-#include <cmath>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
+  #include <cstdlib>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class DrawableWavetable : public App {
-public:
+  class DrawableWavetable : public App {
+  public:
   ParameterBool  playing    {"playing",    "", true};
+  ParameterBool  bandlimit  {"bandlimit",  "", true};
   Parameter      carrier_hz {"carrier_hz", "", 220.0f,  20.0f, 2000.0f};
   Parameter      amp        {"amplitude",  "",  0.30f,  0.0f,  1.0f};
   Parameter      smoothing  {"smoothing",  "",  0.20f,  0.0f,  0.95f};
@@ -1737,40 +1886,84 @@ public:
 
   ControlGUI gui;
 
-  // Wavetable + phase accumulator.
   static constexpr int TBL = 256;
-  std::array<float, TBL> table{};
+  std::array<float, TBL> table{};      // what you drew
+  std::array<float, TBL> playTable{};  // bandlimited copy
   double phase = 0.0;
 
-  // Input audio capture for spectrum.
+  // Cached sample rate so onAnimate can compute the DFT cutoff.
+  std::atomic<float> sampleRate{48000.0f};
+
   static constexpr int N = 256;
   std::array<float, N> blockBuf{};
   std::atomic<int> blockW{0};
 
-  // Smoothed playhead index (atomic-published from audio thread).
   std::atomic<float> playheadIdx{0.0f};
 
-  // Mouse interaction state. The latest dragged-to (idx, value) pair
-  // gets applied next animation frame so the audio thread doesn't have
-  // to touch the table mid-block.
   std::atomic<int>   pendingIdx{-1};
   std::atomic<float> pendingVal{0.f};
 
-  Mesh tableMesh, spectrum, gridMesh, playMarker;
+  std::atomic<bool> tableDirty{true};
+
+  Mesh tableMesh, playMesh, spectrum, gridMesh, drawZone, playMarker;
+
+  // Inline DFT/IDFT — N=256, called only on table-change events.
+  static void bandlimitTable(const std::array<float, TBL>& src,
+                             std::array<float, TBL>& dst,
+                             int cutoff) {
+    std::array<float, TBL> re{}, im{};
+    for (int k = 0; k < TBL; ++k) {
+      float ar = 0.f, ai = 0.f;
+      const float ang = -2.0f * static_cast<float>(M_PI) * k / TBL;
+      for (int n = 0; n < TBL; ++n) {
+        ar += src[n] * std::cos(ang * n);
+        ai += src[n] * std::sin(ang * n);
+      }
+      re[k] = ar;
+      im[k] = ai;
+    }
+    // Zero bins above cutoff (and their conjugate mirror at TBL-k).
+    for (int k = 0; k < TBL; ++k) {
+      const int kSym = (k <= TBL / 2) ? k : (TBL - k);
+      if (kSym > cutoff) {
+        re[k] = 0.f;
+        im[k] = 0.f;
+      }
+    }
+    // IDFT — real part only (input is real, bins are conjugate-symmetric).
+    for (int n = 0; n < TBL; ++n) {
+      float acc = 0.f;
+      const float ang = 2.0f * static_cast<float>(M_PI) * n / TBL;
+      for (int k = 0; k < TBL; ++k) {
+        acc += re[k] * std::cos(ang * k) - im[k] * std::sin(ang * k);
+      }
+      dst[n] = acc / TBL;
+    }
+  }
+
+  void rebuildPlayTable() {
+    const float sr = sampleRate.load(std::memory_order_relaxed);
+    const float ny = sr * 0.5f;
+    const float fc = carrier_hz.get();
+    const int   maxHarm = (fc > 1.f) ? static_cast<int>(ny / fc) : 64;
+    const int   cutoff  = std::min(64, std::max(1, maxHarm));
+    bandlimitTable(table, playTable, cutoff);
+  }
 
   void onInit() override {
-    gui << playing << carrier_hz << amp << smoothing << clearTbl << randomize;
+    gui << playing << bandlimit << carrier_hz << amp << smoothing
+        << clearTbl << randomize;
 
     clearTbl.registerChangeCallback([this](float) {
       for (int i = 0; i < TBL; ++i) {
-        table[i] = std::sin(2.0f * M_PI * i / TBL);
+        table[i] = std::sin(2.0f * static_cast<float>(M_PI) * i / TBL);
       }
+      tableDirty.store(true, std::memory_order_release);
     });
     randomize.registerChangeCallback([this](float) {
       for (int i = 0; i < TBL; ++i) {
         table[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
       }
-      // Two passes of one-zero LPF to take the harshest edges off.
       for (int pass = 0; pass < 2; ++pass) {
         float prev = table[0];
         for (int i = 1; i < TBL; ++i) {
@@ -1779,10 +1972,19 @@ public:
           table[i] = y;
         }
       }
+      tableDirty.store(true, std::memory_order_release);
+    });
+    carrier_hz.registerChangeCallback([this](float) {
+      tableDirty.store(true, std::memory_order_release);
+    });
+    bandlimit.registerChangeCallback([this](float) {
+      tableDirty.store(true, std::memory_order_release);
     });
 
-    // Init to sine.
-    for (int i = 0; i < TBL; ++i) table[i] = std::sin(2.0f * M_PI * i / TBL);
+    for (int i = 0; i < TBL; ++i) {
+      table[i] = std::sin(2.0f * static_cast<float>(M_PI) * i / TBL);
+    }
+    playTable = table;
   }
 
   void onCreate() override {
@@ -1791,6 +1993,7 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    sampleRate.store(io.framesPerSecond(), std::memory_order_relaxed);
     if (!playing.get()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
@@ -1798,12 +2001,18 @@ public:
     const float sr = io.framesPerSecond();
     const float dPh = TBL * carrier_hz.get() / sr;
     const float a   = amp.get();
+    const bool  bl  = bandlimit.get();
 
     while (io()) {
       const int i0 = static_cast<int>(phase) % TBL;
       const int i1 = (i0 + 1) % TBL;
       const float frac = static_cast<float>(phase - std::floor(phase));
-      const float s = (table[i0] + (table[i1] - table[i0]) * frac) * a;
+      float s;
+      if (bl) {
+        s = (playTable[i0] + (playTable[i1] - playTable[i0]) * frac) * a;
+      } else {
+        s = (table[i0] + (table[i1] - table[i0]) * frac) * a;
+      }
       io.out(0) = s;
       io.out(1) = s;
 
@@ -1822,12 +2031,12 @@ public:
     std::array<float, N> x{};
     for (int i = 0; i < N; ++i) {
       const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
+      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
       x[i] = blockBuf[idx] * win;
     }
     for (int k = 0; k < N / 2; ++k) {
       float re = 0.f, im = 0.f;
-      const float ang = -2.0f * M_PI * k / N;
+      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
       for (int n = 0; n < N; ++n) {
         re += x[n] * std::cos(ang * n);
         im += x[n] * std::sin(ang * n);
@@ -1837,11 +2046,9 @@ public:
   }
 
   void onAnimate(double /*dt*/) override {
-    // Apply any pending drag write.
     const int pIdx = pendingIdx.exchange(-1, std::memory_order_acquire);
     if (pIdx >= 0 && pIdx < TBL) {
       table[pIdx] = std::max(-1.0f, std::min(1.0f, pendingVal.load()));
-      // Optional smoothing pass blended by knob amount.
       const float s = smoothing.get();
       if (s > 0.f) {
         const int j0 = (pIdx - 1 + TBL) % TBL;
@@ -1849,10 +2056,18 @@ public:
         const float avg = (table[j0] + table[pIdx] + table[j2]) / 3.f;
         table[pIdx] = table[pIdx] * (1.f - s) + avg * s;
       }
+      tableDirty.store(true, std::memory_order_release);
     }
 
-    // Render the table as a LINE_STRIP centered at y = 0.55, swing ±0.40.
-    // (Previously y = 0.8 ± 0.55 ran off the top of the viewport.)
+    if (tableDirty.exchange(false, std::memory_order_acq_rel)) {
+      if (bandlimit.get()) {
+        rebuildPlayTable();
+      } else {
+        playTable = table;
+      }
+    }
+
+    // Drawn table: bright green LINE_STRIP centered at y = 0.55.
     tableMesh.reset();
     tableMesh.primitive(Mesh::LINE_STRIP);
     for (int i = 0; i < TBL; ++i) {
@@ -1860,6 +2075,18 @@ public:
       const float yy = 0.55f + table[i] * 0.40f;
       tableMesh.vertex(xx, yy, 0.f);
       tableMesh.color(0.6f, 0.95f, 0.4f);
+    }
+
+    // Bandlimited overlay (dim cyan) — only when bandlimit is on.
+    playMesh.reset();
+    if (bandlimit.get()) {
+      playMesh.primitive(Mesh::LINE_STRIP);
+      for (int i = 0; i < TBL; ++i) {
+        const float xx = -1.4f + (static_cast<float>(i) / (TBL - 1)) * 2.8f;
+        const float yy = 0.55f + playTable[i] * 0.40f;
+        playMesh.vertex(xx, yy, 0.f);
+        playMesh.color(0.35f, 0.75f, 0.85f);
+      }
     }
 
     // Spectrum across the bottom: y in [-0.95, +0.05] max.
@@ -1876,18 +2103,45 @@ public:
       spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
     }
 
-    // Grid: table baseline + spectrum baseline.
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
     gridMesh.vertex(-1.4f, 0.55f, 0.f); gridMesh.vertex(1.4f, 0.55f, 0.f);
     gridMesh.vertex(-1.4f,-0.95f, 0.f); gridMesh.vertex(1.4f,-0.95f, 0.f);
     for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
 
-    // Playhead marker as inline triangle-fan disc (no external addDisc).
+    // Dashed-rectangle draw zone — top of canvas (matches writeFromMouse).
+    drawZone.reset();
+    drawZone.primitive(Mesh::LINES);
+    {
+      const float top = 0.95f, bot = 0.15f;
+      const float left = -1.4f, right = 1.4f;
+      const int   hDashes = 28;
+      const float dx = (right - left) / hDashes;
+      for (int i = 0; i < hDashes; i += 2) {
+        const float x0 = left + i * dx;
+        const float x1 = left + (i + 1) * dx;
+        drawZone.vertex(x0, top, 0.f); drawZone.vertex(x1, top, 0.f);
+        drawZone.vertex(x0, bot, 0.f); drawZone.vertex(x1, bot, 0.f);
+      }
+      const int   vDashes = 12;
+      const float dy = (top - bot) / vDashes;
+      for (int j = 0; j < vDashes; j += 2) {
+        const float y0 = bot + j * dy;
+        const float y1 = bot + (j + 1) * dy;
+        drawZone.vertex(left,  y0, 0.f); drawZone.vertex(left,  y1, 0.f);
+        drawZone.vertex(right, y0, 0.f); drawZone.vertex(right, y1, 0.f);
+      }
+    }
+    for (size_t v = 0; v < drawZone.vertices().size(); ++v) {
+      drawZone.color(0.55f, 0.45f, 0.25f);
+    }
+
+    // Playhead disc tracks whatever the audio thread is reading.
     const float p = playheadIdx.load(std::memory_order_acquire) / TBL;
     const float px = -1.4f + p * 2.8f;
     const int idx = static_cast<int>(p * (TBL - 1));
-    const float py = 0.55f + table[idx] * 0.40f;
+    const float src = bandlimit.get() ? playTable[idx] : table[idx];
+    const float py = 0.55f + src * 0.40f;
     playMarker.reset();
     playMarker.primitive(Mesh::TRIANGLES);
     {
@@ -1910,24 +2164,22 @@ public:
     g.clear(0.04f, 0.05f, 0.07f);
     g.meshColor();
     g.draw(gridMesh);
+    g.draw(drawZone);
+    g.draw(playMesh);
     g.draw(tableMesh);
     g.draw(playMarker);
     g.draw(spectrum);
     gui.draw(g);
   }
 
-  // Map mouse pixel coords (origin top-left) to table index + value.
   void writeFromMouse(const Mouse& m) {
     const float w = static_cast<float>(width());
     const float h = static_cast<float>(height());
     if (w < 1.f || h < 1.f) return;
     const float u  = std::max(0.0f, std::min(1.0f, m.x() / w));
     const float vy = std::max(0.0f, std::min(1.0f, m.y() / h));
-    // Only react when the mouse is in the table's vertical band — top
-    // ~60% of the canvas.
     if (vy > 0.7f) return;
     const int idx = std::min(TBL - 1, static_cast<int>(u * TBL));
-    // Map [0..0.7] -> [+1..-1] (y is down in pixels, up in audio amplitude).
     const float val = 1.0f - 2.0f * (vy / 0.7f);
     pendingIdx.store(idx, std::memory_order_release);
     pendingVal.store(val, std::memory_order_release);
@@ -1936,84 +2188,104 @@ public:
   bool onMouseDown(const Mouse& m) override { writeFromMouse(m); return false; }
   bool onMouseDrag(const Mouse& m) override { writeFromMouse(m); return false; }
   bool onMouseUp(const Mouse&)     override { return false; }
-};
+  };
 
-ALLOLIB_WEB_MAIN(DrawableWavetable)
-`,
+  ALLOLIB_WEB_MAIN(DrawableWavetable)
+  `,
   },
   {
     id: 'mat-waveshaper',
     title: 'Waveshaper Distortion Explorer',
     description:
-      'Pure waveshaping: input sine -> arbitrary memoryless transfer function -> output. Pick the shape from a menu (tanh, atan, hard-clip, soft-cubic, sin) and drive it with the gain knob to watch how harmonic content blooms. Three panels stacked: the transfer function, the input waveform, the output waveform. Live spectrum at the bottom.',
+    'Pure waveshaping: input -> arbitrary memoryless transfer function -> output. Pick the source (sine/saw/noise) and the curve (tanh/atan/hardclip/cubic/sin), then crank "drive" to push the signal into saturation. A memoryless nonlinearity generates harmonics at integer multiples of the input frequency — the moment any harmonic exceeds Nyquist it folds back as inharmonic aliasing. Toggle "oversample" to process at 4x sr (linear-upsample, shape, 4-tap FIR average, decimate). When on, both spectra are drawn: orange = aliased (1x shaping), white = clean (oversampled). The orange spikes above the white curve are exactly the aliasing artifacts the FIR removes. The yellow disc tracks the live input on the transfer curve.',
     category: 'mat-signal',
     subcategory: 'dynamics',
     code: `/**
- * Waveshaper Distortion Explorer — MAT200B Phase 2
- *
- * Memoryless nonlinearity y = f(drive * x). The 'shape' menu picks
- * which f() to use:
- *   tanh        soft saturation (smooth knee), classic tube model
- *   atan        slightly sharper than tanh
- *   hardclip    discontinuous; lots of high-order harmonics
- *   cubic       y = x - x^3 / 3 (Chebyshev-ish); odd harmonics only
- *   sin         folder y = sin(pi/2 * x); aliasing-prone, fun
- *
- * Visual: transfer curve (top), input waveform (middle), output
- * waveform (below it), live magnitude spectrum (bottom). Crank
- * 'drive' to watch the input get pushed toward the curve's
- * saturation regions and the spectrum fan out into harmonics.
- */
+   * Waveshaper Distortion Explorer — MAT200B Phase 2 (oversample upgrade)
+   *
+   * Memoryless nonlinearity y = f(drive * x). Aliasing in 1x processing
+   * is the central pedagogical point: any frequency content the shaper
+   * generates above Nyquist folds back. With 'oversample' on we run the
+   * shaper at 4x sr (linear interpolation up, shape, 4-tap boxcar FIR
+   * LPF, decimate by 4). The boxcar is a simple but valid decimation
+   * filter for demonstration purposes.
+   *
+   * Source menu: sine / saw / noise.
+   * Shape menu: tanh / atan / hardclip / cubic / sin.
+   *
+   * Visual:
+   *   transfer curve (top) with a yellow disc tracking the live input.
+   *   input + output waveforms (middle).
+   *   spectrum (bottom): when oversample is on, BOTH the aliased
+   *   (orange) and clean (white) spectra are drawn — the orange spikes
+   *   above the white curve are the folded-back harmonics. When
+   *   oversample is off, only the orange spectrum is drawn.
+   */
 
-#include "al_playground_compat.hpp"
-#include "Gamma/Oscillator.h"
+  #include "al_playground_compat.hpp"
+  #include "Gamma/Oscillator.h"
+  #include "Gamma/Noise.h"
 
-#include <array>
-#include <atomic>
-#include <cmath>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class Waveshaper : public App {
-public:
-  ParameterBool playing {"playing", "", true};
-  Parameter     freq    {"freq",     "", 220.0f,  50.0f, 2000.0f};
-  Parameter     drive   {"drive",    "",   2.0f,   0.1f,  20.0f};
-  Parameter     output  {"output",   "",   0.30f,  0.0f,  1.0f};
-  ParameterMenu shape   {"shape",    ""};
+  class Waveshaper : public App {
+  public:
+  ParameterBool playing    {"playing",    "", true};
+  ParameterBool oversample {"oversample", "", true};
+  Parameter     freq       {"freq",       "", 220.0f, 50.0f, 2000.0f};
+  Parameter     drive      {"drive",      "",   2.0f,  0.1f,  20.0f};
+  Parameter     output     {"output",     "",   0.30f, 0.0f,  1.0f};
+  ParameterMenu source     {"source",     ""};
+  ParameterMenu shape      {"shape",      ""};
 
   ControlGUI gui;
 
-  gam::Sine<> osc;
+  gam::Sine<>       oscSine;
+  gam::Saw<>        oscSaw;
+  gam::NoiseWhite<> noise;
 
   static constexpr int N = 256;
-  std::array<float, N> blockIn{}, blockOut{};
+  std::array<float, N> blockIn{};
+  std::array<float, N> blockAliased{};
+  std::array<float, N> blockClean{};
   std::atomic<int> blockW{0};
 
-  Mesh transferCurve, waveIn, waveOut, spectrum, gridMesh;
+  std::atomic<float> cursorIn{0.0f};
+
+  // Audio-thread state for 4x linear interpolation.
+  float prevIn = 0.0f;
+
+  Mesh transferCurve, waveIn, waveOut, spectrumA, spectrumC, gridMesh, cursorDisc;
 
   static float shapeFn(int s, float x) {
     switch (s) {
       case 0: return std::tanh(x);
-      case 1: return (2.0f / M_PI) * std::atan(x);
+      case 1: return (2.0f / static_cast<float>(M_PI)) * std::atan(x);
       case 2: return std::max(-1.0f, std::min(1.0f, x));
       case 3: {
         const float y = std::max(-1.5f, std::min(1.5f, x));
         return y - (y * y * y) / 3.0f;
       }
-      case 4: return std::sin((M_PI * 0.5f) * std::max(-1.0f, std::min(1.0f, x)));
+      case 4: return std::sin((static_cast<float>(M_PI) * 0.5f) *
+                              std::max(-1.0f, std::min(1.0f, x)));
       default: return std::tanh(x);
     }
   }
 
   void onInit() override {
+    source.setElements({"sine", "saw", "noise"});
+    source.set(0);
     shape.setElements({"tanh", "atan", "hardclip", "cubic", "sin"});
     shape.set(0);
-    gui << playing << freq << drive << output << shape;
+    gui << playing << oversample << freq << drive << output << source << shape;
   }
 
   void onCreate() override {
@@ -2021,36 +2293,76 @@ public:
     nav().pos(0, 0, 4.0f);
   }
 
+  inline float nextSource(int src) {
+    switch (src) {
+      case 0: return oscSine();
+      case 1: return oscSaw();
+      case 2: return noise() * 0.7f;
+      default: return oscSine();
+    }
+  }
+
   void onSound(AudioIOData& io) override {
     if (!playing.get()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
     }
-    osc.freq(freq.get());
-    const float dr = drive.get();
-    const float og = output.get();
-    const int   sh = shape.get();
+    oscSine.freq(freq.get());
+    oscSaw.freq(freq.get());
+    const float dr  = drive.get();
+    const float og  = output.get();
+    const int   sh  = shape.get();
+    const int   src = source.get();
+    const bool  os  = oversample.get();
+
     while (io()) {
-      const float xin = osc();
-      const float y   = shapeFn(sh, dr * xin) * og;
+      const float xin = nextSource(src);
+
+      // Aliased (1x) — always computed as the spectrum reference.
+      const float yAliased = shapeFn(sh, dr * xin);
+
+      // Clean path: 4x linear-upsample, shape each, 4-tap boxcar
+      // FIR LPF, decimate. Boxcar averaging is the simplest valid
+      // decimation filter — adequate for the pedagogical comparison.
+      float yClean;
+      if (os) {
+        const float u0 = 0.75f * prevIn + 0.25f * xin;
+        const float u1 = 0.50f * prevIn + 0.50f * xin;
+        const float u2 = 0.25f * prevIn + 0.75f * xin;
+        const float u3 = xin;
+        const float s0 = shapeFn(sh, dr * u0);
+        const float s1 = shapeFn(sh, dr * u1);
+        const float s2 = shapeFn(sh, dr * u2);
+        const float s3 = shapeFn(sh, dr * u3);
+        yClean = 0.25f * (s0 + s1 + s2 + s3);
+      } else {
+        yClean = yAliased;
+      }
+      prevIn = xin;
+
+      const float y = (os ? yClean : yAliased) * og;
       io.out(0) = y;
       io.out(1) = y;
+
       const int w = blockW.load(std::memory_order_relaxed);
-      blockIn[w]  = xin;
-      blockOut[w] = y;
+      blockIn[w]      = xin;
+      blockAliased[w] = yAliased;
+      blockClean[w]   = yClean;
       blockW.store((w + 1) % N, std::memory_order_release);
+
+      cursorIn.store(xin, std::memory_order_relaxed);
     }
   }
 
-  void computeSpectrum(std::array<float, N / 2>& mag, const std::array<float, N>& src) {
+  void computeSpectrum(std::array<float, N / 2>& mag, const std::array<float, N>& srcBuf) {
     std::array<float, N> x{};
     for (int i = 0; i < N; ++i) {
-      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
-      x[i] = src[i] * win;
+      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
+      x[i] = srcBuf[i] * win;
     }
     for (int k = 0; k < N / 2; ++k) {
       float re = 0.f, im = 0.f;
-      const float ang = -2.0f * M_PI * k / N;
+      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
       for (int n = 0; n < N; ++n) {
         re += x[n] * std::cos(ang * n);
         im += x[n] * std::sin(ang * n);
@@ -2062,6 +2374,7 @@ public:
   void onAnimate(double /*dt*/) override {
     const int sh = shape.get();
     const float dr = drive.get();
+    const bool  os = oversample.get();
 
     // Transfer curve sampled at 240 points across [-1, +1] input.
     transferCurve.reset();
@@ -2070,14 +2383,36 @@ public:
     for (int i = 0; i < TC; ++i) {
       const float xin = -1.0f + 2.0f * i / (TC - 1);
       const float y   = shapeFn(sh, dr * xin);
-      // Map (-1..+1) input to x in [-1.4, +1.4]; (-1..+1) output to y in [0.4, 1.4].
       const float xx = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
       const float yy = 0.4f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.5f;
       transferCurve.vertex(xx, yy, 0.f);
       transferCurve.color(0.4f, 0.95f, 0.6f);
     }
 
-    // Input + output waveforms, in/out side by side stacked vertically.
+    // Yellow cursor disc on transfer curve at the current input value.
+    {
+      const float xin = std::max(-1.0f, std::min(1.0f,
+                          cursorIn.load(std::memory_order_relaxed)));
+      const float y   = shapeFn(sh, dr * xin);
+      const float cx  = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
+      const float cy  = 0.4f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.5f;
+      cursorDisc.reset();
+      cursorDisc.primitive(Mesh::TRIANGLES);
+      const int seg = 16;
+      const float radius = 0.04f;
+      for (int s = 0; s < seg; ++s) {
+        const float a0 = 2.f * static_cast<float>(M_PI) * s       / seg;
+        const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
+        cursorDisc.vertex(cx, cy, 0.f);
+        cursorDisc.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
+        cursorDisc.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
+        cursorDisc.color(1.0f, 0.9f, 0.2f);
+        cursorDisc.color(1.0f, 0.9f, 0.2f);
+        cursorDisc.color(1.0f, 0.9f, 0.2f);
+      }
+    }
+
+    // Input + output waveforms.
     const int w = blockW.load(std::memory_order_acquire);
     waveIn.reset(); waveOut.reset();
     waveIn.primitive(Mesh::LINE_STRIP);
@@ -2087,27 +2422,41 @@ public:
       const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
       waveIn.vertex (xx, blockIn[idx]  * 0.18f - 0.10f, 0.f);
       waveIn.color(0.5f, 0.7f, 0.95f);
-      waveOut.vertex(xx, blockOut[idx] * 0.18f - 0.45f, 0.f);
+      const float outSamp = os ? blockClean[idx] : blockAliased[idx];
+      waveOut.vertex(xx, outSamp * 0.18f - 0.45f, 0.f);
       waveOut.color(0.95f, 0.6f, 0.35f);
     }
 
-    // Spectrum of the OUTPUT (most interesting visually).
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag, blockOut);
-    spectrum.reset();
-    spectrum.primitive(Mesh::LINE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(0.7f, mag[k] * 4.0f);
-      spectrum.vertex(xx, -1.0f + h, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      spectrum.color(0.95f - 0.3f * t, 0.55f, 0.4f + 0.5f * t);
+    // Aliased (orange) — always drawn.
+    spectrumA.reset();
+    spectrumA.primitive(Mesh::LINE_STRIP);
+    {
+      std::array<float, N / 2> magA{};
+      computeSpectrum(magA, blockAliased);
+      for (int k = 0; k < N / 2; ++k) {
+        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+        const float h  = std::min(0.7f, magA[k] * 4.0f);
+        spectrumA.vertex(xx, -1.0f + h, 0.f);
+        spectrumA.color(0.95f, 0.55f, 0.25f);
+      }
+    }
+    // Clean (white) — only when oversample is on.
+    spectrumC.reset();
+    if (os) {
+      spectrumC.primitive(Mesh::LINE_STRIP);
+      std::array<float, N / 2> magC{};
+      computeSpectrum(magC, blockClean);
+      for (int k = 0; k < N / 2; ++k) {
+        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
+        const float h  = std::min(0.7f, magC[k] * 4.0f);
+        spectrumC.vertex(xx, -1.0f + h, 0.f);
+        spectrumC.color(0.95f, 0.95f, 0.95f);
+      }
     }
 
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
-    // Identity diagonal in the transfer area
-    gridMesh.vertex(-1.4f, 0.4f, 0.f); gridMesh.vertex(1.4f, 1.4f, 0.f);
+    gridMesh.vertex(-1.4f, 0.4f, 0.f); gridMesh.vertex(1.4f, 0.4f, 0.f);
     gridMesh.vertex(-1.4f,-0.10f,0.f); gridMesh.vertex(1.4f,-0.10f,0.f);
     gridMesh.vertex(-1.4f,-0.45f,0.f); gridMesh.vertex(1.4f,-0.45f,0.f);
     gridMesh.vertex(-1.4f,-1.00f,0.f); gridMesh.vertex(1.4f,-1.00f,0.f);
@@ -2119,85 +2468,100 @@ public:
     g.meshColor();
     g.draw(gridMesh);
     g.draw(transferCurve);
+    g.draw(cursorDisc);
     g.draw(waveIn);
     g.draw(waveOut);
-    g.draw(spectrum);
+    g.draw(spectrumA);
+    g.draw(spectrumC);
     gui.draw(g);
   }
-};
+  };
 
-ALLOLIB_WEB_MAIN(Waveshaper)
-`,
+  ALLOLIB_WEB_MAIN(Waveshaper)
+  `,
   },
   {
     id: 'mat-allpass-dispersion',
     title: 'Allpass Dispersion Plot',
     description:
-      'A cascade of N first-order allpass sections has flat magnitude (1.0 at every frequency) but non-trivial phase response. The phase plot shows the dispersion that gives allpass chains their characteristic "phasiness" sound — useful for reverbs, smear-filters, and Schroeder-style decorrelators. Audio: white noise through the cascade. Visual: the analytic phase curve across frequency.',
+      'A cascade of N first-order allpass sections has flat magnitude (1.0 at every frequency) but a phase response that grows with N. The trick: phase-only effects are silent on white noise (random phase already), so this example fires a periodic impulse train — a single sharp click smears into a metallic chirp as you stack sections, because each frequency component is delayed by a different amount (group delay = -dphi/dw). Top panel: phase response phi(w) wrapped to [-pi, pi] (saw fans out as N grows) overlaid with group delay tau(w). Middle panel: live impulse response IR[n] showing the click stretching out. Bottom panel: live audio trace of the actual output. Increase pulse_period_ms to space the clicks out, fire_pulse for a single shot.',
     category: 'mat-signal',
     subcategory: 'delay',
     code: `/**
- * Allpass Dispersion Plot — MAT200B Phase 2
- *
- * First-order allpass section:
- *   H(z) = (a + z^-1) / (1 + a*z^-1)     |H(e^jw)| = 1 for all w
- * Phase response (for one section):
- *   phi(w) = -w - 2 * atan2(a*sin(w), 1 + a*cos(w))
- * For an N-section cascade with the same coefficient, total phase is
- * N * phi(w). Different a's (or alternating signs) give richer
- * dispersion patterns; here all sections share one 'coefficient' so
- * the plot stays readable.
- *
- * Audio: white noise -> cascade -> output. The magnitude is flat so
- * tone colour stays constant; what changes is transient smearing
- * — increase 'sections' from 1 to 12 and you can hear the high-end
- * become more diffuse even though no frequencies are filtered out.
- *
- * Visual: phase curve in red across the lower half of the canvas
- * (range -2pi..+2pi mapped to y range), reference flat-magnitude
- * line in dim grey, and a live spectrum of the output for sanity
- * (should remain near-flat).
- */
+   * Allpass Dispersion Plot — MAT200B Phase 2
+   *
+   * First-order allpass section (one shared coefficient g, one shared
+   * delay D samples):
+   *     y[n] = -g * x[n] + x[n-D] + g * y[n-D]
+   *     H(z) = (-g + z^-D) / (1 - g * z^-D)
+   *     |H(e^jw)| = 1 for all w  (allpass)
+   *
+   * For a single section the phase is
+   *     phi(w) = atan2(sin(wD), -g + cos(wD)) - atan2(g*sin(wD), 1 - g*cos(wD))
+   * For an N-section cascade phi_total(w) = N * phi(w), and the
+   * group delay tau(w) = -d phi_total / dw smears transients in time.
+   *
+   * Why the impulse train?
+   * White noise has random phase already, so phase-shifting it sounds
+   * identical to the unshifted signal — the audit caught this. We
+   * instead drive a periodic narrow impulse: one ~5-sample-wide click
+   * every pulse_period_ms. As N grows, the click stretches into a
+   * downward (or upward) chirp because high frequencies and low
+   * frequencies leave the cascade at different times. That's the
+   * audible signature of a Schroeder-style allpass diffuser.
+   */
 
-#include "al_playground_compat.hpp"
-#include "Gamma/Filter.h"
-#include "Gamma/Noise.h"
+  #include "al_playground_compat.hpp"
 
-#include <array>
-#include <atomic>
-#include <cmath>
-#include <vector>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class AllpassDispersion : public App {
-public:
-  Parameter      coefficient {"coefficient", "",  0.7f, -0.95f, 0.95f};
-  ParameterInt   sections    {"sections",    "",  4,    1,     12};
-  Parameter      amp         {"amplitude",   "",  0.20f, 0.0f, 1.0f};
+  class AllpassDispersion : public App {
+  public:
+  Parameter     g_apf           {"g_apf",           "",  0.70f, -0.99f, 0.99f};
+  ParameterInt  sections        {"sections",        "",  6,      1,    12};
+  ParameterInt  delay_samp      {"delay_samp",      "",  4,      1,    32};
+  Parameter     pulse_period_ms {"pulse_period_ms", "",  200.0f, 100.0f, 500.0f};
+  Parameter     amp             {"amplitude",       "",  0.30f,  0.0f,   1.0f};
+  ParameterBool playing         {"playing",         "",  true};
+  Trigger       fire_pulse      {"fire_pulse",      ""};
 
   ControlGUI gui;
 
-  gam::NoiseWhite<> noise;
+  // Per-stage delay-line state for the audio cascade. Each stage owns
+  // its own circular buffer of MAX_D samples for both x and y history,
+  // implementing y[n] = -g*x[n] + x[n-D] + g*y[n-D].
+  static constexpr int MAX_STAGES = 12;
+  static constexpr int MAX_D      = 64;
+  std::array<std::array<float, MAX_D>, MAX_STAGES> xBuf{};
+  std::array<std::array<float, MAX_D>, MAX_STAGES> yBuf{};
+  std::array<int, MAX_STAGES> wIdx{};
 
+  // Impulse generator state (audio thread).
+  int   pulseCounter = 0;
+  int   clickCounter = 0;
+  std::atomic<int> manualPulsePending{0};
+
+  // Live ring buffers for the bottom (output) and middle (IR) panels.
   static constexpr int N = 256;
-  std::array<float, N> blockBuf{};
-  std::atomic<int> blockW{0};
+  std::array<float, N> outBuf{};
+  std::atomic<int> outW{0};
 
-  // Per-stage state for the manual allpass cascade. Inline implementation
-  // keeps us portable across gam::AllPass1 API differences between Gamma
-  // versions; the math is small enough to write directly.
-  //   y[n] = -a*x[n] + x[n-1] + a*y[n-1]
-  std::array<float, 12> stateX{}, stateY{};
-
-  Mesh phaseCurve, spectrum, gridMesh;
+  Mesh phaseCurve, groupDelayCurve, irMesh, outMesh, gridMesh;
 
   void onInit() override {
-    gui << coefficient << sections << amp;
+    gui << g_apf << sections << delay_samp
+        << pulse_period_ms << amp << playing << fire_pulse;
+    fire_pulse.registerChangeCallback([this](float) {
+      manualPulsePending.store(1, std::memory_order_release);
+    });
   }
 
   void onCreate() override {
@@ -2205,102 +2569,202 @@ public:
     nav().pos(0, 0, 4.0f);
   }
 
-  inline float runStage(int i, float x, float a) {
-    const float y = -a * x + stateX[i] + a * stateY[i];
-    stateX[i] = x;
-    stateY[i] = y;
+  // Manual allpass section: one stage, with circular delay-D buffers.
+  inline float runStage(int s, int D, float x, float g) {
+    int& w = wIdx[s];
+    const int rIdx = (w - D + MAX_D) % MAX_D;
+    const float xD = xBuf[s][rIdx];
+    const float yD = yBuf[s][rIdx];
+    const float y  = -g * x + xD + g * yD;
+    xBuf[s][w] = x;
+    yBuf[s][w] = y;
+    w = (w + 1) % MAX_D;
     return y;
   }
 
   void onSound(AudioIOData& io) override {
-    const int   n = sections.get();
-    const float a = coefficient.get();
-    const float g = amp.get();
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
+
+    const float sr  = io.framesPerSecond();
+    const int   N_  = sections.get();
+    const float g   = g_apf.get();
+    const int   D   = std::max(1, std::min(MAX_D - 1, delay_samp.get()));
+    const float gA  = amp.get();
+    const int   per = std::max(8, static_cast<int>(pulse_period_ms.get() * 0.001f * sr));
+    constexpr int CLICK_W = 5;
+
+    if (manualPulsePending.exchange(0, std::memory_order_acquire)) {
+      clickCounter = CLICK_W;
+    }
+
     while (io()) {
-      float s = noise() * 0.4f;
-      for (int i = 0; i < n; ++i) s = runStage(i, s, a);
-      const float y = s * g;
+      // Periodic impulse train: 5-sample-wide rectangular click.
+      if (++pulseCounter >= per) {
+        pulseCounter = 0;
+        clickCounter = CLICK_W;
+      }
+      float src = 0.f;
+      if (clickCounter > 0) {
+        src = 1.0f;
+        --clickCounter;
+      }
+
+      float s = src;
+      for (int i = 0; i < N_; ++i) s = runStage(i, D, s, g);
+      const float y = s * gA;
       io.out(0) = y;
       io.out(1) = y;
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = y;
-      blockW.store((w + 1) % N, std::memory_order_release);
+
+      const int w = outW.load(std::memory_order_relaxed);
+      outBuf[w] = y;
+      outW.store((w + 1) % N, std::memory_order_release);
     }
   }
 
-  void computeSpectrum(std::array<float, N / 2>& mag) {
-    const int w = blockW.load(std::memory_order_acquire);
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (N - 1)));
-      x[i] = blockBuf[idx] * win;
-    }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * M_PI * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
+  // Phase of one allpass section H(z) = (-g + z^-D) / (1 - g*z^-D)
+  static inline float onePhase(float w, int D, float g) {
+    const float wD = w * static_cast<float>(D);
+    const float numPhase = std::atan2(std::sin(wD), -g + std::cos(wD));
+    const float denPhase = std::atan2(-g * std::sin(wD), 1.0f - g * std::cos(wD));
+    return numPhase - denPhase;
+  }
+
+  static inline float wrapPi(float p) {
+    constexpr float TAU = 2.0f * static_cast<float>(M_PI);
+    while (p >  static_cast<float>(M_PI)) p -= TAU;
+    while (p < -static_cast<float>(M_PI)) p += TAU;
+    return p;
+  }
+
+  // Compute IR by feeding a unit impulse through a SHADOW cascade whose
+  // state is local — this lets us draw the dispersion curve without
+  // disturbing the live audio cascade.
+  void computeIR(std::array<float, N>& ir, int N_, int D, float g) {
+    std::array<std::array<float, MAX_D>, MAX_STAGES> xs{};
+    std::array<std::array<float, MAX_D>, MAX_STAGES> ys{};
+    std::array<int, MAX_STAGES> ws{};
+    for (int n = 0; n < N; ++n) {
+      float s = (n == 0) ? 1.0f : 0.0f;
+      for (int i = 0; i < N_; ++i) {
+        int& w = ws[i];
+        const int rIdx = (w - D + MAX_D) % MAX_D;
+        const float xD = xs[i][rIdx];
+        const float yD = ys[i][rIdx];
+        const float y  = -g * s + xD + g * yD;
+        xs[i][w] = s;
+        ys[i][w] = y;
+        w = (w + 1) % MAX_D;
+        s = y;
       }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+      ir[n] = s;
     }
   }
 
   void onAnimate(double /*dt*/) override {
-    const int n  = sections.get();
-    const float a = coefficient.get();
+    const int   N_ = sections.get();
+    const float g  = g_apf.get();
+    const int   D  = std::max(1, std::min(MAX_D - 1, delay_samp.get()));
+    const float sr = 48000.f; // for group delay scale; visualization only
 
-    // Analytic phase response: 240 freq points across (0, pi).
+    // ---------------- TOP PANEL: phase + group delay ----------------
+    constexpr int W2 = 240;
+    constexpr float TOP_Y0 = 0.55f, TOP_AMP = 0.40f;
     phaseCurve.reset();
     phaseCurve.primitive(Mesh::LINE_STRIP);
-    constexpr int W2 = 240;
+    groupDelayCurve.reset();
+    groupDelayCurve.primitive(Mesh::LINE_STRIP);
+
+    // First pass: gather group delay (raw) so we can auto-scale it.
+    std::array<float, W2> gd{};
+    float gdMax = 1e-6f;
+    constexpr float dw = static_cast<float>(M_PI) / W2;
     for (int k = 0; k < W2; ++k) {
-      const float w = (M_PI * (k + 1)) / W2;
-      // One-section phase: phi = -w - 2 * atan2(a*sin(w), 1+a*cos(w))
-      const float phi1 = -w - 2.0f * std::atan2(a * std::sin(w), 1.0f + a * std::cos(w));
-      const float phiN = phi1 * n;
-      // Map phase from [-2pi*N..+2pi*N] to y in [-0.95..+0.40].
-      const float yScale = std::max(1.0f, 2.0f * static_cast<float>(M_PI) * static_cast<float>(n));
-      const float yy = -0.275f + 0.675f * (phiN / yScale);
+      const float w0 = std::max(1e-4f, dw * (k + 0.5f - 0.5f));
+      const float w1 = w0 + dw * 0.5f;
+      const float wm = w0 + dw * 0.25f;
+      const float p0 = onePhase(wm - dw * 0.25f, D, g) * N_;
+      const float p1 = onePhase(wm + dw * 0.25f, D, g) * N_;
+      // tau = -dphi/dw; convert to seconds via /sr*sr cancels — keep in samples.
+      gd[k] = -(p1 - p0) / (dw * 0.5f);
+      if (std::fabs(gd[k]) > gdMax) gdMax = std::fabs(gd[k]);
+    }
+
+    for (int k = 0; k < W2; ++k) {
+      const float w  = dw * (k + 0.5f);
       const float xx = -1.4f + (static_cast<float>(k) / (W2 - 1)) * 2.8f;
-      phaseCurve.vertex(xx, yy, 0.f);
-      phaseCurve.color(0.95f, 0.45f, 0.4f);
+
+      // Phase wrapped to [-pi, pi]
+      const float phiN = onePhase(w, D, g) * N_;
+      const float phiW = wrapPi(phiN);
+      const float yPhase = TOP_Y0 + TOP_AMP * (phiW / static_cast<float>(M_PI));
+      phaseCurve.vertex(xx, yPhase, 0.f);
+      phaseCurve.color(0.95f, 0.45f, 0.40f);
+
+      // Group delay normalized
+      const float yGD = TOP_Y0 + TOP_AMP * (gd[k] / gdMax);
+      groupDelayCurve.vertex(xx, yGD, 0.f);
+      groupDelayCurve.color(0.40f, 0.85f, 0.60f);
     }
 
-    // Live magnitude spectrum (should stay near-flat — that's the point).
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag);
-    spectrum.reset();
-    spectrum.primitive(Mesh::LINE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(0.6f, mag[k] * 8.0f);
-      spectrum.vertex(xx, -1.05f + h, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      spectrum.color(0.4f + 0.5f * t, 0.85f, 0.5f);
+    // Group-delay seconds at sr (display only — pulse_period scales the
+    // hint but we use sr as a stable reference for the label).
+    (void)sr;
+
+    // ---------------- MIDDLE PANEL: impulse response ----------------
+    std::array<float, N> ir{};
+    computeIR(ir, N_, D, g);
+    irMesh.reset();
+    irMesh.primitive(Mesh::TRIANGLE_STRIP);
+    constexpr float MID_Y0 = 0.0f, MID_AMP = 0.22f;
+    for (int n = 0; n < N; ++n) {
+      const float xx = -1.4f + (static_cast<float>(n) / (N - 1)) * 2.8f;
+      const float v  = std::max(-1.0f, std::min(1.0f, ir[n]));
+      const float top = MID_Y0 + v * MID_AMP;
+      irMesh.vertex(xx, top, 0.f);
+      irMesh.color(0.55f, 0.75f, 0.95f);
+      irMesh.vertex(xx, MID_Y0, 0.f);
+      irMesh.color(0.20f, 0.30f, 0.50f);
     }
 
+    // ---------------- BOTTOM PANEL: live output trace ----------------
+    outMesh.reset();
+    outMesh.primitive(Mesh::LINE_STRIP);
+    const int wOut = outW.load(std::memory_order_acquire);
+    constexpr float BOT_Y0 = -0.65f, BOT_AMP = 0.22f;
+    for (int i = 0; i < N; ++i) {
+      const int idx = (wOut + i) % N;
+      const float v = std::max(-1.0f, std::min(1.0f, outBuf[idx]));
+      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
+      outMesh.vertex(xx, BOT_Y0 + v * BOT_AMP, 0.f);
+      outMesh.color(0.95f, 0.85f, 0.30f);
+    }
+
+    // Grid: one baseline per panel.
     gridMesh.reset();
     gridMesh.primitive(Mesh::LINES);
-    // Phase axis baseline + zero line at midpoint.
-    gridMesh.vertex(-1.4f, -0.275f, 0.f); gridMesh.vertex(1.4f, -0.275f, 0.f);
-    gridMesh.vertex(-1.4f, -1.05f,  0.f); gridMesh.vertex(1.4f, -1.05f,  0.f);
-    for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
+    gridMesh.vertex(-1.4f, TOP_Y0, 0.f); gridMesh.vertex(1.4f, TOP_Y0, 0.f);
+    gridMesh.vertex(-1.4f, MID_Y0, 0.f); gridMesh.vertex(1.4f, MID_Y0, 0.f);
+    gridMesh.vertex(-1.4f, BOT_Y0, 0.f); gridMesh.vertex(1.4f, BOT_Y0, 0.f);
+    for (int k = 0; k < 6; ++k) gridMesh.color(0.22f, 0.22f, 0.28f);
   }
 
   void onDraw(Graphics& g) override {
     g.clear(0.04f, 0.04f, 0.07f);
     g.meshColor();
     g.draw(gridMesh);
+    g.draw(irMesh);
     g.draw(phaseCurve);
-    g.draw(spectrum);
+    g.draw(groupDelayCurve);
+    g.draw(outMesh);
     gui.draw(g);
   }
-};
+  };
 
-ALLOLIB_WEB_MAIN(AllpassDispersion)
-`,
+  ALLOLIB_WEB_MAIN(AllpassDispersion)
+  `,
   },
   {
     id: 'mat-1d-waveguide',
@@ -2542,39 +3006,52 @@ ALLOLIB_WEB_MAIN(WaveguideString)
     id: 'mat-subtractive',
     title: 'Subtractive Synth — Saw + Resonant Filter',
     description:
-      "Classic subtractive synthesis: a sawtooth oscillator whose harmonics are sculpted by a resonant lowpass biquad, with two ADSR envelopes — one shaping amplitude, the other sweeping the filter cutoff for that signature 'wah' motion. Visualization plots the filter's pole/zero positions on the complex z-plane (unit circle, two poles inside, two zeros at z=-1) above a live magnitude spectrum so the harmonic carving is visible while you hear it.",
+      "Classic subtractive synthesis: a sawtooth oscillator whose harmonics are sculpted by a resonant lowpass biquad, with two ADSR envelopes — one shaping amplitude, the other sweeping the filter cutoff for that signature 'wah' motion. Visualization plots the filter's true RBJ-cookbook biquad poles (analytic roots of the denominator) and zeros at z=-1 on the complex z-plane above a live magnitude spectrum, with a sliding cutoff line and log-Hz tick marks at 100 Hz / 1 kHz / 10 kHz so the harmonic carving lines up with the real cutoff frequency. A soft tanh limiter on the output keeps the resonant ringing musical instead of self-oscillating into clipping.",
     category: 'mat-synthesis',
     subcategory: 'subtractive',
     code: `/**
- * Subtractive Synth — Saw + Resonant Filter — MAT200B Phase 2
- *
- * Source -> filter -> amp envelope is the textbook subtractive
- * voice. A sawtooth is harmonically dense (1/k spectrum), a
- * resonant lowpass biquad carves a band, and an ADSR shapes
- * amplitude. A second ADSR with its own depth ('env_amount') is
- * summed into the filter cutoff for the classic synth-bass sweep.
- *
- * Visual top: z-plane unit circle with illustrative pole/zero dots.
- * Visual bottom: 256-pt Hann-windowed inline DFT of the output.
- */
+   * Subtractive Synth — Saw + Resonant Filter — MAT200B Phase 2
+   *
+   * Source -> filter -> amp envelope is the textbook subtractive
+   * voice. A sawtooth is harmonically dense (1/k spectrum), a
+   * resonant lowpass biquad carves a band, and an ADSR shapes
+   * amplitude. A second ADSR with its own depth ('env_amount') is
+   * summed into the filter cutoff for the classic synth-bass sweep.
+   *
+   * Visualization (top): z-plane unit circle with the EXACT analytic
+   * RBJ-cookbook poles of a resonant lowpass biquad:
+   *     w0 = 2*pi*fc/sr,   alpha = sin(w0)/(2Q)
+   *     a0 = 1+alpha,  a1 = -2cos(w0)/a0,  a2 = (1-alpha)/a0
+   *     pole = (-a1 +/- sqrt(a1^2 - 4*a2)) / 2
+   * For the resonant case the discriminant is negative; |pole| = sqrt(a2)
+   * and theta = atan2(sqrt(-disc)/2, -a1/2). Zeros sit at z=-1 (double).
+   *
+   * Visualization (bottom): 256-pt Hann-windowed inline DFT of the
+   * output, with log-spaced tick marks at 100 Hz, 1 kHz, 10 kHz and a
+   * sliding vertical line at the live (envelope-modulated) cutoff so
+   * the spectral notch lines up with the real cutoff in real time.
+   *
+   * Output: tanh-limited at 1.2x to keep self-oscillation musical.
+   */
 
-#include "al_playground_compat.hpp"
-#include "Gamma/Filter.h"
-#include "Gamma/Envelope.h"
-#include "Gamma/Oscillator.h"
+  #include "al_playground_compat.hpp"
+  #include "Gamma/Filter.h"
+  #include "Gamma/Envelope.h"
+  #include "Gamma/Oscillator.h"
 
-#include <array>
-#include <atomic>
-#include <cmath>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class Subtractive : public App {
-public:
+  class Subtractive : public App {
+  public:
+  ParameterBool playing {"playing", "", true};
   Parameter pitch_hz   {"pitch_hz",   "",  110.0f,  40.0f, 1200.0f};
   Parameter cutoff_hz  {"cutoff_hz",  "", 1200.0f,  50.0f,12000.0f};
   Parameter resonance  {"resonance",  "",    4.0f,   0.5f,   15.0f};
@@ -2604,10 +3081,10 @@ public:
   std::array<float, N> blockBuf{};
   std::atomic<int> blockW{0};
 
-  Mesh spectrum, gridMesh, unitCircle, poleMesh, zeroMesh;
+  Mesh spectrum, gridMesh, unitCircle, poleMesh, zeroMesh, cutoffLine, tickMesh;
 
   void onInit() override {
-    gui << pitch_hz << cutoff_hz << resonance << env_amount
+    gui << playing << pitch_hz << cutoff_hz << resonance << env_amount
         << attack_ms << decay_ms << sustain << release_ms << amp
         << noteOn << noteOff;
 
@@ -2632,6 +3109,10 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    if (!playing.get()) {
+      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+      return;
+    }
     const float sr = io.framesPerSecond();
     sampleRateHz.store(sr, std::memory_order_relaxed);
 
@@ -2670,11 +3151,14 @@ public:
       const float ae   = ampEnv();
       const float y    = filt * ae * gain;
 
-      io.out(0) = y;
-      io.out(1) = y;
+      // Soft tanh limiter — keeps high-Q self-oscillation musical
+      // instead of clipping/exploding when resonance is cranked.
+      const float yLim = std::tanh(y * 1.2f);
+      io.out(0) = yLim;
+      io.out(1) = yLim;
 
       const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = y;
+      blockBuf[w] = yLim;
       blockW.store((w + 1) % N, std::memory_order_release);
     }
 
@@ -2715,8 +3199,9 @@ public:
 
   void onAnimate(double /*dt*/) override {
     const float sr   = sampleRateHz.load(std::memory_order_relaxed);
-    const float Q    = resonance.get();
+    const float Q    = std::max(0.5f, resonance.get());
     const float ce   = cutEnvViz.load(std::memory_order_relaxed);
+    const float nyq  = 0.5f * sr;
     const float fc   = std::min(0.49f * sr,
                        std::max(20.f, cutoff_hz.get() + env_amount.get() * ce));
 
@@ -2733,9 +3218,28 @@ public:
       unitCircle.color(0.45f, 0.45f, 0.55f);
     }
 
-    const float poleR     = std::max(0.0f,
-                              std::min(0.99f, 1.0f - static_cast<float>(M_PI) * fc / (sr * Q)));
-    const float poleTheta = 2.0f * static_cast<float>(M_PI) * fc / sr;
+    // ---- RBJ cookbook biquad LP poles (analytic) ----
+    const float w0    = 2.0f * static_cast<float>(M_PI) * fc / sr;
+    const float alpha = std::sin(w0) / (2.0f * Q);
+    const float a0    = 1.0f + alpha;
+    const float a1    = -2.0f * std::cos(w0) / a0;
+    const float a2    = (1.0f - alpha) / a0;
+    // Roots of z^2 + a1 z + a2 = 0
+    const float disc  = a1 * a1 - 4.0f * a2;
+    float poleR, poleTheta;
+    if (disc < 0.0f) {
+      poleR     = std::sqrt(std::max(0.0f, a2));
+      poleTheta = std::atan2(std::sqrt(-disc) * 0.5f, -a1 * 0.5f);
+    } else {
+      // Real poles fallback (low-Q corner) — use larger-magnitude root.
+      const float s = std::sqrt(disc);
+      const float r1 = (-a1 + s) * 0.5f;
+      const float r2 = (-a1 - s) * 0.5f;
+      poleR     = std::max(std::fabs(r1), std::fabs(r2));
+      poleTheta = (std::fabs(r1) > std::fabs(r2)) ? (r1 < 0 ? static_cast<float>(M_PI) : 0.f)
+                                                  : (r2 < 0 ? static_cast<float>(M_PI) : 0.f);
+    }
+    poleR = std::min(0.999f, poleR);
 
     poleMesh.reset();
     poleMesh.primitive(Mesh::TRIANGLES);
@@ -2752,6 +3256,7 @@ public:
     zeroMesh.primitive(Mesh::TRIANGLES);
     addDiscDots(zeroMesh, CX - R, CY, 0.030f, 0.30f, 0.85f, 0.95f);
 
+    // ---- Spectrum ----
     std::array<float, N / 2> mag{};
     computeSpectrum(mag);
 
@@ -2763,6 +3268,36 @@ public:
       spectrum.vertex(xx, -1.05f + h, 0.f);
       const float t = static_cast<float>(k) / (N / 2);
       spectrum.color(0.55f + 0.35f * t, 0.45f + 0.45f * t, 0.95f - 0.3f * t);
+    }
+
+    // ---- Live cutoff line on spectrum: linear k = fc/nyquist mapping ----
+    cutoffLine.reset();
+    cutoffLine.primitive(Mesh::LINES);
+    const float fcRel = std::min(1.0f, std::max(0.0f, fc / nyq));
+    const float fcX   = -1.4f + fcRel * 2.8f;
+    cutoffLine.vertex(fcX, -1.05f, 0.f);
+    cutoffLine.vertex(fcX, -0.10f, 0.f);
+    cutoffLine.color(1.0f, 0.85f, 0.30f);
+    cutoffLine.color(1.0f, 0.85f, 0.30f);
+
+    // ---- Log-Hz tick marks at 100 Hz, 1 kHz, 10 kHz ----
+    tickMesh.reset();
+    tickMesh.primitive(Mesh::TRIANGLES);
+    const float tickFreqs[3] = {100.0f, 1000.0f, 10000.0f};
+    for (int t = 0; t < 3; ++t) {
+      const float f = tickFreqs[t];
+      if (f >= nyq) continue;
+      const float fr = f / nyq;
+      const float x  = -1.4f + fr * 2.8f;
+      const float h  = 0.025f;
+      const float w  = 0.012f;
+      // Small upward triangle sitting on the spectrum baseline.
+      tickMesh.vertex(x - w, -1.08f, 0.f);
+      tickMesh.vertex(x + w, -1.08f, 0.f);
+      tickMesh.vertex(x,     -1.08f + h, 0.f);
+      tickMesh.color(0.65f, 0.65f, 0.75f);
+      tickMesh.color(0.65f, 0.65f, 0.75f);
+      tickMesh.color(0.65f, 0.65f, 0.75f);
     }
 
     gridMesh.reset();
@@ -2784,6 +3319,8 @@ public:
     g.draw(zeroMesh);
     g.draw(poleMesh);
     g.draw(spectrum);
+    g.draw(cutoffLine);
+    g.draw(tickMesh);
     gui.draw(g);
   }
 
@@ -2819,10 +3356,10 @@ public:
     if (noteFromKey(k.key()) >= 0) noteOff.set(1.0f);
     return true;
   }
-};
+  };
 
-ALLOLIB_WEB_MAIN(Subtractive)
-`,
+  ALLOLIB_WEB_MAIN(Subtractive)
+  `,
   },
   {
     id: 'mat-granular-cloud',
@@ -3108,39 +3645,46 @@ ALLOLIB_WEB_MAIN(GranularCloud)
   {
     id: 'mat-multiscale-stems',
     title: 'Multiscale Stem Visualizer',
-    description: 'Play a bundled loop and visualize it at three simultaneous time scales (full loop overview, ~1s medium window, ~10ms short window) with per-scale dB-RMS meters.',
+    description: 'Play a bundled loop and visualize it at three simultaneous time scales (full loop overview, ~1s medium window, ~10ms short window) with per-scale dB-RMS meters, color-framed waveform panels, dB tick markers, a full-height playhead, yellow zoom brackets on the overview, and a phase-heatmap strip that shows where loud transients live in the loop.',
     category: 'mat-mixing',
     subcategory: 'stems',
     code: `/**
- * Multiscale Stem Visualizer
- *
- * Plays one of three bundled loops (drums, pad, mixed) and renders the
- * audio simultaneously at three time scales stacked vertically:
- *
- *   1. Top    : full-loop overview (downsampled min/max envelope, 256
- *               columns, with a moving playhead marker).
- *   2. Middle : medium-zoom window of the last ~zoom_med_ms ms.
- *   3. Bottom : live ~zoom_short_ms ms window.
- *
- * Three one-pole RMS detectors (short / medium / long taus) drive
- * dB meters pinned to the right edge.
- */
-#include "al_playground_compat.hpp"
-#include "al_WebSamplePlayer.hpp"
-#include <array>
-#include <vector>
-#include <cmath>
-#include <cstring>
+   * Multiscale Stem Visualizer
+   *
+   * Plays one of three bundled loops (drums, pad, mixed) and renders the
+   * audio simultaneously at three time scales stacked vertically:
+   *
+   *   1. Top    : full-loop overview (downsampled min/max envelope, 256
+   *               columns) with yellow brackets indicating the medium and
+   *               short zoom windows.
+   *   2. Middle : medium-zoom window of the last ~zoom_med_ms ms.
+   *   3. Bottom : live ~zoom_short_ms ms window.
+   *   4. Strip  : phase heatmap — 256 columns coloured by the short-tau
+   *               RMS captured for each phase of the loop.
+   *
+   * Three one-pole RMS detectors (short / medium / long taus) drive
+   * dB meters pinned to the right edge, with -60 / -30 / 0 dB tick
+   * markers next to each meter. A white playhead spans the full canvas
+   * height across all three rows. Each waveform row is color-framed to
+   * match its meter (cyan / amber / pink).
+   */
+  #include "al_playground_compat.hpp"
+  #include "al_WebSamplePlayer.hpp"
+  #include <array>
+  #include <vector>
+  #include <cmath>
+  #include <cstring>
 
-using namespace al;
+  using namespace al;
 
-static const int   kFullCols    = 256;
-static const int   kShortRing   = 1024;
-static const int   kMedRing     = 72000;
-static const float kHostSR      = 48000.f;
+  static const int   kFullCols    = 256;
+  static const int   kHeatCols    = 256;
+  static const int   kShortRing   = 1024;
+  static const int   kMedRing     = 72000;
+  static const float kHostSR      = 48000.f;
 
-class MultiscaleStems : public App {
-public:
+  class MultiscaleStems : public App {
+  public:
   ControlGUI gui;
 
   ParameterMenu source{"source"};
@@ -3163,10 +3707,14 @@ public:
   float rmsShort = 0.f, rmsMed = 0.f, rmsLong = 0.f;
   float coefShort = 0.f, coefMed = 0.f, coefLong = 0.f;
 
+  // Phase heatmap: per-loop-phase peak short-RMS, decayed each pass.
+  std::array<float, kHeatCols> heat{};
+
   std::vector<float> envMin, envMax;
   int cachedFrames = 0;
 
   Mesh mFull, mMed, mShort, mBars, mGrid, mPlayhead;
+  Mesh mFrames, mTicks, mBrackets, mHeat;
 
   void onInit() override {
     source.setElements({"drums", "pad", "mixed"});
@@ -3179,11 +3727,13 @@ public:
         default: current = &pMixed; break;
       }
       playhead = 0.0;
+      heat.fill(0.f);
       buildFullEnvelope();
     });
 
     retrigger.registerChangeCallback([this](float) {
       playhead = 0.0;
+      heat.fill(0.f);
     });
 
     auto tauCoef = [](float tauSec) {
@@ -3210,6 +3760,10 @@ public:
     mBars.primitive(Mesh::TRIANGLES);
     mGrid.primitive(Mesh::LINES);
     mPlayhead.primitive(Mesh::LINES);
+    mFrames.primitive(Mesh::TRIANGLES);
+    mTicks.primitive(Mesh::TRIANGLES);
+    mBrackets.primitive(Mesh::TRIANGLES);
+    mHeat.primitive(Mesh::TRIANGLES);
   }
 
   void buildFullEnvelope() {
@@ -3251,15 +3805,26 @@ public:
       if (playhead >= frames) playhead -= frames;
       if (playhead < 0) playhead += frames;
 
-      shortRing[shortW] = s;
+      shortRing[(size_t)shortW] = s;
       shortW = (shortW + 1) % kShortRing;
-      medRing[medW] = s;
+      medRing[(size_t)medW] = s;
       medW = (medW + 1) % kMedRing;
 
       float ax = std::fabs(s);
       rmsShort = (1.f - coefShort) * ax + coefShort * rmsShort;
       rmsMed   = (1.f - coefMed)   * ax + coefMed   * rmsMed;
       rmsLong  = (1.f - coefLong)  * ax + coefLong  * rmsLong;
+
+      // Phase heatmap: write the current short-RMS into the bucket for
+      // this playhead phase. Use peak-and-decay so loud transients stay
+      // visible even after the playhead has passed.
+      if (frames > 0) {
+        int hi = (int)((playhead / (double)frames) * (double)kHeatCols);
+        if (hi < 0) hi = 0;
+        if (hi >= kHeatCols) hi = kHeatCols - 1;
+        const float decay = 0.9995f; // very slow decay so heatmap accumulates
+        heat[(size_t)hi] = std::max(rmsShort, heat[(size_t)hi] * decay);
+      }
 
       io.out(0) = s;
       io.out(1) = s;
@@ -3276,11 +3841,32 @@ public:
     return t * 0.7f;
   }
 
+  // Helper: emit a filled rectangle (TRIANGLES) into a mesh.
+  static void rect(Mesh& m, float x0, float y0, float x1, float y1,
+                   float r, float g, float b) {
+    m.vertex(x0, y0, 0); m.color(r, g, b);
+    m.vertex(x1, y0, 0); m.color(r, g, b);
+    m.vertex(x1, y1, 0); m.color(r, g, b);
+    m.vertex(x0, y0, 0); m.color(r, g, b);
+    m.vertex(x1, y1, 0); m.color(r, g, b);
+    m.vertex(x0, y1, 0); m.color(r, g, b);
+  }
+
+  // Helper: emit a hollow rectangle outline as 4 thin TRIANGLES strips.
+  static void rectOutline(Mesh& m, float x0, float y0, float x1, float y1,
+                          float thick, float r, float g, float b) {
+    rect(m, x0, y1 - thick, x1, y1, r, g, b);                 // top
+    rect(m, x0, y0, x1, y0 + thick, r, g, b);                 // bottom
+    rect(m, x0, y0, x0 + thick, y1, r, g, b);                 // left
+    rect(m, x1 - thick, y0, x1, y1, r, g, b);                 // right
+  }
+
   void onDraw(Graphics& g) override {
     g.clear(0.06f, 0.07f, 0.09f);
 
     const float xL = -1.4f, xR = 1.25f;
 
+    // ---- Grid lines ----
     mGrid.reset();
     mGrid.primitive(Mesh::LINES);
     auto hline = [&](float y, float r, float gG, float b){
@@ -3305,29 +3891,71 @@ public:
 
     const float panelW = xR - xL;
 
+    // ---- Top panel: full-loop envelope ----
     mFull.reset();
     mFull.primitive(Mesh::TRIANGLE_STRIP);
     if ((int)envMin.size() == kFullCols) {
       for (int c = 0; c < kFullCols; ++c) {
-        float fx = xL + (c / (float)(kFullCols - 1)) * panelW;
-        float yMin = +1.00f + envMin[c] * 0.33f;
-        float yMax = +1.00f + envMax[c] * 0.33f;
+        float fx = xL + ((float)c / (float)(kFullCols - 1)) * panelW;
+        float yMin = +1.00f + envMin[(size_t)c] * 0.33f;
+        float yMax = +1.00f + envMax[(size_t)c] * 0.33f;
         mFull.vertex(fx, yMax, 0); mFull.color(0.45f, 0.85f, 1.0f);
         mFull.vertex(fx, yMin, 0); mFull.color(0.25f, 0.55f, 0.8f);
       }
     }
     g.draw(mFull);
 
+    // ---- Yellow zoom brackets on the top panel ----
+    // Bracket widths reflect (zoom_*_ms / loopMs) * panelW, centered
+    // on the current playhead. They are filled with very faint fills
+    // and outlined in the row colour underneath.
+    mBrackets.reset();
+    mBrackets.primitive(Mesh::TRIANGLES);
+    if (cachedFrames > 0) {
+      const double srcSR  = current ? current->sampleRate() : (double)kHostSR;
+      const double loopMs = (srcSR > 1.0) ? (1000.0 * (double)cachedFrames / srcSR) : 0.0;
+      if (loopMs > 1.0) {
+        const float t = (float)(playhead / (double)cachedFrames);
+        const float px = xL + t * panelW;
+        const float topY0 = +0.68f, topY1 = +1.32f;
+
+        // medium bracket (amber)
+        const float wMed = (float)(((double)zoom_med_ms.get() / loopMs)) * panelW;
+        const float halfMed = std::min(panelW * 0.5f, wMed * 0.5f);
+        const float mx0 = std::max(xL, px - halfMed);
+        const float mx1 = std::min(xR, px + halfMed);
+        rect(mBrackets, mx0, topY0, mx1, topY1, 0.55f, 0.42f, 0.10f);
+        rectOutline(mBrackets, mx0, topY0, mx1, topY1, 0.008f,
+                    0.95f, 0.75f, 0.20f);
+
+        // short bracket (pink)
+        const float wShort = (float)(((double)zoom_short_ms.get() / loopMs)) * panelW;
+        const float halfShort = std::min(panelW * 0.5f, wShort * 0.5f);
+        const float sx0 = std::max(xL, px - halfShort);
+        const float sx1 = std::min(xR, px + halfShort);
+        rect(mBrackets, sx0, topY0, sx1, topY1, 0.55f, 0.20f, 0.30f);
+        rectOutline(mBrackets, sx0, topY0, sx1, topY1, 0.008f,
+                    1.00f, 0.55f, 0.60f);
+      }
+    }
+    g.draw(mBrackets);
+
+    // Re-draw the full envelope on top of the bracket fills so the
+    // waveform stays legible.
+    g.draw(mFull);
+
+    // ---- Full-height playhead spanning all three rows ----
     mPlayhead.reset();
     mPlayhead.primitive(Mesh::LINES);
     if (cachedFrames > 0) {
       float t = (float)(playhead / (double)cachedFrames);
       float px = xL + t * panelW;
       mPlayhead.vertex(px, +1.32f, 0); mPlayhead.color(1.f, 1.f, 1.f);
-      mPlayhead.vertex(px, +0.68f, 0); mPlayhead.color(1.f, 1.f, 1.f);
+      mPlayhead.vertex(px, -0.85f, 0); mPlayhead.color(1.f, 1.f, 1.f);
     }
     g.draw(mPlayhead);
 
+    // ---- Middle panel: medium-zoom window ----
     mMed.reset();
     mMed.primitive(Mesh::LINE_STRIP);
     int medSamples = (int)((zoom_med_ms.get() / 1000.f) * kHostSR);
@@ -3335,17 +3963,18 @@ public:
     if (medSamples > kMedRing) medSamples = kMedRing;
     int verts = 512;
     for (int i = 0; i < verts; ++i) {
-      int offs = (int)((float)i / (float)(verts - 1) * (medSamples - 1));
+      int offs = (int)((float)i / (float)(verts - 1) * (float)(medSamples - 1));
       int idx  = (medW - medSamples + offs) % kMedRing;
       if (idx < 0) idx += kMedRing;
       float s = medRing[(size_t)idx];
-      float fx = xL + (i / (float)(verts - 1)) * panelW;
+      float fx = xL + ((float)i / (float)(verts - 1)) * panelW;
       float fy = +0.25f + s * 0.28f;
       mMed.vertex(fx, fy, 0);
       mMed.color(0.9f, 0.7f, 0.4f);
     }
     g.draw(mMed);
 
+    // ---- Bottom panel: short-zoom window ----
     mShort.reset();
     mShort.primitive(Mesh::LINE_STRIP);
     int shortSamples = (int)((zoom_short_ms.get() / 1000.f) * kHostSR);
@@ -3353,17 +3982,61 @@ public:
     if (shortSamples > kShortRing) shortSamples = kShortRing;
     int sverts = std::min(512, shortSamples);
     for (int i = 0; i < sverts; ++i) {
-      int offs = (int)((float)i / (float)(sverts - 1) * (shortSamples - 1));
+      int offs = (int)((float)i / (float)(sverts - 1) * (float)(shortSamples - 1));
       int idx  = (shortW - shortSamples + offs) % kShortRing;
       if (idx < 0) idx += kShortRing;
       float s = shortRing[(size_t)idx];
-      float fx = xL + (i / (float)(sverts - 1)) * panelW;
+      float fx = xL + ((float)i / (float)(sverts - 1)) * panelW;
       float fy = -0.50f + s * 0.32f;
       mShort.vertex(fx, fy, 0);
       mShort.color(1.0f, 0.55f, 0.6f);
     }
     g.draw(mShort);
 
+    // ---- Color-framed outlines around each waveform row ----
+    mFrames.reset();
+    mFrames.primitive(Mesh::TRIANGLES);
+    rectOutline(mFrames, xL, +0.68f, xR, +1.32f, 0.006f, 0.45f, 0.85f, 1.0f); // top
+    rectOutline(mFrames, xL, -0.05f, xR, +0.55f, 0.006f, 0.9f,  0.7f,  0.4f); // mid
+    rectOutline(mFrames, xL, -0.85f, xR, -0.15f, 0.006f, 1.0f,  0.55f, 0.6f); // bot
+    g.draw(mFrames);
+
+    // ---- Phase heatmap strip (y in [-0.95, -0.90]) ----
+    mHeat.reset();
+    mHeat.primitive(Mesh::TRIANGLES);
+    {
+      const float hy0 = -0.95f, hy1 = -0.90f;
+      // Find a per-frame max so the gradient breathes.
+      float hMax = 1e-6f;
+      for (int i = 0; i < kHeatCols; ++i) {
+        if (heat[(size_t)i] > hMax) hMax = heat[(size_t)i];
+      }
+      for (int c = 0; c < kHeatCols; ++c) {
+        float fx0 = xL + ((float)c / (float)kHeatCols) * panelW;
+        float fx1 = xL + ((float)(c + 1) / (float)kHeatCols) * panelW;
+        float v = heat[(size_t)c] / hMax; // 0..1
+        v = std::pow(std::min(1.f, std::max(0.f, v)), 0.5f);
+        // cool -> warm gradient: blue (0,0.2,0.6) -> magenta (0.9,0.2,0.5) -> yellow (1,0.85,0.2)
+        float r, gC, b;
+        if (v < 0.5f) {
+          float t = v * 2.f;
+          r = 0.0f + t * 0.9f;
+          gC = 0.2f + t * 0.0f;
+          b = 0.6f + t * (-0.1f);
+        } else {
+          float t = (v - 0.5f) * 2.f;
+          r = 0.9f + t * 0.1f;
+          gC = 0.2f + t * 0.65f;
+          b = 0.5f + t * (-0.3f);
+        }
+        rect(mHeat, fx0, hy0, fx1, hy1, r, gC, b);
+      }
+      // Thin neutral border so the strip has an edge.
+      rectOutline(mHeat, xL, hy0, xR, hy1, 0.004f, 0.45f, 0.45f, 0.5f);
+    }
+    g.draw(mHeat);
+
+    // ---- RMS bars + dB tick markers ----
     mBars.reset();
     mBars.primitive(Mesh::TRIANGLES);
     auto bar = [&](float cx, float yBase, float h, float r, float gC, float b){
@@ -3377,10 +4050,35 @@ public:
       mBars.vertex(x1, y1, 0); mBars.color(r * 1.4f, gC * 1.4f, b * 1.4f);
       mBars.vertex(x0, y1, 0); mBars.color(r * 1.4f, gC * 1.4f, b * 1.4f);
     };
-    bar(1.35f, +0.65f, dbMap(rmsLong),  0.45f, 0.85f, 1.0f);
-    bar(1.35f, -0.05f, dbMap(rmsMed),   0.9f,  0.7f,  0.4f);
-    bar(1.35f, -0.85f, dbMap(rmsShort), 1.0f,  0.55f, 0.6f);
+    // dbMap returns 0..0.7 for -60..0 dB. Each bar is at (cx, yBase, h<=0.7).
+    // Pull bar centers in to x=1.20 so the right-side ticks at x=1.27 don't clip.
+    const float meterX = 1.20f;
+    bar(meterX, +0.65f, dbMap(rmsLong),  0.45f, 0.85f, 1.0f);
+    bar(meterX, -0.05f, dbMap(rmsMed),   0.9f,  0.7f,  0.4f);
+    bar(meterX, -0.85f, dbMap(rmsShort), 1.0f,  0.55f, 0.6f);
     g.draw(mBars);
+
+    // dB tick markers at -60 / -30 / 0 dB next to each meter.
+    mTicks.reset();
+    mTicks.primitive(Mesh::TRIANGLES);
+    auto meterTicks = [&](float yBase, float r, float gC, float b){
+      // Ticks normalised to dbMap output: -60->0, -30->0.35, 0->0.70.
+      const float tickX0 = meterX + 0.05f;
+      const float tickX1 = tickX0 + 0.04f;   // 4mm-ish tick stub
+      const float th = 0.006f;
+      const float yMinus60 = yBase + 0.0f;
+      const float yMinus30 = yBase + 0.35f;
+      const float yZero    = yBase + 0.70f;
+      rect(mTicks, tickX0, yMinus60 - th * 0.5f, tickX1, yMinus60 + th * 0.5f, r, gC, b);
+      rect(mTicks, tickX0, yMinus30 - th * 0.5f, tickX1, yMinus30 + th * 0.5f, r, gC, b);
+      rect(mTicks, tickX0, yZero    - th * 0.5f, tickX1, yZero    + th * 0.5f, r, gC, b);
+      // Make the 0 dB tick slightly longer to mark the ceiling.
+      rect(mTicks, tickX1, yZero - th * 0.5f, tickX1 + 0.02f, yZero + th * 0.5f, r, gC, b);
+    };
+    meterTicks(+0.65f, 0.45f, 0.85f, 1.0f);
+    meterTicks(-0.05f, 0.9f,  0.7f,  0.4f);
+    meterTicks(-0.85f, 1.0f,  0.55f, 0.6f);
+    g.draw(mTicks);
 
     gui.draw(g);
   }
@@ -3388,10 +4086,10 @@ public:
   bool onMouseDown(const Mouse&) override { return false; }
   bool onMouseDrag(const Mouse&) override { return false; }
   bool onMouseUp(const Mouse&)   override { return false; }
-};
+  };
 
-ALLOLIB_WEB_MAIN(MultiscaleStems)
-`,
+  ALLOLIB_WEB_MAIN(MultiscaleStems)
+  `,
   },
   {
     id: 'mat-mastering-ab',
@@ -4278,35 +4976,40 @@ ALLOLIB_WEB_MAIN(AdditiveGeometry)
     id: 'mat-additive-sculptor',
     title: 'Additive Partial Sculptor',
     description:
-      'Paint a 32-partial harmonic spectrum and hear it instantly. The top panel is a click-and-drag bar chart where each bar is the amplitude of partial n (frequency = f0 * n); the bottom panel is a live time-domain trace showing one period of the resulting waveform, computed by summing all 32 sines across [0, 2pi]. Sculpt sawtooth, square, and triangle approximations from the preset triggers, then drag bars to break the symmetry and watch the waveform redraw beneath your gesture. Honest caveat: 32 sine evals per sample at 48 kHz is fine on desktop, may stutter on mobile.',
+      'Paint a 64-partial harmonic spectrum and hear it instantly. The top panel is a click-and-drag bar chart where each bar is the amplitude of partial n (frequency = f0 * n); the bottom panel is a live time-domain trace showing one period of the resulting waveform, computed by summing all 64 sines across [0, 2pi]. Sculpt sawtooth, square, and triangle approximations from the preset triggers, watch a dim reference waveform and a "% match" badge tell you how close your spectrum is to the ideal Fourier coefficients, and notice partials past 0.9*Nyquist greyed-out with a red "!" warning so you can see where aliasing kicks in. Color ticks at bars 8/16/32/64 give a sense of how high up the spectrum you are painting.',
     category: 'mat-synthesis',
     subcategory: 'additive',
-    code: `/**
- * Additive Partial Sculptor — MAT200B Phase 2 (additive synthesis)
- *
- * 32 harmonic partials of a fundamental, painted by mouse drag.
- * Top panel: bar chart (the spectrum you sculpt).
- * Bottom panel: time-domain trace, one period summed from all 32 sines.
- */
+        code: `/**
+   * Additive Partial Sculptor — MAT200B Phase 2 (additive synthesis)
+   *
+   * 64 harmonic partials of a fundamental, painted by mouse drag.
+   * Top panel: bar chart (the spectrum you sculpt) with bandlimit
+   *            warnings, colored frequency-ladder ticks, and a
+   *            "% match" badge that scores against the ideal
+   *            Fourier coefficients of the most recent preset.
+   * Bottom panel: time-domain trace, one period summed from all 64
+   *               sines, with a dim reference of the IDEAL preset
+   *               target overlaid underneath the live trace.
+   */
 
-#include "al_playground_compat.hpp"
-#include "Gamma/Oscillator.h"
+  #include "al_playground_compat.hpp"
+  #include "Gamma/Oscillator.h"
 
-#include <array>
-#include <atomic>
-#include <cmath>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-static const int NUM_PARTIALS = 64;
-static const int WAVE_SAMPLES = 384;
+  static const int NUM_PARTIALS = 64;
+  static const int WAVE_SAMPLES = 384;
 
-class AdditiveSculptor : public App {
-public:
+  class AdditiveSculptor : public App {
+  public:
   ParameterBool playing {"playing", "", true};
   Parameter pitch_hz   {"pitch_hz",   "", 110.0f, 40.0f, 1200.0f};
   Parameter master_amp {"master_amp", "", 0.25f,   0.0f,    1.0f};
@@ -4321,36 +5024,74 @@ public:
   std::array<std::atomic<float>, NUM_PARTIALS> partialAmps;
   std::array<float, NUM_PARTIALS> ampsSnapshot{};
   std::array<float, WAVE_SAMPLES> waveBuf{};
+  std::array<float, WAVE_SAMPLES> targetWave{};
+
+  // Sample rate published from audio thread (defaults to 48 k until
+  // the first onSound callback updates it).
+  std::atomic<float> sampleRateHz{48000.0f};
+
+  enum LastPreset { PRESET_NONE, PRESET_SAW, PRESET_SQUARE, PRESET_TRIANGLE };
+  std::atomic<int> lastPreset{PRESET_NONE};
 
   bool dragging = false;
 
-  // Bar panel rect in world coords ([-1.5, 1.5] x [-0.9, 0.9] visible).
+  // Bar panel rect in world coords.
   static constexpr float BAR_X0 = -1.30f, BAR_X1 = 1.30f;
   static constexpr float BAR_Y0 =  0.10f, BAR_Y1 = 0.85f;
   static constexpr float WAV_X0 = -1.30f, WAV_X1 = 1.30f;
   static constexpr float WAV_Y0 = -0.85f, WAV_Y1 = -0.10f;
+
+  // Closed-form ideal Fourier coefficient for partial n (1-indexed).
+  // Saw       a_n = -2 / (pi * n)            (all n)
+  // Square    a_n =  4 / (pi * n)            (odd n only)
+  // Triangle  a_n =  8 / (pi^2 * n^2) * (-1)^((n-1)/2)   (odd n only)
+  // We compare absolute amplitudes (the bars are unsigned), so we use
+  // |a_n| for the "% match" score and the signed value (with the same
+  // normalisation used by the audio loop) for the target waveform.
+  static float idealCoefSigned(int preset, int n /*1-indexed*/) {
+    const float pi = static_cast<float>(M_PI);
+    if (preset == PRESET_SAW) return -2.0f / (pi * float(n));
+    if (preset == PRESET_SQUARE) {
+      if (n % 2 == 0) return 0.0f;
+      return 4.0f / (pi * float(n));
+    }
+    if (preset == PRESET_TRIANGLE) {
+      if (n % 2 == 0) return 0.0f;
+      const int k = (n - 1) / 2;
+      const float sign = (k % 2 == 0) ? 1.0f : -1.0f;
+      return sign * 8.0f / (pi * pi * float(n) * float(n));
+    }
+    return 0.0f;
+  }
+  static float idealCoefMag(int preset, int n) {
+    return std::fabs(idealCoefSigned(preset, n));
+  }
 
   void onInit() override {
     for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
 
     reset.registerChangeCallback([this](float) {
       for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
+      lastPreset.store(PRESET_NONE);
     });
     preset_saw.registerChangeCallback([this](float) {
       for (int i = 0; i < NUM_PARTIALS; ++i)
         partialAmps[i].store(1.0f / float(i + 1));
+      lastPreset.store(PRESET_SAW);
     });
     preset_square.registerChangeCallback([this](float) {
       for (int i = 0; i < NUM_PARTIALS; ++i) {
         const int n = i + 1;
         partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
       }
+      lastPreset.store(PRESET_SQUARE);
     });
     preset_triangle.registerChangeCallback([this](float) {
       for (int i = 0; i < NUM_PARTIALS; ++i) {
         const int n = i + 1;
         partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n * n) : 0.0f);
       }
+      lastPreset.store(PRESET_TRIANGLE);
     });
 
     gui << playing << pitch_hz << master_amp << reset
@@ -4364,6 +5105,8 @@ public:
   }
 
   void onSound(AudioIOData& io) override {
+    sampleRateHz.store(static_cast<float>(io.framesPerSecond()),
+                       std::memory_order_relaxed);
     if (!playing.get()) {
       while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
       return;
@@ -4389,6 +5132,37 @@ public:
     }
   }
 
+  // Mean-squared closeness over partials 1..NUM_PARTIALS, normalised so
+  // that "you matched the preset perfectly" ~ 1.0 and "everything else"
+  // approaches 0. We compare each bar amplitude to |ideal_n| AFTER
+  // normalising the ideal vector to its own max so the units match the
+  // [0,1] painted bars.
+  float computeMatch(int preset) const {
+    if (preset == PRESET_NONE) return 0.0f;
+    float ideal[NUM_PARTIALS];
+    float maxIdeal = 0.0f;
+    for (int i = 0; i < NUM_PARTIALS; ++i) {
+      ideal[i] = idealCoefMag(preset, i + 1);
+      if (ideal[i] > maxIdeal) maxIdeal = ideal[i];
+    }
+    if (maxIdeal <= 0.0f) return 0.0f;
+    for (int i = 0; i < NUM_PARTIALS; ++i) ideal[i] /= maxIdeal;
+
+    float mse = 0.0f;
+    for (int i = 0; i < NUM_PARTIALS; ++i) {
+      float a = ampsSnapshot[i];
+      if (a < 0.f) a = 0.f; else if (a > 1.f) a = 1.f;
+      const float d = a - ideal[i];
+      mse += d * d;
+    }
+    mse /= float(NUM_PARTIALS);
+    // Convert MSE to a 0..1 score; 0 MSE -> 1.0, MSE >= 0.25 -> 0.0.
+    float score = 1.0f - (mse / 0.25f);
+    if (score < 0.f) score = 0.f;
+    if (score > 1.f) score = 1.f;
+    return score;
+  }
+
   void onAnimate(double /*dt*/) override {
     for (int i = 0; i < NUM_PARTIALS; ++i)
       ampsSnapshot[i] = partialAmps[i].load(std::memory_order_relaxed);
@@ -4405,18 +5179,41 @@ public:
         v += ampsSnapshot[i] * std::sin(phase * float(i + 1));
       waveBuf[s] = v * invNorm;
     }
+
+    // Build the IDEAL target waveform for the most recent preset using
+    // the SIGNED Fourier coefficients (so saw really looks like a saw,
+    // not a wobble). Normalised the same way as the live trace.
+    const int preset = lastPreset.load(std::memory_order_relaxed);
+    if (preset == PRESET_NONE) {
+      for (int s = 0; s < WAVE_SAMPLES; ++s) targetWave[s] = 0.0f;
+    } else {
+      float coef[NUM_PARTIALS];
+      float coefNorm = 0.0f;
+      for (int i = 0; i < NUM_PARTIALS; ++i) {
+        coef[i] = idealCoefSigned(preset, i + 1);
+        coefNorm += std::fabs(coef[i]);
+      }
+      const float invCoefNorm = (coefNorm > 1.0f) ? (1.0f / coefNorm) : 1.0f;
+      for (int s = 0; s < WAVE_SAMPLES; ++s) {
+        const float t = float(s) / float(WAVE_SAMPLES);
+        const float phase = 2.0f * float(M_PI) * t;
+        float v = 0.0f;
+        for (int i = 0; i < NUM_PARTIALS; ++i)
+          v += coef[i] * std::sin(phase * float(i + 1));
+        targetWave[s] = v * invCoefNorm;
+      }
+    }
+    (void)invNorm;
   }
 
   // Convert mouse pixel coords to the same world space we draw into.
-  // Camera is nav().pos(0,0,4) with default fov: visible world y span ~[-1, 1]
-  // by [-1.5, 1.5] depending on aspect. We use a tuned [-1.5, 1.5] x [-0.9, 0.9].
   void mouseToWorld(const Mouse& m, float& wx, float& wy) const {
     const float w = (float)width();
     const float h = (float)height();
     const float u = (w > 0.f) ? (float)m.x() / w : 0.f;
     const float v = (h > 0.f) ? (float)m.y() / h : 0.f;
     wx = -1.5f + u * 3.0f;
-    wy =  0.9f - v * 1.8f;     // flip y so up is positive
+    wy =  0.9f - v * 1.8f;
   }
 
   bool inBarPanel(float wx, float wy) const {
@@ -4432,6 +5229,8 @@ public:
     float v = (wy - BAR_Y0) / (BAR_Y1 - BAR_Y0);
     if (v < 0.f) v = 0.f; else if (v > 1.f) v = 1.f;
     partialAmps[idx].store(v);
+    // Manual painting invalidates the preset-matching reference.
+    lastPreset.store(PRESET_NONE);
   }
 
   bool onMouseDown(const Mouse& m) override {
@@ -4471,6 +5270,14 @@ public:
     m.vertex(x0, y1, 0.f); m.color(r, g, b);
   }
 
+  // Triangle (3-vertex fan) — used for the red "!" alias warning marker.
+  static void emitTri(Mesh& m, float x0, float y0, float x1, float y1,
+                      float x2, float y2, float r, float g, float b) {
+    m.vertex(x0, y0, 0.f); m.color(r, g, b);
+    m.vertex(x1, y1, 0.f); m.color(r, g, b);
+    m.vertex(x2, y2, 0.f); m.color(r, g, b);
+  }
+
   static void partialColor(int i, float& r, float& g, float& b) {
     const float t = float(i) / float(NUM_PARTIALS - 1);
     if (t < 0.5f) {
@@ -4490,6 +5297,12 @@ public:
     g.clear(0.06f, 0.07f, 0.09f);
     g.meshColor();
 
+    const float f0       = pitch_hz.get();
+    const float sr       = sampleRateHz.load(std::memory_order_relaxed);
+    const float nyquist  = 0.5f * sr;
+    const float aliasCap = 0.9f * nyquist;
+    const int   preset   = lastPreset.load(std::memory_order_relaxed);
+
     Mesh grid; grid.primitive(Mesh::LINES);
     auto hline = [&](float y, float r, float gC, float b) {
       grid.vertex(BAR_X0, y, 0); grid.color(r, gC, b);
@@ -4506,7 +5319,8 @@ public:
     }
     g.draw(grid);
 
-    Mesh bars; bars.primitive(Mesh::TRIANGLES);
+    Mesh bars;    bars.primitive(Mesh::TRIANGLES);
+    Mesh markers; markers.primitive(Mesh::TRIANGLES);
     const float barW = (BAR_X1 - BAR_X0) / float(NUM_PARTIALS);
     for (int i = 0; i < NUM_PARTIALS; ++i) {
       float a = ampsSnapshot[i];
@@ -4515,11 +5329,53 @@ public:
       const float x1 = BAR_X0 + float(i + 1) * barW - barW * 0.08f;
       const float y0 = BAR_Y0;
       const float y1 = BAR_Y0 + a * (BAR_Y1 - BAR_Y0);
+
+      const float partialFreq = f0 * float(i + 1);
+      const bool aliasing = (partialFreq > aliasCap);
+
       float cr, cg, cb;
       partialColor(i, cr, cg, cb);
+      if (aliasing) {
+        // Dim/grey the bar so it visually retreats.
+        cr = cr * 0.25f + 0.10f;
+        cg = cg * 0.25f + 0.10f;
+        cb = cb * 0.25f + 0.10f;
+      }
       emitRect(bars, x0, y0, x1, y1, cr, cg, cb);
+
+      if (aliasing) {
+        // Tiny red "!" — a triangle pointing down above the bar tip.
+        const float cx = 0.5f * (x0 + x1);
+        const float my = (y1 < BAR_Y1 - 0.04f) ? (y1 + 0.025f) : (BAR_Y1 - 0.02f);
+        const float halfW = std::min(barW * 0.45f, 0.018f);
+        emitTri(markers,
+                cx - halfW, my + 0.030f,
+                cx + halfW, my + 0.030f,
+                cx,         my,
+                0.95f, 0.20f, 0.20f);
+      }
     }
     g.draw(bars);
+    g.draw(markers);
+
+    // Frequency-ladder ticks at bars 8 / 16 / 32 / 64 — colored verticals
+    // so the eye sees how high up the spectrum the painting is reaching.
+    Mesh ticks; ticks.primitive(Mesh::LINES);
+    auto tickAt = [&](int barIndex /*1-indexed*/, float r, float gC, float b,
+                      float lenScale) {
+      if (barIndex < 1 || barIndex > NUM_PARTIALS) return;
+      const float u = float(barIndex - 1 + 0.5f) / float(NUM_PARTIALS);
+      const float x = BAR_X0 + u * (BAR_X1 - BAR_X0);
+      const float y0 = BAR_Y0 - 0.005f;
+      const float y1 = BAR_Y0 - 0.005f - 0.05f * lenScale;
+      ticks.vertex(x, y0, 0); ticks.color(r, gC, b);
+      ticks.vertex(x, y1, 0); ticks.color(r, gC, b);
+    };
+    tickAt(8,  0.95f, 0.85f, 0.30f, 1.0f);  // yellow,  short
+    tickAt(16, 0.95f, 0.55f, 0.20f, 1.5f);  // orange,  medium
+    tickAt(32, 0.95f, 0.25f, 0.20f, 2.0f);  // red,     long
+    tickAt(64, 0.30f, 0.95f, 0.55f, 2.5f);  // green,   longest
+    g.draw(ticks);
 
     // Wave panel.
     const float waveMidY = WAV_Y0 + 0.5f * (WAV_Y1 - WAV_Y0);
@@ -4530,6 +5386,22 @@ public:
     };
     whline(WAV_Y0); whline(WAV_Y1); whline(waveMidY);
     g.draw(wgrid);
+
+    // Dim white reference of the IDEAL preset target (drawn first so the
+    // bright yellow live trace overlays it).
+    if (preset != PRESET_NONE) {
+      Mesh tgt; tgt.primitive(Mesh::LINE_STRIP);
+      for (int s = 0; s < WAVE_SAMPLES; ++s) {
+        const float u = float(s) / float(WAVE_SAMPLES - 1);
+        const float x = WAV_X0 + u * (WAV_X1 - WAV_X0);
+        float v = targetWave[s];
+        if (v < -1.f) v = -1.f; else if (v > 1.f) v = 1.f;
+        const float y = waveMidY + 0.5f * v * (WAV_Y1 - WAV_Y0);
+        tgt.vertex(x, y, 0.f);
+        tgt.color(0.55f, 0.55f, 0.55f);
+      }
+      g.draw(tgt);
+    }
 
     Mesh wave; wave.primitive(Mesh::LINE_STRIP);
     for (int s = 0; s < WAVE_SAMPLES; ++s) {
@@ -4559,6 +5431,34 @@ public:
     rectOutline(WAV_X0, WAV_Y0, WAV_X1, WAV_Y1, 0.85f, 0.55f, 0.25f);
     g.draw(borders);
 
+    // "% match" badge: a small horizontal progress bar in the top-right
+    // showing how close the current spectrum is to the active preset.
+    if (preset != PRESET_NONE) {
+      const float score = computeMatch(preset);
+      Mesh badge; badge.primitive(Mesh::TRIANGLES);
+      const float bx0 = 0.85f, bx1 = 1.30f;
+      const float by0 = 0.90f, by1 = 0.96f;
+      // Background track.
+      emitRect(badge, bx0, by0, bx1, by1, 0.15f, 0.16f, 0.20f);
+      // Filled portion.
+      const float fillX = bx0 + score * (bx1 - bx0);
+      // Color goes red -> yellow -> green with score.
+      float rr = 0.95f - 0.65f * score;
+      float gg = 0.30f + 0.60f * score;
+      float bb = 0.25f + 0.10f * score;
+      emitRect(badge, bx0, by0 + 0.005f, fillX, by1 - 0.005f, rr, gg, bb);
+      g.draw(badge);
+
+      // Notch tick marks at 25 / 50 / 75 / 100 % — gives a sense of scale.
+      Mesh notches; notches.primitive(Mesh::LINES);
+      for (int q = 1; q <= 4; ++q) {
+        const float fx = bx0 + 0.25f * float(q) * (bx1 - bx0);
+        notches.vertex(fx, by0 - 0.005f, 0); notches.color(0.7f, 0.7f, 0.75f);
+        notches.vertex(fx, by1 + 0.005f, 0); notches.color(0.7f, 0.7f, 0.75f);
+      }
+      g.draw(notches);
+    }
+
     gui.draw(g);
   }
 
@@ -4580,10 +5480,10 @@ public:
     if (n >= 0) pitch_hz.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
     return true;
   }
-};
+  };
 
-ALLOLIB_WEB_MAIN(AdditiveSculptor)
-`,
+  ALLOLIB_WEB_MAIN(AdditiveSculptor)
+  `,
   },
   {
     id: 'mat-granul-stretch',
@@ -4935,32 +5835,41 @@ ALLOLIB_WEB_MAIN(GranulStretch)
     id: 'mat-synesthetic-mapper',
     title: 'Synesthetic Mapper',
     description:
-      'Extracts four per-block audio features from a bundled CC0 loop — RMS amplitude, spectral centroid, zero-crossing rate, and spectral flatness — then routes any feature to any visual channel of a glyph ensemble. Pick which feature drives size, hue, vertical position, and rotation through ParameterMenu controls; a feature-readout bar at the bottom shows the live values of all four features. An inline 64-point Hann-windowed DFT computes spectral statistics; atomic feature buffers hand data from audio thread to graphics thread without locks.',
+      'Extracts four per-block audio features from a bundled CC0 loop — RMS amplitude, spectral centroid, zero-crossing rate, and spectral flatness — then routes any feature to any visual channel of a glyph ensemble. Pick which feature drives size, hue, vertical position, and rotation through ParameterMenu controls. Visual aids include: a 4x4 routing matrix at the top-right (rows = visual channels, cols = features) showing the active mapping, motion trails on each glyph (last 8 frames), a faint live spectrum curve behind the glyph row, and a color-keyed feature-readout bar at the bottom. A 256-pt Hann-windowed DFT runs in onAnimate (graphics thread) over a 256-sample ring buffer filled by the audio thread.',
     category: 'mat-visualmusic',
     subcategory: 'mappers',
     code: `/**
- * Synesthetic Mapper — MAT200B Phase 2 (audio→visual feature routing)
- *
- * RMS / centroid / ZCR / flatness extracted in onSound; glyph row in
- * onDraw rendered with user-selected feature → channel mapping.
- */
+   * Synesthetic Mapper — MAT200B Phase 2 (audio→visual feature routing)
+   *
+   * Audio thread: writes raw samples into a 256-sample ring buffer and
+   * accumulates RMS / ZCR per block. Graphics thread (onAnimate) reads
+   * the ring snapshot and runs a 256-pt Hann DFT to extract centroid +
+   * flatness + a 128-bin magnitude curve. This keeps the audio callback
+   * cheap while giving the visuals ~94 Hz/bin spectral resolution.
+   *
+   * Visuals: a row of glyphs whose size / hue / posY / rotation are
+   * routed from any of the 4 features via ParameterMenus. A 4x4 routing
+   * matrix at the top-right shows which (channel, feature) cells are
+   * active. A faint spectrum curve sits behind the glyphs, and each
+   * glyph leaves an 8-frame motion trail.
+   */
 
-#include "al_playground_compat.hpp"
-#include "al_WebSamplePlayer.hpp"
+  #include "al_playground_compat.hpp"
+  #include "al_WebSamplePlayer.hpp"
 
-#include <array>
-#include <atomic>
-#include <cmath>
-#include <vector>
+  #include <array>
+  #include <atomic>
+  #include <cmath>
+  #include <vector>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
 
-using namespace al;
+  using namespace al;
 
-class SynestheticMapper : public App {
-public:
+  class SynestheticMapper : public App {
+  public:
   ControlGUI gui;
 
   WebSamplePlayer drums, pad, mixed;
@@ -4978,19 +5887,37 @@ public:
 
   double playhead = 0.0;
 
-  static constexpr int kDFTSize = 64;
-  std::array<float, kDFTSize> dftBuf{};
-  int dftWritePos = 0;
-  int samplesSinceDFT = 0;
+  // 256-sample audio→graphics ring (raw, pre-gain samples).
+  static constexpr int kRing = 256;
+  std::array<float, kRing> ring{};
+  std::atomic<int> ringW{0};
 
+  // Audio-thread-cheap feature accumulators.
   float lastSample = 0.0f;
   float rmsAccum = 0.0f;
-  float zcrSm = 0.f, centSm = 0.f, flatSm = 0.f;
+  float zcrSm = 0.f;
+  std::atomic<float> fRMS{0.0f}, fZCR{0.0f};
 
-  std::atomic<float> fRMS{0.0f}, fCentroid{0.0f}, fZCR{0.0f}, fFlatness{0.0f};
+  // Graphics-thread features (DFT-derived).
+  float centSm = 0.f, flatSm = 0.f;
+  float fCentroid = 0.0f, fFlatness = 0.0f;
+
+  // Display-smoothed values for the readout bar.
   float dispRMS = 0.0f, dispCent = 0.0f, dispZCR = 0.0f, dispFlat = 0.0f;
 
+  // 128-bin spectrum magnitude (normalised) for the background curve.
+  static constexpr int kBins = 128;
+  std::array<float, kBins> specMag{};
+
+  // Glyph state.
   std::array<float, 16> glyphPhase{};
+  // Trails: last 8 frames of (x, y, radius) per glyph; oldest first.
+  static constexpr int kTrail = 8;
+  std::array<std::array<float, kTrail>, 16> trailX{};
+  std::array<std::array<float, kTrail>, 16> trailY{};
+  std::array<std::array<float, kTrail>, 16> trailR{};
+  int trailW = 0;
+  int trailFill = 0;
 
   void onInit() override {
     source.setElements({"drums", "pad", "mixed"});
@@ -5042,6 +5969,7 @@ public:
     float blockRMS = 0.0f;
     int   blockZC  = 0;
     float prev = lastSample;
+    int wLocal = ringW.load(std::memory_order_relaxed);
 
     while (io()) {
       const float raw = current->readInterp(0, (float)playhead);
@@ -5053,10 +5981,11 @@ public:
       blockRMS += raw * raw;
       if ((raw >= 0.f && prev < 0.f) || (raw < 0.f && prev >= 0.f)) ++blockZC;
       prev = raw;
-      dftBuf[dftWritePos] = raw;
-      dftWritePos = (dftWritePos + 1) % kDFTSize;
-      ++samplesSinceDFT;
+
+      ring[(size_t)wLocal] = raw;
+      wLocal = (wLocal + 1) % kRing;
     }
+    ringW.store(wLocal, std::memory_order_release);
     lastSample = prev;
 
     const float instRMS = std::sqrt(blockRMS / (float)std::max(1, blockLen));
@@ -5066,49 +5995,51 @@ public:
     const float zcrNorm = (float)blockZC / (float)std::max(1, blockLen);
     zcrSm = 0.85f * zcrSm + 0.15f * std::min(1.0f, zcrNorm * 8.0f);
     fZCR.store(zcrSm);
+  }
 
-    if (samplesSinceDFT >= kDFTSize) {
-      samplesSinceDFT = 0;
-      const int N = kDFTSize;
-      std::array<float, kDFTSize> win{};
-      for (int n = 0; n < N; ++n) {
-        const int idx = (dftWritePos + n) % N;
-        const float w = 0.5f - 0.5f * std::cos(2.f * (float)M_PI * (float)n / (float)(N - 1));
-        win[n] = dftBuf[idx] * w;
-      }
-      const int bins = N / 2;
-      float sumMag = 0.f, sumKMag = 0.f, logSum = 0.f, arithSum = 0.f;
-      for (int k = 0; k < bins; ++k) {
-        float re = 0.f, im = 0.f;
-        const float ang = -2.f * (float)M_PI * (float)k / (float)N;
-        for (int n = 0; n < N; ++n) {
-          re += win[n] * std::cos(ang * n);
-          im += win[n] * std::sin(ang * n);
-        }
-        const float mag = std::sqrt(re * re + im * im);
-        sumMag  += mag;
-        sumKMag += (float)k * mag;
-        logSum  += std::log(mag + 1e-9f);
-        arithSum += mag;
-      }
-      const float centroidBin  = (sumMag > 1e-6f) ? (sumKMag / sumMag) : 0.f;
-      const float centroidNorm = centroidBin / (float)bins;
-      centSm = 0.8f * centSm + 0.2f * centroidNorm;
-      fCentroid.store(std::min(1.0f, centSm * 1.5f));
-      const float geo = std::exp(logSum / (float)bins);
-      const float ari = arithSum / (float)bins;
-      const float flat = (ari > 1e-6f) ? (geo / ari) : 0.f;
-      flatSm = 0.85f * flatSm + 0.15f * flat;
-      fFlatness.store(std::min(1.0f, flatSm));
+  // Snapshot the ring + run a 256-pt Hann DFT on the graphics thread.
+  void runDFT() {
+    const int N = kRing;
+    int w = ringW.load(std::memory_order_acquire);
+    std::array<float, kRing> win{};
+    for (int n = 0; n < N; ++n) {
+      const int idx = (w + n) % N;
+      const float wcoef = 0.5f - 0.5f * std::cos(2.f * (float)M_PI * (float)n / (float)(N - 1));
+      win[(size_t)n] = ring[(size_t)idx] * wcoef;
     }
+    const int bins = N / 2; // 128 bins
+    float sumMag = 0.f, sumKMag = 0.f, logSum = 0.f, arithSum = 0.f;
+    for (int k = 0; k < bins; ++k) {
+      float re = 0.f, im = 0.f;
+      const float ang = -2.f * (float)M_PI * (float)k / (float)N;
+      for (int n = 0; n < N; ++n) {
+        re += win[(size_t)n] * std::cos(ang * (float)n);
+        im += win[(size_t)n] * std::sin(ang * (float)n);
+      }
+      const float mag = std::sqrt(re * re + im * im);
+      specMag[(size_t)k] = 0.7f * specMag[(size_t)k] + 0.3f * mag;
+      sumMag  += mag;
+      sumKMag += (float)k * mag;
+      logSum  += std::log(mag + 1e-9f);
+      arithSum += mag;
+    }
+    const float centroidBin  = (sumMag > 1e-6f) ? (sumKMag / sumMag) : 0.f;
+    const float centroidNorm = centroidBin / (float)bins;
+    centSm = 0.8f * centSm + 0.2f * centroidNorm;
+    fCentroid = std::min(1.0f, centSm * 1.5f);
+    const float geo = std::exp(logSum / (float)bins);
+    const float ari = arithSum / (float)bins;
+    const float flat = (ari > 1e-6f) ? (geo / ari) : 0.f;
+    flatSm = 0.85f * flatSm + 0.15f * flat;
+    fFlatness = std::min(1.0f, flatSm);
   }
 
   float feature(int idx) const {
     switch (idx) {
       case 0: return fRMS.load();
-      case 1: return fCentroid.load();
+      case 1: return fCentroid;
       case 2: return fZCR.load();
-      case 3: return fFlatness.load();
+      case 3: return fFlatness;
     }
     return 0.0f;
   }
@@ -5134,8 +6065,8 @@ public:
   static void emitDisc(Mesh& m, float cx, float cy, float radius,
                        float r, float g, float b, int segs = 24) {
     for (int i = 0; i < segs; ++i) {
-      const float a0 = 2.f * (float)M_PI * i       / segs;
-      const float a1 = 2.f * (float)M_PI * (i + 1) / segs;
+      const float a0 = 2.f * (float)M_PI * (float)i       / (float)segs;
+      const float a1 = 2.f * (float)M_PI * (float)(i + 1) / (float)segs;
       m.vertex(cx, cy, 0.f); m.color(r, g, b);
       m.vertex(cx + std::cos(a0) * radius, cy + std::sin(a0) * radius, 0.f);
       m.color(r, g, b);
@@ -5155,17 +6086,21 @@ public:
   }
 
   void onAnimate(double dt) override {
+    runDFT();
+
     dispRMS  = 0.85f * dispRMS  + 0.15f * fRMS.load();
-    dispCent = 0.85f * dispCent + 0.15f * fCentroid.load();
+    dispCent = 0.85f * dispCent + 0.15f * fCentroid;
     dispZCR  = 0.85f * dispZCR  + 0.15f * fZCR.load();
-    dispFlat = 0.85f * dispFlat + 0.15f * fFlatness.load();
+    dispFlat = 0.85f * dispFlat + 0.15f * fFlatness;
 
     const float rotF = feature(rot_src.get());
     const int n = num_glyphs.get();
     for (int i = 0; i < n && i < (int)glyphPhase.size(); ++i) {
       const float perGlyphMod = 0.5f + (float)i / (float)std::max(1, n);
-      glyphPhase[i] += (float)dt * (0.3f + rotF * 4.0f) * perGlyphMod;
-      if (glyphPhase[i] > 2.f * (float)M_PI) glyphPhase[i] -= 2.f * (float)M_PI;
+      glyphPhase[(size_t)i] += (float)dt * (0.3f + rotF * 4.0f) * perGlyphMod;
+      if (glyphPhase[(size_t)i] > 2.f * (float)M_PI) {
+        glyphPhase[(size_t)i] -= 2.f * (float)M_PI;
+      }
     }
   }
 
@@ -5180,9 +6115,26 @@ public:
     const float hueF  = feature(hue_src.get());
     const float posYF = feature(posY_src.get());
 
-    Mesh discs; discs.primitive(Mesh::TRIANGLES);
-    Mesh ticks; ticks.primitive(Mesh::LINES);
+    // --- 1. Faint live spectrum behind the glyphs (LINE_STRIP, 128 bins) ---
+    Mesh spec; spec.primitive(Mesh::LINE_STRIP);
+    const float specXL = -1.3f, specXR = 1.3f;
+    // Find a normaliser so the curve breathes without being washed out.
+    float specMax = 1e-3f;
+    for (int k = 0; k < kBins; ++k) {
+      if (specMag[(size_t)k] > specMax) specMax = specMag[(size_t)k];
+    }
+    for (int k = 0; k < kBins; ++k) {
+      const float t = (float)k / (float)(kBins - 1);
+      const float fx = specXL + t * (specXR - specXL);
+      const float mag = specMag[(size_t)k] / specMax; // 0..1
+      const float fy = -0.05f + std::pow(mag, 0.5f) * 0.55f;
+      spec.vertex(fx, fy, 0.f);
+      spec.color(0.25f, 0.45f, 0.55f);
+    }
+    g.draw(spec);
 
+    // --- 2. Compute glyph positions for THIS frame, then push to trail ring ---
+    std::array<float, 16> curX{}, curY{}, curR{};
     const float baseRadius = 0.10f;
     for (int i = 0; i < n; ++i) {
       const float t = (n == 1) ? 0.5f : (float)i / (float)(n - 1);
@@ -5190,29 +6142,66 @@ public:
       const float idxMod = 0.6f + 0.4f * std::sin(t * 2.f * (float)M_PI + 1.7f);
       const float y = (posYF - 0.5f) * 1.0f * idxMod;
       const float radius = baseRadius * (0.5f + 1.5f * sizeF * idxMod);
+      curX[(size_t)i] = x;
+      curY[(size_t)i] = y;
+      curR[(size_t)i] = radius;
+    }
+    // Write into ring slot trailW (oldest is the slot we're about to overwrite).
+    for (int i = 0; i < n; ++i) {
+      trailX[(size_t)i][(size_t)trailW] = curX[(size_t)i];
+      trailY[(size_t)i][(size_t)trailW] = curY[(size_t)i];
+      trailR[(size_t)i][(size_t)trailW] = curR[(size_t)i];
+    }
+    trailW = (trailW + 1) % kTrail;
+    if (trailFill < kTrail) ++trailFill;
+
+    Mesh trails; trails.primitive(Mesh::TRIANGLES);
+    Mesh discs;  discs.primitive(Mesh::TRIANGLES);
+    Mesh ticks;  ticks.primitive(Mesh::LINES);
+
+    for (int i = 0; i < n; ++i) {
+      const float t = (n == 1) ? 0.5f : (float)i / (float)(n - 1);
       const float hue = std::fmod(hueF + t * 0.2f, 1.0f);
       float r, gg, b;
       hsv2rgb(hue, 0.85f, 0.95f, r, gg, b);
-      emitDisc(discs, x, y, radius, r, gg, b, 24);
 
-      const float ang = glyphPhase[i];
-      const float tickLen = radius * 1.4f;
-      ticks.vertex(x, y, 0.f); ticks.color(1.f, 1.f, 1.f);
-      ticks.vertex(x + std::cos(ang) * tickLen, y + std::sin(ang) * tickLen, 0.f);
+      // Trails: walk back from newest to oldest, alpha-fading via brightness.
+      // The slot at (trailW - 1) is the snapshot we just wrote (newest).
+      for (int age = 1; age <= trailFill; ++age) {
+        const int slot = (trailW - age + kTrail) % kTrail;
+        if (age == 1) continue; // skip the freshest, drawn as the live disc below
+        const float fade = 1.0f - (float)(age - 1) / (float)kTrail;
+        const float dim  = fade * 0.55f;
+        emitDisc(trails,
+                 trailX[(size_t)i][(size_t)slot],
+                 trailY[(size_t)i][(size_t)slot],
+                 trailR[(size_t)i][(size_t)slot] * (0.4f + 0.6f * fade),
+                 r * dim, gg * dim, b * dim, 16);
+      }
+
+      emitDisc(discs, curX[(size_t)i], curY[(size_t)i], curR[(size_t)i], r, gg, b, 24);
+
+      const float ang = glyphPhase[(size_t)i];
+      const float tickLen = curR[(size_t)i] * 1.4f;
+      ticks.vertex(curX[(size_t)i], curY[(size_t)i], 0.f); ticks.color(1.f, 1.f, 1.f);
+      ticks.vertex(curX[(size_t)i] + std::cos(ang) * tickLen,
+                   curY[(size_t)i] + std::sin(ang) * tickLen, 0.f);
       ticks.color(1.f, 1.f, 1.f);
     }
+    g.draw(trails);
     g.draw(discs);
     g.draw(ticks);
 
+    // --- 3. Bottom feature-readout bar (color-keyed chips) ---
     Mesh bars; bars.primitive(Mesh::TRIANGLES);
     emitRect(bars, -1.4f, -1.0f, 2.8f, 0.18f, 0.10f, 0.10f, 0.14f);
 
     const float vals[4] = { dispRMS, dispCent, dispZCR, dispFlat };
-    const float cols[4][3] = {
-      {0.95f, 0.30f, 0.30f},
-      {0.30f, 0.90f, 0.45f},
-      {0.35f, 0.55f, 0.95f},
-      {0.95f, 0.85f, 0.30f}
+    const float featCols[4][3] = {
+      {0.95f, 0.30f, 0.30f}, // RMS = red
+      {0.30f, 0.90f, 0.45f}, // centroid = green
+      {0.35f, 0.55f, 0.95f}, // ZCR = blue
+      {0.95f, 0.85f, 0.30f}  // flatness = yellow
     };
     const float barW = 0.55f, gap = 0.10f;
     const float startX = -((barW * 4.0f + gap * 3.0f) * 0.5f);
@@ -5220,37 +6209,81 @@ public:
     const float maxH   =  0.14f;
     for (int i = 0; i < 4; ++i) {
       float v = std::min(1.0f, std::max(0.0f, vals[i]));
-      const float x = startX + i * (barW + gap);
-      emitRect(bars, x, baseY, barW, maxH, 0.18f, 0.18f, 0.22f);
-      emitRect(bars, x, baseY, barW * v, maxH, cols[i][0], cols[i][1], cols[i][2]);
+      const float x = startX + (float)i * (barW + gap);
+      // chip on the left edge (10% of bar width) shows the feature color
+      const float chipW = barW * 0.10f;
+      emitRect(bars, x, baseY, chipW, maxH,
+               featCols[i][0], featCols[i][1], featCols[i][2]);
+      // value bar fills the remainder
+      const float trackX = x + chipW + 0.01f;
+      const float trackW = barW - chipW - 0.01f;
+      emitRect(bars, trackX, baseY, trackW, maxH, 0.18f, 0.18f, 0.22f);
+      emitRect(bars, trackX, baseY, trackW * v, maxH,
+               featCols[i][0], featCols[i][1], featCols[i][2]);
     }
     g.draw(bars);
 
-    Mesh frames; frames.primitive(Mesh::LINES);
-    const int routed[4] = { size_src.get(), hue_src.get(), posY_src.get(), rot_src.get() };
+    // --- 4. 4x4 routing matrix at top-right ---
+    // Rows: visual channels (size, hue, posY, rotation) = white/cyan/magenta/orange
+    // Cols: features (RMS, centroid, ZCR, flatness)
     const float chCols[4][3] = {
       {1.00f, 1.00f, 1.00f},
       {0.20f, 0.90f, 0.95f},
       {0.95f, 0.35f, 0.85f},
       {0.95f, 0.55f, 0.20f}
     };
-    for (int ch = 0; ch < 4; ++ch) {
-      const int featIdx = routed[ch];
-      if (featIdx < 0 || featIdx > 3) continue;
-      const float x = startX + featIdx * (barW + gap);
-      const float ox = 0.012f * (ch + 1);
-      const float oy = 0.012f * (ch + 1);
-      const float r = chCols[ch][0], gg = chCols[ch][1], b = chCols[ch][2];
-      frames.vertex(x - ox, baseY - oy, 0); frames.color(r, gg, b);
-      frames.vertex(x + barW + ox, baseY - oy, 0); frames.color(r, gg, b);
-      frames.vertex(x + barW + ox, baseY - oy, 0); frames.color(r, gg, b);
-      frames.vertex(x + barW + ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
-      frames.vertex(x + barW + ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
-      frames.vertex(x - ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
-      frames.vertex(x - ox, baseY + maxH + oy, 0); frames.color(r, gg, b);
-      frames.vertex(x - ox, baseY - oy, 0); frames.color(r, gg, b);
+    const int routed[4] = { size_src.get(), hue_src.get(), posY_src.get(), rot_src.get() };
+    Mesh matrix; matrix.primitive(Mesh::TRIANGLES);
+    const float cellSize = 0.07f;
+    const float cellGap  = 0.012f;
+    const float matrixW  = 4.f * cellSize + 3.f * cellGap;
+    const float matrixX0 = 1.32f - matrixW;     // pin to right edge
+    const float matrixY0 = 0.95f - 4.f * (cellSize + cellGap); // top-right corner
+    // Backing panel
+    emitRect(matrix,
+             matrixX0 - 0.02f,
+             matrixY0 - 0.02f,
+             matrixW + 0.04f,
+             4.f * (cellSize + cellGap) + 0.02f,
+             0.08f, 0.08f, 0.10f);
+    // Cells (row 0 at top = size channel)
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        const float cx = matrixX0 + (float)col * (cellSize + cellGap);
+        const float cy = matrixY0 + (float)(3 - row) * (cellSize + cellGap);
+        const bool active = (routed[row] == col);
+        if (active) {
+          emitRect(matrix, cx, cy, cellSize, cellSize,
+                   chCols[row][0], chCols[row][1], chCols[row][2]);
+        } else {
+          emitRect(matrix, cx, cy, cellSize, cellSize,
+                   0.18f, 0.18f, 0.22f);
+        }
+      }
     }
-    g.draw(frames);
+    g.draw(matrix);
+
+    // Outline the active cell (per row) with a brighter LINES border so it
+    // reads as a "patched" connection from row to column.
+    Mesh matOutline; matOutline.primitive(Mesh::LINES);
+    for (int row = 0; row < 4; ++row) {
+      const int col = routed[row];
+      if (col < 0 || col > 3) continue;
+      const float cx = matrixX0 + (float)col * (cellSize + cellGap);
+      const float cy = matrixY0 + (float)(3 - row) * (cellSize + cellGap);
+      const float r = chCols[row][0], gg = chCols[row][1], b = chCols[row][2];
+      const float x0 = cx - 0.004f, x1 = cx + cellSize + 0.004f;
+      const float y0 = cy - 0.004f, y1 = cy + cellSize + 0.004f;
+      matOutline.vertex(x0, y0, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x1, y0, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x1, y0, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x1, y1, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x1, y1, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x0, y1, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x0, y1, 0); matOutline.color(r, gg, b);
+      matOutline.vertex(x0, y0, 0); matOutline.color(r, gg, b);
+    }
+    g.draw(matOutline);
 
     gui.draw(g);
   }
@@ -5258,10 +6291,10 @@ public:
   bool onMouseDown(const Mouse&) override { return false; }
   bool onMouseDrag(const Mouse&) override { return false; }
   bool onMouseUp  (const Mouse&) override { return false; }
-};
+  };
 
-ALLOLIB_WEB_MAIN(SynestheticMapper)
-`,
+  ALLOLIB_WEB_MAIN(SynestheticMapper)
+  `,
   },
 ]
 
