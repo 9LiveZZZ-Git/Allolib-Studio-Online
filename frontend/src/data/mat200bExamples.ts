@@ -1591,37 +1591,28 @@ export const mat200bExamples: Example[] = [
   },
   {
     id: 'mat-amrm',
-    title: 'AM / RM Sideband Visualizer',
+    title: 'AM / RM Synthesis',
     description:
-      "Amplitude modulation vs. ring modulation, side by side. Two oscillators (carrier + modulator); the 'mode' switch picks AM (output = (1 + modDepth*mod) * carrier) or RM (output = mod * carrier). Spectrum view shows the sidebands appear at carrier±modulator (and the carrier-itself peak in AM mode, which RM removes); thin vertical markers show the THEORETICAL peak positions so it's obvious which sideband is which. Time-domain view below shows the resulting waveform. A small Lissajous panel in the top-right plots (carrier, modulator) so AM's envelope-hugging bowtie and RM's balanced figure-8 are visible at a glance. Toggling RM briefly draws a red X through the carrier-frequency marker — visual punch on the change.",
+      'Polyphonic amplitude / ring modulation instrument. Per voice: AM mode produces y = (1 + depth*sin(2π*modFreq*t)) * carrier (carrier survives, sidebands at fc ± modFreq); RM mode produces y = sin(2π*modFreq*t) * carrier (no carrier, only sidebands). Visualization: live FFT showing the spectral asymmetry between the two modes plus a per-voice carrier cursor. Keys ZXCVBNM, ASDFGHJ, QWERTYU.',
     category: 'mat-synthesis',
-    subcategory: 'modulation',
+    subcategory: 'amrm',
     code: `/**
-   * AM/RM Sideband Visualizer — MAT200B Phase 2
+   * AM / RM Synthesis — MAT200B Phase 3
    *
-   * Two oscillators:
-   *   carrier   gam::Sine at 'carrier_hz'
-   *   modulator gam::Sine at 'mod_hz'
+   * Polyphonic amplitude / ring-modulation instrument. Each voice picks
+   * mode in {AM, RM}.
+   *   AM: y = (1 + depth * sin(2*pi*modFreq*t)) * carrier
+   *       — carrier survives, energy at fc, fc +/- modFreq.
+   *   RM: y = sin(2*pi*modFreq*t) * carrier
+   *       — pure ring modulation, only the two sidebands fc +/- modFreq.
    *
-   * Mode toggle:
-   *   AM (false)  out = (1 + depth * mod) * carrier
-   *               -> sidebands at carrier ± mod, plus the carrier itself
-   *   RM (true)   out = mod * carrier
-   *               -> sidebands at carrier ± mod, NO carrier peak (it's
-   *                  cancelled by the multiplication when mod is bipolar)
-   *
-   * Visual: top half = magnitude spectrum drawn from a small inline DFT
-   * of the recent audio block (256-point Hann-windowed), with thin
-   * theoretical-peak markers overlaid. Bottom half = the raw waveform.
-   * Top-right = a Lissajous panel plotting (carrier, modulator) so the
-   * AM bowtie / RM figure-8 distinction is visible at a glance. A
-   * one-pole magnitude smoother sharpens the peaks across frames; a
-   * frame-counter "X" briefly crosses the carrier marker on every RM
-   * toggle so the change has visual punch.
+   * Visual: bottom-strip FFT (log freq) and per-voice carrier cursor.
    */
 
   #include "al_playground_compat.hpp"
+
   #include "Gamma/Oscillator.h"
+  #include "Gamma/Envelope.h"
 
   #include <array>
   #include <atomic>
@@ -1633,383 +1624,94 @@ export const mat200bExamples: Example[] = [
 
   using namespace al;
 
-  class AmRmViz : public App {
+  class AMRMVoice : public SynthVoice {
   public:
-  ParameterBool playing    {"playing",    "", true};
-  Parameter     carrier_hz {"carrier_hz", "", 440.0f, 50.0f, 4000.0f};
-  Parameter     mod_hz     {"mod_hz",     "",  80.0f,  1.0f, 2000.0f};
-  Parameter     depth      {"depth",      "",   0.8f,  0.0f, 1.0f};
-  Parameter     amp        {"amplitude",  "",   0.25f, 0.0f, 1.0f};
-  ParameterBool ringMod    {"ringMod",    "", false};
+    gam::Sine<> car, mod;
+    gam::ADSR<> env;
+    std::atomic<float> currentFreq{220.f};
 
-  ControlGUI gui;
-
-  gam::Sine<> carrier, modulator;
-
-  // Recent audio block (mono mix) for the inline DFT and waveform.
-  static constexpr int N = 256;
-  std::array<float, N> blockBuf{};
-  // Carrier-only and modulator-only ring buffers, used for the
-  // Lissajous plot (carrier vs. modulator without the modulation math
-  // on top).
-  std::array<float, N> carrierBuf{};
-  std::array<float, N> modBuf{};
-  std::atomic<int> blockW{0};
-
-  // One-pole smoothed magnitude spectrum, persisted across frames.
-  std::array<float, N / 2> magSmooth{};
-
-  // Audio-thread published sample rate.
-  std::atomic<float> sampleRateHz{48000.0f};
-
-  // RM toggle countdown — set to ~30 frames each time the toggle flips
-  // so the X-through-carrier marker fades back out after about half a
-  // second at 60 FPS.
-  bool prevRingMod = false;
-  int  toggleFlash = 0;
-
-  Mesh spectrum, waveform, gridMesh, markers, lissajous, toggleFx;
-
-  void onInit() override {
-    gui << playing << carrier_hz << mod_hz << depth << amp << ringMod;
-  }
-
-  void onCreate() override {
-    gui.init();
-    nav().pos(0, 0, 4.0f);
-    for (auto& v : magSmooth) v = 0.0f;
-  }
-
-  void onSound(AudioIOData& io) override {
-    sampleRateHz.store(static_cast<float>(io.framesPerSecond()),
-                       std::memory_order_relaxed);
-    if (!playing.get()) {
-      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-      return;
+    void init() override {
+      createInternalTriggerParameter("freq",      220.0f, 20.0f, 4000.0f);
+      createInternalTriggerParameter("modFreq",    50.0f,  0.1f, 2000.0f);
+      createInternalTriggerParameter("modDepth",    0.5f,  0.0f,    1.0f);
+      createInternalTriggerParameter("mode",        0.0f,  0.0f,    1.0f);
+      createInternalTriggerParameter("attack",      0.02f, 0.001f,  2.0f);
+      createInternalTriggerParameter("decay",       0.15f, 0.001f,  2.0f);
+      createInternalTriggerParameter("sustain",     0.7f,  0.0f,    1.0f);
+      createInternalTriggerParameter("release",     0.8f,  0.001f,  5.0f);
+      createInternalTriggerParameter("amp",         0.25f, 0.0f,    1.0f);
     }
-    carrier.freq(carrier_hz.get());
-    modulator.freq(mod_hz.get());
-    const float d   = depth.get();
-    const float a   = amp.get();
-    const bool  rm  = ringMod.get();
-    while (io()) {
-      const float c = carrier();
-      const float m = modulator();
-      const float s = (rm ? (c * m) : ((1.0f + d * m) * c)) * a;
-      io.out(0) = s;
-      io.out(1) = s;
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w]   = s;
-      carrierBuf[w] = c;
-      modBuf[w]     = m;
-      blockW.store((w + 1) % N, std::memory_order_release);
-    }
-  }
 
-  // Tiny non-FFT magnitude DFT — N=256 = 32k mults, runs once per frame.
-  void computeSpectrum(std::array<float, N / 2>& mag) {
-    const int w = blockW.load(std::memory_order_acquire);
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
-      x[i] = blockBuf[idx] * win;
+    void onTriggerOn() override {
+      const float f = getInternalParameterValue("freq");
+      car.freq(f);
+      mod.freq(getInternalParameterValue("modFreq"));
+      currentFreq.store(f, std::memory_order_relaxed);
+      env.attack(getInternalParameterValue("attack"));
+      env.decay(getInternalParameterValue("decay"));
+      env.sustain(getInternalParameterValue("sustain"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
     }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
+
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      const float depth = getInternalParameterValue("modDepth");
+      const float amp = getInternalParameterValue("amp");
+      const bool ringMode = getInternalParameterValue("mode") >= 0.5f;
+      const float f = getInternalParameterValue("freq");
+      const float mf = getInternalParameterValue("modFreq");
+      car.freq(f);
+      mod.freq(mf);
+      while (io()) {
+        const float c = car();
+        const float m = mod();
+        const float y = ringMode
+            ? (m * c)
+            : ((1.0f + depth * m) * c);
+        const float s = y * env() * amp * 0.6f;
+        io.out(0) += s;
+        io.out(1) += s;
       }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
-    }
-  }
-
-  // Map a frequency in Hz to the spectrum panel x coordinate. The
-  // existing spectrum draws bin k = 0..N/2-1 across [-1.4, 1.4]; bin k
-  // corresponds to frequency k * sr / N, so the panel covers
-  // [0, sr/2 * (N/2 - 1)/(N/2)] ~= [0, Nyquist].
-  float freqToX(float hz) const {
-    const float sr = sampleRateHz.load(std::memory_order_relaxed);
-    if (sr <= 0.0f) return -1.4f;
-    const float bin = hz * float(N) / sr;       // continuous bin index
-    const float u   = bin / float(N / 2 - 1);   // 0..1
-    if (u < 0.0f) return -1.4f;
-    if (u > 1.0f) return  1.4f;
-    return -1.4f + u * 2.8f;
-  }
-
-  static void emitRect(Mesh& m, float x0, float y0, float x1, float y1,
-                       float r, float g, float b) {
-    // TRIANGLE_STRIP-friendly winding: 4 vertices in (x0,y0),(x1,y0),
-    // (x0,y1),(x1,y1) order.
-    m.vertex(x0, y0, 0.f); m.color(r, g, b);
-    m.vertex(x1, y0, 0.f); m.color(r, g, b);
-    m.vertex(x0, y1, 0.f); m.color(r, g, b);
-    m.vertex(x1, y1, 0.f); m.color(r, g, b);
-  }
-
-  void onAnimate(double /*dt*/) override {
-    // Detect RM toggle and arm the X-flash countdown.
-    const bool rmNow = ringMod.get();
-    if (rmNow != prevRingMod) toggleFlash = 30;
-    prevRingMod = rmNow;
-    if (toggleFlash > 0) --toggleFlash;
-
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag);
-    // One-pole magnitude smoothing — sharper, less jittery peaks.
-    for (int k = 0; k < N / 2; ++k) {
-      magSmooth[k] = 0.5f * mag[k] + 0.5f * magSmooth[k];
+      if (env.done()) free();
     }
 
-    // Theoretical-peak markers FIRST so the live spectrum draws on top.
-    markers.reset();
-    markers.primitive(Mesh::TRIANGLE_STRIP);
-    const float fc = carrier_hz.get();
-    const float fm = mod_hz.get();
-    auto markerBar = [&](float hz, float r, float g, float b) {
-      // Each marker is its own quad with a degenerate triangle separating
-      // it from the next so a single TRIANGLE_STRIP draw stays correct.
-      const float x = freqToX(hz);
-      const float w = 0.006f;
-      // Repeat the first vertex to start the new strip cleanly.
-      markers.vertex(x - w, 0.20f, 0.f); markers.color(r, g, b);
-      markers.vertex(x - w, 0.20f, 0.f); markers.color(r, g, b);
-      markers.vertex(x + w, 0.20f, 0.f); markers.color(r, g, b);
-      markers.vertex(x - w, 1.70f, 0.f); markers.color(r, g, b);
-      markers.vertex(x + w, 1.70f, 0.f); markers.color(r, g, b);
-      // Close the strip with a degenerate so the next marker doesn't
-      // smear into this one.
-      markers.vertex(x + w, 1.70f, 0.f); markers.color(r, g, b);
-    };
-    if (rmNow) {
-      // RM: only sidebands, NO carrier line.
-      markerBar(fc - fm, 0.55f, 0.40f, 0.95f);
-      markerBar(fc + fm, 0.55f, 0.40f, 0.95f);
-    } else {
-      // AM: sidebands + carrier-itself.
-      markerBar(fc - fm, 0.40f, 0.85f, 0.55f);
-      markerBar(fc,      0.95f, 0.80f, 0.30f);
-      markerBar(fc + fm, 0.40f, 0.85f, 0.55f);
+    void onProcess(Graphics& g) override {
+      const float f = currentFreq.load(std::memory_order_relaxed);
+      const float lf = std::log(std::max(20.f, f));
+      const float u = (lf - std::log(20.f)) / (std::log(4000.f) - std::log(20.f));
+      const float xx = -1.4f + u * 2.8f;
+      const bool ringMode = getInternalParameterValue("mode") >= 0.5f;
+      Mesh m;
+      m.primitive(Mesh::LINES);
+      m.vertex(xx, -0.95f, 0.f);
+      m.vertex(xx, -0.30f, 0.f);
+      if (ringMode) { m.color(0.95f, 0.45f, 0.85f); m.color(0.95f, 0.45f, 0.85f); }
+      else          { m.color(0.4f, 0.95f, 0.6f);   m.color(0.4f, 0.95f, 0.6f);   }
+      g.meshColor();
+      g.draw(m);
     }
-
-    spectrum.reset();
-    spectrum.primitive(Mesh::LINE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float yy = 0.2f + std::min(0.7f, magSmooth[k] * 4.0f);
-      spectrum.vertex(xx, yy, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      spectrum.color(0.4f + 0.5f * t, 0.9f - 0.4f * t, 0.5f);
-    }
-
-    waveform.reset();
-    waveform.primitive(Mesh::LINE_STRIP);
-    const int w = blockW.load(std::memory_order_acquire);
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
-      const float yy = -0.5f + blockBuf[idx] * 0.4f;
-      waveform.vertex(xx, yy, 0.f);
-      waveform.color(0.95f, 0.65f, 0.35f);
-    }
-
-    // Lissajous panel — top-right, plotting (carrier, modulator) over
-    // the most recent N samples as a fading LINE_STRIP. Center at
-    // (1.05, 1.10), half-extent 0.30.
-    const float lx = 1.05f, ly = 0.65f, lr = 0.30f;
-    lissajous.reset();
-    lissajous.primitive(Mesh::LINE_STRIP);
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      float cx = carrierBuf[idx];
-      float my = modBuf[idx];
-      if (cx < -1.f) cx = -1.f; else if (cx > 1.f) cx = 1.f;
-      if (my < -1.f) my = -1.f; else if (my > 1.f) my = 1.f;
-      const float xx = lx + cx * lr;
-      const float yy = ly + my * lr;
-      // Fade from dim (oldest) to bright (newest) for a trail effect.
-      const float a = static_cast<float>(i) / static_cast<float>(N - 1);
-      const float r = 0.30f + 0.65f * a;
-      const float gC = 0.55f + 0.40f * a;
-      const float bb = 0.95f - 0.10f * a;
-      lissajous.vertex(xx, yy, 0.f);
-      lissajous.color(r, gC, bb);
-    }
-
-    // Reference baselines + Lissajous frame.
-    gridMesh.reset();
-    gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(-1.4f, 0.2f, 0.f); gridMesh.vertex(1.4f, 0.2f, 0.f);
-    gridMesh.vertex(-1.4f,-0.9f, 0.f); gridMesh.vertex(1.4f,-0.9f, 0.f);
-    for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.25f);
-    // Lissajous box and crosshairs.
-    auto pushLine = [&](float x0, float y0, float x1, float y1,
-                        float r, float gc, float b) {
-      gridMesh.vertex(x0, y0, 0.f); gridMesh.color(r, gc, b);
-      gridMesh.vertex(x1, y1, 0.f); gridMesh.color(r, gc, b);
-    };
-    pushLine(lx - lr, ly - lr, lx + lr, ly - lr, 0.30f, 0.32f, 0.38f);
-    pushLine(lx + lr, ly - lr, lx + lr, ly + lr, 0.30f, 0.32f, 0.38f);
-    pushLine(lx + lr, ly + lr, lx - lr, ly + lr, 0.30f, 0.32f, 0.38f);
-    pushLine(lx - lr, ly + lr, lx - lr, ly - lr, 0.30f, 0.32f, 0.38f);
-    pushLine(lx - lr, ly,       lx + lr, ly,       0.22f, 0.24f, 0.30f);
-    pushLine(lx,       ly - lr, lx,       ly + lr, 0.22f, 0.24f, 0.30f);
-
-    // Mode-toggle X at the carrier marker (decays with toggleFlash).
-    toggleFx.reset();
-    toggleFx.primitive(Mesh::LINES);
-    if (toggleFlash > 0) {
-      const float a = static_cast<float>(toggleFlash) / 30.0f;
-      const float r = 0.95f, gc = 0.20f, b = 0.20f;
-      const float cx = freqToX(fc);
-      const float dx = 0.045f, dy = 0.18f;
-      // Down-right diagonal.
-      toggleFx.vertex(cx - dx, 1.55f, 0.f); toggleFx.color(r * a, gc * a, b * a);
-      toggleFx.vertex(cx + dx, 1.55f - dy, 0.f); toggleFx.color(r * a, gc * a, b * a);
-      // Down-left diagonal.
-      toggleFx.vertex(cx + dx, 1.55f, 0.f); toggleFx.color(r * a, gc * a, b * a);
-      toggleFx.vertex(cx - dx, 1.55f - dy, 0.f); toggleFx.color(r * a, gc * a, b * a);
-    }
-  }
-
-  void onDraw(Graphics& g) override {
-    g.clear(0.04f, 0.05f, 0.07f);
-    g.meshColor();
-    g.draw(gridMesh);
-    g.draw(markers);
-    g.draw(spectrum);
-    g.draw(waveform);
-    g.draw(lissajous);
-    g.draw(toggleFx);
-    gui.draw(g);
-  }
   };
 
-  ALLOLIB_WEB_MAIN(AmRmViz)
-  `,
-  },
-  {
-    id: 'mat-fm-index',
-    title: 'FM Index Explorer',
-    description:
-      "Phase-modulation FM (Chowning style): output = sin(2π·fc·t + index·sin(2π·fm·t)). The 'index' knob smoothly grows the sideband structure. Three coupled views: (1) live magnitude spectrum overlaid with analytic Bessel-J amplitude predictions |J_k(index)| at fc±k·fm so you can SEE the textbook prediction land on top of the measured FFT; (2) time-domain output trace; (3) a phase-modulator circle in the top-right corner — a moving disc on the unit circle traces (cos(phase + index·sin(modPhase)), sin(...)) with a 256-frame fading trail so you watch the carrier's instantaneous phase wobble. A c:m-ratio menu picks classic ratios (1:1, 1:2, 2:3, 1:√2) or 'free'; a one-pole 30 ms slew on 'index' kills slider-drag scratch.",
-    category: 'mat-synthesis',
-    subcategory: 'modulation',
-    code: `/**
-   * FM Index Explorer — MAT200B Phase 2
-   *
-   * Single-operator FM (technically PM, the way Chowning meant it).
-   *
-   *   y(t) = amp * sin(2pi*fc*t + index * sin(2pi*fm*t))
-   *
-   * Sideband structure follows Bessel functions of the first kind J_k
-   * evaluated at the modulation index — partials at fc + k*fm for all
-   * integer k with amplitudes |J_k(index)|. We OVERLAY analytic
-   * |J_k(index)| for k=0..8 (mirrored to negative k as well) on top of
-   * the measured FFT magnitude so the textbook prediction lines up
-   * with the measured spectrum in real time.
-   *
-   * Top-right corner: a phase-modulator circle. A moving disc traces
-   * (cos(phase + index*sin(modPhase)), sin(phase + index*sin(modPhase)))
-   * on the unit circle; the last 256 phase positions trail behind as a
-   * fading LINE_STRIP. This makes the "phase modulation" visible.
-   *
-   * c:m ratio menu picks classic carrier/modulator ratios. A one-pole
-   * 30 ms slew on 'index' kills slider-drag scratch.
-   */
-
-  #include "al_playground_compat.hpp"
-  #include "Gamma/Oscillator.h"
-
-  #include <array>
-  #include <atomic>
-  #include <cmath>
-
-  #ifndef M_PI
-  #define M_PI 3.14159265358979323846
-  #endif
-
-  using namespace al;
-
-  class FmIndex : public App {
+  class AMRMApp : public App {
   public:
-    ParameterBool playing {"playing", "", true};
-    ParameterMenu c_to_m_ratio {"c_to_m_ratio", ""};
-    Parameter carrier_hz {"carrier_hz", "", 220.0f,  50.0f, 2000.0f};
-    Parameter mod_hz     {"mod_hz",     "", 220.0f,   1.0f, 2000.0f};
-    Parameter index      {"index",      "",   1.0f,   0.0f, 8.0f};
-    Parameter amp        {"amplitude",  "",  0.25f,   0.0f, 1.0f};
-
+    ParameterBool playing{"playing", "", true};
     ControlGUI gui;
+    SynthGUIManager<AMRMVoice> synthManager{"AMRM"};
 
-    gam::Sine<> mod;
-    // Carrier phase tracked manually so we can add the modulator output.
-    double carrierPhase = 0.0;
-    double modPhase     = 0.0;
-
-    // One-pole slew on index, ~30 ms.
-    float indexSmoothed = 1.0f;
-
-    static constexpr int N = 256;
-    std::array<float, N> blockBuf{};
-    std::atomic<int> blockW{0};
-
-    // Phase trail for the modulator-circle viz.
-    static constexpr int TRAIL_N = 256;
-    std::array<float, TRAIL_N> trailX{};
-    std::array<float, TRAIL_N> trailY{};
-    std::atomic<int> trailW{0};
-    // Latest phase + index snapshot for the dot.
-    std::atomic<float> lastCarrierPhase{0.f};
-    std::atomic<float> lastModPhase{0.f};
-    std::atomic<float> lastIndex{1.f};
-
-    Mesh spectrum, waveform, gridMesh, bessel, circleMesh, dotMesh, trailMesh;
-
-    bool ratioCallbackArmed = false;
+    static constexpr int N = 512;
+    std::array<float, N> ringBuf{};
+    std::atomic<int> ringW{0};
+    Mesh spectrum, axis, label;
 
     void onInit() override {
-      c_to_m_ratio.setElements({"1:1", "1:2", "2:3", "1:1.4142 (sqrt2)", "free"});
-      c_to_m_ratio.set(0);
-      c_to_m_ratio.registerChangeCallback([this](float){
-        applyRatio();
-      });
-      carrier_hz.registerChangeCallback([this](float){
-        // Re-derive mod_hz when the user moves the carrier, unless 'free'.
-        if (!ratioCallbackArmed) applyRatio();
-      });
-
-      gui << playing << c_to_m_ratio
-          << carrier_hz << mod_hz << index << amp;
+      gui << playing;
     }
 
     void onCreate() override {
       gui.init();
       nav().pos(0, 0, 4.0f);
-      indexSmoothed = index.get();
-      applyRatio();
-    }
-
-    // Apply the c:m ratio to mod_hz unless 'free' is selected.
-    void applyRatio() {
-      const int sel = static_cast<int>(c_to_m_ratio.get());
-      if (sel == 4) return; // free
-      float ratio = 1.0f;
-      switch (sel) {
-        case 0: ratio = 1.0f;          break; // 1:1
-        case 1: ratio = 0.5f;          break; // 1:2  -> mod = c / (1/2)? No: c:m=1:2 means m=2c
-        case 2: ratio = 2.0f / 3.0f;   break; // 2:3  -> m = c * 3/2
-        case 3: ratio = 1.0f / std::sqrt(2.0f); break; // 1:sqrt(2) -> m = c*sqrt(2)
-        default: ratio = 1.0f;
-      }
-      // The audit spec says: mod_hz = carrier_hz / ratio, so for 1:1 -> mod=c,
-      // for 1:2 ratio=0.5 -> mod = c / 0.5 = 2c, etc.
-      ratioCallbackArmed = true;
-      mod_hz.set(carrier_hz.get() / ratio);
-      ratioCallbackArmed = false;
     }
 
     void onSound(AudioIOData& io) override {
@@ -2017,51 +1719,23 @@ export const mat200bExamples: Example[] = [
         while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
         return;
       }
-      mod.freq(mod_hz.get());
-      const float fc       = carrier_hz.get();
-      const float idxTgt   = index.get();
-      const float a        = amp.get();
-      const float sr       = io.framesPerSecond();
-      const double dPhaseC = 2.0 * static_cast<double>(M_PI) * fc / sr;
-      const double dPhaseM = 2.0 * static_cast<double>(M_PI) * mod_hz.get() / sr;
-      // One-pole coefficient for ~30 ms time constant.
-      const float coef = 1.0f - std::exp(-1.0f / (0.030f * sr));
-
-      while (io()) {
-        indexSmoothed += (idxTgt - indexSmoothed) * coef;
-        const float modOut = mod();
-        const float s = a * static_cast<float>(
-          std::sin(carrierPhase + indexSmoothed * modOut));
-        carrierPhase += dPhaseC;
-        modPhase     += dPhaseM;
-        if (carrierPhase > 2.0 * static_cast<double>(M_PI))
-          carrierPhase -= 2.0 * static_cast<double>(M_PI);
-        if (modPhase > 2.0 * static_cast<double>(M_PI))
-          modPhase -= 2.0 * static_cast<double>(M_PI);
-
-        io.out(0) = s;
-        io.out(1) = s;
-        const int w = blockW.load(std::memory_order_relaxed);
-        blockBuf[w] = s;
-        blockW.store((w + 1) % N, std::memory_order_release);
+      const int frames = static_cast<int>(io.framesPerBuffer());
+      synthManager.render(io);
+      int w = ringW.load(std::memory_order_relaxed);
+      for (int i = 0; i < frames; ++i) {
+        ringBuf[w] = io.out(0, i);
+        w = (w + 1) % N;
       }
-
-      // Publish a per-block snapshot of phase + index for the circle viz.
-      lastCarrierPhase.store(static_cast<float>(carrierPhase),
-                             std::memory_order_relaxed);
-      lastModPhase.store(static_cast<float>(modPhase),
-                         std::memory_order_relaxed);
-      lastIndex.store(indexSmoothed, std::memory_order_relaxed);
+      ringW.store(w, std::memory_order_release);
     }
 
     void computeSpectrum(std::array<float, N / 2>& mag) {
-      const int w = blockW.load(std::memory_order_acquire);
+      const int w = ringW.load(std::memory_order_acquire);
       std::array<float, N> x{};
       for (int i = 0; i < N; ++i) {
-        const int idx2 = (w + i) % N;
-        const float win = 0.5f * (1.0f - std::cos(
-          2.0f * static_cast<float>(M_PI) * i / (N - 1)));
-        x[i] = blockBuf[idx2] * win;
+        const int idx = (w + i) % N;
+        const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
+        x[i] = ringBuf[idx] * win;
       }
       for (int k = 0; k < N / 2; ++k) {
         float re = 0.f, im = 0.f;
@@ -2074,174 +1748,297 @@ export const mat200bExamples: Example[] = [
       }
     }
 
-    // J_k(x) via the standard ascending series. 10 terms is plenty for x<8.
-    static float besselJ(int k, float x) {
-      if (k < 0) k = -k; // J_{-k}(x) = (-1)^k J_k(x); we want |.| anyway
-      double sum = 0.0;
-      double termSign = 1.0;
-      // Compute (x/2)^k / k!
-      double xk_over_2k = 1.0;
-      for (int i = 0; i < k; ++i) xk_over_2k *= (static_cast<double>(x) / 2.0);
-      double kFact = 1.0;
-      for (int i = 1; i <= k; ++i) kFact *= i;
-      double leading = xk_over_2k / kFact;
-      double pow_x2_2m = 1.0; // (x/2)^(2m), starts m=0 -> 1
-      double mFact = 1.0;
-      double kPlusMFact = kFact;
-      for (int m = 0; m < 10; ++m) {
-        sum += termSign * pow_x2_2m / (mFact * kPlusMFact);
-        termSign = -termSign;
-        pow_x2_2m *= (static_cast<double>(x) / 2.0)
-                   * (static_cast<double>(x) / 2.0);
-        const double mNext = m + 1;
-        mFact *= mNext;
-        kPlusMFact *= (k + mNext);
+    void onAnimate(double /*dt*/) override {
+      std::array<float, N / 2> mag{};
+      computeSpectrum(mag);
+      spectrum.reset();
+      spectrum.primitive(Mesh::LINE_STRIP);
+      for (int k = 1; k < N / 2; ++k) {
+        const float fk = static_cast<float>(k) * 22050.0f / N;
+        const float lf = std::log(std::max(20.f, fk));
+        const float u = (lf - std::log(20.f)) / (std::log(4000.f) - std::log(20.f));
+        if (u < 0.f || u > 1.f) continue;
+        const float xx = -1.4f + u * 2.8f;
+        const float h = std::min(1.0f, mag[k] * 12.0f);
+        const float yy = -0.90f + h;
+        spectrum.vertex(xx, yy, 0.f);
+        spectrum.color(0.5f, 0.7f, 0.95f);
       }
-      return static_cast<float>(leading * sum);
+
+      axis.reset();
+      axis.primitive(Mesh::LINES);
+      axis.vertex(-1.4f, -0.90f, 0.f); axis.vertex(1.4f, -0.90f, 0.f);
+      axis.color(0.3f, 0.3f, 0.3f);
+      axis.color(0.3f, 0.3f, 0.3f);
+
+      label.reset();
+      label.primitive(Mesh::TRIANGLES);
+      const bool ringMode = synthManager.voice()->getInternalParameterValue("mode") >= 0.5f;
+      const float r = ringMode ? 0.95f : 0.4f;
+      const float gr = ringMode ? 0.45f : 0.95f;
+      const float bb = ringMode ? 0.85f : 0.6f;
+      const float x0 = 0.95f, x1 = 1.35f;
+      const float y0 = 0.85f, y1 = 0.95f;
+      label.vertex(x0, y0, 0.f); label.vertex(x1, y0, 0.f); label.vertex(x1, y1, 0.f);
+      label.vertex(x0, y0, 0.f); label.vertex(x1, y1, 0.f); label.vertex(x0, y1, 0.f);
+      for (int i = 0; i < 6; ++i) label.color(r, gr, bb);
+    }
+
+    void onDraw(Graphics& g) override {
+      g.clear(0.04f, 0.05f, 0.08f);
+      g.meshColor();
+      g.draw(axis);
+      g.draw(spectrum);
+      g.draw(label);
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
+  };
+
+  ALLOLIB_WEB_MAIN(AMRMApp)
+  `,
+  },
+  {
+    id: 'mat-fm-index',
+    title: 'FM Synthesis (Index)',
+    description:
+      'Polyphonic two-operator FM instrument: a single carrier modulated by a single sinusoid at modRatio * carrier with depth = modIndex. y = sin(2π*fc*t + I*sin(2π*modRatio*fc*t)). As I rises the spectrum spreads into Bessel-function sidebands. Visualization: live FFT spectrum, transfer-curve panel showing the instantaneous modulation phase, and a per-voice carrier-frequency cursor. Keys ZXCVBNM (C3..B3), ASDFGHJ (C4..B4), QWERTYU (C5..B5).',
+    category: 'mat-synthesis',
+    subcategory: 'fm',
+    code: `/**
+   * FM Synthesis (Index) — MAT200B Phase 3
+   *
+   * Polyphonic two-operator FM instrument. Single carrier, single
+   * modulator. Output: sin(2*pi*fc*t + I * sin(2*pi*modRatio*fc*t)).
+   * As modIndex grows, energy redistributes into sidebands at
+   * fc +/- k*modRatio*fc with Bessel-function amplitudes.
+   *
+   * Visual:
+   *   live FFT magnitude spectrum across the bottom strip
+   *   transfer-curve panel (top-left) showing the modulator wave
+   *   per-voice carrier cursor on the spectrum axis
+   */
+
+  #include "al_playground_compat.hpp"
+
+  #include "Gamma/Oscillator.h"
+  #include "Gamma/Envelope.h"
+
+  #include <array>
+  #include <atomic>
+  #include <cmath>
+
+  #ifndef M_PI
+  #define M_PI 3.14159265358979323846
+  #endif
+
+  using namespace al;
+
+  class FMVoice : public SynthVoice {
+  public:
+    gam::Sine<> car, mod;
+    gam::ADSR<> env;
+    std::atomic<float> currentFreq{220.f};
+
+    void init() override {
+      createInternalTriggerParameter("freq",      220.0f, 20.0f, 4000.0f);
+      createInternalTriggerParameter("modRatio",    1.0f,  0.1f,   8.0f);
+      createInternalTriggerParameter("modIndex",    2.0f,  0.0f,  20.0f);
+      createInternalTriggerParameter("attack",      0.02f, 0.001f, 2.0f);
+      createInternalTriggerParameter("decay",       0.15f, 0.001f, 2.0f);
+      createInternalTriggerParameter("sustain",     0.6f,  0.0f,   1.0f);
+      createInternalTriggerParameter("release",     0.8f,  0.001f, 5.0f);
+      createInternalTriggerParameter("amp",         0.25f, 0.0f,   1.0f);
+    }
+
+    void onTriggerOn() override {
+      const float f = getInternalParameterValue("freq");
+      const float r = getInternalParameterValue("modRatio");
+      car.freq(f);
+      mod.freq(f * r);
+      currentFreq.store(f, std::memory_order_relaxed);
+      env.attack(getInternalParameterValue("attack"));
+      env.decay(getInternalParameterValue("decay"));
+      env.sustain(getInternalParameterValue("sustain"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
+    }
+
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      const float I = getInternalParameterValue("modIndex");
+      const float amp = getInternalParameterValue("amp");
+      const float f = getInternalParameterValue("freq");
+      const float r = getInternalParameterValue("modRatio");
+      car.freq(f);
+      mod.freq(f * r);
+      while (io()) {
+        const float m = mod();
+        car.phaseAdd(I * m * 0.05f);
+        const float s = car() * env() * amp;
+        io.out(0) += s;
+        io.out(1) += s;
+      }
+      if (env.done()) free();
+    }
+
+    void onProcess(Graphics& g) override {
+      const float f = currentFreq.load(std::memory_order_relaxed);
+      const float lf = std::log(std::max(20.f, f));
+      const float lmin = std::log(20.f);
+      const float lmax = std::log(4000.f);
+      const float u = (lf - lmin) / (lmax - lmin);
+      const float xx = -1.4f + u * 2.8f;
+      Mesh m;
+      m.primitive(Mesh::LINES);
+      m.vertex(xx, -0.95f, 0.f);
+      m.vertex(xx, -0.30f, 0.f);
+      const int slot = id() % 7;
+      const float r = 0.4f + 0.6f * (slot / 6.f);
+      m.color(r, 0.6f, 1.0f - r);
+      m.color(r, 0.6f, 1.0f - r);
+      g.meshColor();
+      g.draw(m);
+    }
+  };
+
+  class FMApp : public App {
+  public:
+    ParameterBool playing{"playing", "", true};
+    ControlGUI gui;
+    SynthGUIManager<FMVoice> synthManager{"FM"};
+
+    static constexpr int N = 512;
+    std::array<float, N> ringBuf{};
+    std::atomic<int> ringW{0};
+    Mesh spectrum, transfer, axis;
+
+    void onInit() override {
+      gui << playing;
+    }
+
+    void onCreate() override {
+      gui.init();
+      nav().pos(0, 0, 4.0f);
+    }
+
+    void onSound(AudioIOData& io) override {
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+        return;
+      }
+      const int start = static_cast<int>(io.framesPerBuffer());
+      synthManager.render(io);
+      int w = ringW.load(std::memory_order_relaxed);
+      for (int i = 0; i < start; ++i) {
+        ringBuf[w] = io.out(0, i);
+        w = (w + 1) % N;
+      }
+      ringW.store(w, std::memory_order_release);
+    }
+
+    void computeSpectrum(std::array<float, N / 2>& mag) {
+      const int w = ringW.load(std::memory_order_acquire);
+      std::array<float, N> x{};
+      for (int i = 0; i < N; ++i) {
+        const int idx = (w + i) % N;
+        const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
+        x[i] = ringBuf[idx] * win;
+      }
+      for (int k = 0; k < N / 2; ++k) {
+        float re = 0.f, im = 0.f;
+        const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
+        for (int n = 0; n < N; ++n) {
+          re += x[n] * std::cos(ang * n);
+          im += x[n] * std::sin(ang * n);
+        }
+        mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
+      }
     }
 
     void onAnimate(double /*dt*/) override {
       std::array<float, N / 2> mag{};
       computeSpectrum(mag);
-
-      // ---------- spectrum (top half) ----------
       spectrum.reset();
       spectrum.primitive(Mesh::LINE_STRIP);
-      for (int k = 0; k < N / 2; ++k) {
-        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-        const float yy = 0.2f + std::min(0.7f, mag[k] * 4.0f);
+      for (int k = 1; k < N / 2; ++k) {
+        const float fk = static_cast<float>(k) * 22050.0f / N;
+        const float lf = std::log(std::max(20.f, fk));
+        const float u = (lf - std::log(20.f)) / (std::log(4000.f) - std::log(20.f));
+        if (u < 0.f || u > 1.f) continue;
+        const float xx = -1.4f + u * 2.8f;
+        const float h = std::min(1.0f, mag[k] * 12.0f);
+        const float yy = -0.90f + h;
         spectrum.vertex(xx, yy, 0.f);
-        const float t = static_cast<float>(k) / (N / 2);
-        spectrum.color(0.5f + 0.4f * t, 0.4f + 0.5f * t, 1.0f - 0.3f * t);
+        spectrum.color(0.5f, 0.7f + 0.3f * h, 0.95f - 0.3f * h);
       }
 
-      // ---------- analytic Bessel ghost peaks ----------
-      // Bars at fc + k*fm AND fc - k*fm for k = 0..8, height = |J_k(index)|.
-      bessel.reset();
-      bessel.primitive(Mesh::TRIANGLES);
-      const float fc = carrier_hz.get();
-      const float fm = mod_hz.get();
-      const float sr = 48000.0f; // approximate; matches DFT bin layout
-      const float idxNow = lastIndex.load(std::memory_order_relaxed);
-      auto freqToX = [&](float f) -> float {
-        // Mirror the DFT bin->x mapping: bin = f * N / sr -> normalised.
-        const float norm = f * float(N) / sr / float(N / 2 - 1);
-        return -1.4f + std::min(1.0f, std::max(0.0f, norm)) * 2.8f;
-      };
-      auto pushGhostBar = [&](float fx, float h) {
-        if (fx < -1.4f || fx > 1.4f) return;
-        const float bw = 0.012f;
-        const float y0 = 0.2f;
-        const float y1 = 0.2f + std::min(0.7f, h * 4.0f);
-        const float x0 = fx - bw, x1 = fx + bw;
-        // TRIANGLES quad in a contrasting orange.
-        const float rC = 1.0f, gC = 0.55f, bC = 0.15f;
-        bessel.vertex(x0, y0, 0.f); bessel.color(rC, gC, bC);
-        bessel.vertex(x1, y0, 0.f); bessel.color(rC, gC, bC);
-        bessel.vertex(x0, y1, 0.f); bessel.color(rC, gC, bC);
-        bessel.vertex(x1, y0, 0.f); bessel.color(rC, gC, bC);
-        bessel.vertex(x1, y1, 0.f); bessel.color(rC, gC, bC);
-        bessel.vertex(x0, y1, 0.f); bessel.color(rC, gC, bC);
-      };
-      for (int k = 0; k <= 8; ++k) {
-        const float jk = std::fabs(besselJ(k, idxNow)) * amp.get();
-        pushGhostBar(freqToX(fc + k * fm), jk);
-        if (k > 0) {
-          const float fNeg = std::fabs(fc - k * fm);
-          pushGhostBar(freqToX(fNeg), jk);
-        }
+      transfer.reset();
+      transfer.primitive(Mesh::LINE_STRIP);
+      const float I = synthManager.voice()->getInternalParameterValue("modIndex");
+      const float r = synthManager.voice()->getInternalParameterValue("modRatio");
+      for (int i = 0; i < 200; ++i) {
+        const float t = static_cast<float>(i) / 199.0f;
+        const float x = t * 2.0f * static_cast<float>(M_PI);
+        const float y = std::sin(x + I * std::sin(r * x) * 0.05f);
+        const float xx = -1.4f + t * 0.8f;
+        const float yy = 0.55f + y * 0.30f;
+        transfer.vertex(xx, yy, 0.f);
+        transfer.color(1.0f, 0.7f, 0.3f);
       }
 
-      // ---------- waveform ----------
-      waveform.reset();
-      waveform.primitive(Mesh::LINE_STRIP);
-      const int w = blockW.load(std::memory_order_acquire);
-      for (int i = 0; i < N; ++i) {
-        const int idx2 = (w + i) % N;
-        const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
-        const float yy = -0.55f + blockBuf[idx2] * 0.35f;
-        waveform.vertex(xx, yy, 0.f);
-        waveform.color(0.4f, 0.85f, 0.6f);
-      }
-
-      // ---------- grid ----------
-      gridMesh.reset();
-      gridMesh.primitive(Mesh::LINES);
-      gridMesh.vertex(-1.4f, 0.2f, 0.f); gridMesh.vertex(1.4f, 0.2f, 0.f);
-      gridMesh.vertex(-1.4f,-0.9f, 0.f); gridMesh.vertex(1.4f,-0.9f, 0.f);
-      for (int kk = 0; kk < 4; ++kk) gridMesh.color(0.25f, 0.25f, 0.25f);
-
-      // ---------- modulator circle (top-right corner) ----------
-      // Centre at (cx, cy), radius R. Unit-circle outline + moving dot +
-      // fading trail.
-      const float cx = 1.20f, cy = 0.60f, R = 0.25f;
-      circleMesh.reset();
-      circleMesh.primitive(Mesh::LINE_STRIP);
-      constexpr int CSEG = 64;
-      for (int i = 0; i <= CSEG; ++i) {
-        const float a = 2.0f * static_cast<float>(M_PI) * i / CSEG;
-        circleMesh.vertex(cx + R * std::cos(a), cy + R * std::sin(a), 0.f);
-        circleMesh.color(0.5f, 0.5f, 0.6f);
-      }
-
-      // Update trail with the latest snapshot.
-      const float cp = lastCarrierPhase.load(std::memory_order_relaxed);
-      const float mp = lastModPhase.load(std::memory_order_relaxed);
-      const float effPhase = cp + idxNow * std::sin(mp);
-      const float dotX = cx + R * std::cos(effPhase);
-      const float dotY = cy + R * std::sin(effPhase);
-      {
-        const int t = trailW.load(std::memory_order_relaxed);
-        trailX[t] = dotX;
-        trailY[t] = dotY;
-        trailW.store((t + 1) % TRAIL_N, std::memory_order_release);
-      }
-
-      // Render fading trail (newest = bright, oldest = dim).
-      trailMesh.reset();
-      trailMesh.primitive(Mesh::LINE_STRIP);
-      {
-        const int t = trailW.load(std::memory_order_acquire);
-        for (int i = 0; i < TRAIL_N; ++i) {
-          const int idx2 = (t + i) % TRAIL_N;
-          const float age = float(i) / float(TRAIL_N - 1); // 0=oldest, 1=newest
-          trailMesh.vertex(trailX[idx2], trailY[idx2], 0.f);
-          trailMesh.color(0.95f * age, 0.6f * age, 0.2f * age);
-        }
-      }
-
-      // Moving disc — inline TRIANGLES fan.
-      dotMesh.reset();
-      dotMesh.primitive(Mesh::TRIANGLES);
-      constexpr int DSEG = 16;
-      const float dr = 0.025f;
-      for (int i = 0; i < DSEG; ++i) {
-        const float a0 = 2.0f * static_cast<float>(M_PI) * i / DSEG;
-        const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / DSEG;
-        dotMesh.vertex(dotX, dotY, 0.f);
-        dotMesh.vertex(dotX + dr * std::cos(a0), dotY + dr * std::sin(a0), 0.f);
-        dotMesh.vertex(dotX + dr * std::cos(a1), dotY + dr * std::sin(a1), 0.f);
-        dotMesh.color(1.0f, 0.85f, 0.3f);
-        dotMesh.color(1.0f, 0.85f, 0.3f);
-        dotMesh.color(1.0f, 0.85f, 0.3f);
-      }
+      axis.reset();
+      axis.primitive(Mesh::LINES);
+      axis.vertex(-1.4f, -0.90f, 0.f); axis.vertex(1.4f, -0.90f, 0.f);
+      axis.color(0.3f, 0.3f, 0.3f);
+      axis.color(0.3f, 0.3f, 0.3f);
     }
 
     void onDraw(Graphics& g) override {
-      g.clear(0.04f, 0.04f, 0.08f);
+      g.clear(0.04f, 0.05f, 0.08f);
       g.meshColor();
-      g.draw(gridMesh);
+      g.draw(axis);
       g.draw(spectrum);
-      g.draw(bessel);
-      g.draw(waveform);
-      g.draw(circleMesh);
-      g.draw(trailMesh);
-      g.draw(dotMesh);
+      g.draw(transfer);
+      synthManager.render(g);
       gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
     }
   };
 
-  ALLOLIB_WEB_MAIN(FmIndex)
+  ALLOLIB_WEB_MAIN(FMApp)
   `,
   },
   {
@@ -5769,38 +5566,29 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-additive-geometry',
-    title: 'Additive Geometry',
+    title: 'Additive Synthesis (Geometric)',
     description:
-      'A single coefficient vector simultaneously drives a 16-partial additive synthesizer and a parametric 3D mesh whose radius is the same Fourier sum: r(theta) = R0 + sum(a_n * cos(n*theta)). Push the a3 slider up and you hear the third harmonic AND see three new lobes bloom around the surface. Mesh hue tracks the dominant harmonic index, an ADSR envelope glides amplitude on each keyboard note (no clicks), the equator scope ring rides on the mesh itself as a transparent slice, and a click-drag 16-bar mini-spectrum lets you paint partials 1..16 directly. A bandlimit toggle attenuates partials past Nyquist with a cosine taper and dims those bars in the mini-spectrum so you can SEE where aliasing would start. The trick is a std::array<std::atomic<float>, 16> shared lock-free between audio and graphics.',
+      'Polyphonic additive-synthesis instrument. Each voice sums up to 32 sinusoidal partials in a Fourier-style stack with adjustable spread (harmonic ratio compression/expansion) and falloff (1/k^a amplitude rolloff). Visualization: each voice draws a 3D cylinder of stacked partial rings, ring radius modulated by that partial\'s amplitude. Keyboard: Z-M = C3..B3, A-J = C4..B4, Q-U = C5..B5.',
     category: 'mat-synthesis',
     subcategory: 'additive',
     code: `/**
-   * Additive Geometry — MAT200B Phase 2 (additive synthesis)
+   * Additive Synthesis (Geometric) — MAT200B Phase 3
    *
-   * One std::array<std::atomic<float>, 16> drives BOTH:
-   *   - audio: 16 sines summed with amplitudes a[n], gated by an ADSR
-   *            envelope that retriggers on each onKeyDown
-   *   - mesh:  parametric surface radius r(theta) = R0 + sum a_n cos(n theta)
+   * Polyphonic playable instrument: every voice sums up to 32 sine partials,
+   * laid as a vertical stack of rings; each ring's radius tracks its
+   * partial's amplitude. Spread > 1 stretches harmonics inharmonically;
+   * falloff a controls 1/k^a amplitude taper.
    *
-   * The equator scope is rendered AS A SLICE THROUGH THE MESH at z=0,
-   * coloured by the dominant-partial hue — same curve as one period of
-   * the time-domain waveform, riding on the rotating mesh itself.
-   *
-   * Top-right: a 16-bar mini-spectrum. CLICK-DRAG over the bars to paint
-   * partials 1..16 directly. Bandlimit toggle attenuates partial n by
-   * cos(pi*n*f0 / (2*nyquist))^2 and visually dims the bars past the
-   * cutoff so you can see exactly where aliasing would otherwise start.
+   * Keys: ZXCVBNM (C3..B3), ASDFGHJ (C4..B4), QWERTYU (C5..B5).
    */
 
   #include "al_playground_compat.hpp"
-  #include "Gamma/Envelope.h"
+
   #include "Gamma/Oscillator.h"
+  #include "Gamma/Envelope.h"
 
   #include <array>
-  #include <atomic>
   #include <cmath>
-  #include <vector>
-  #include <algorithm>
 
   #ifndef M_PI
   #define M_PI 3.14159265358979323846
@@ -5808,300 +5596,103 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  class AdditiveGeometry : public App {
+  class AddGeoVoice : public SynthVoice {
   public:
-    static constexpr int N_PARTIALS = 16;
-    std::array<gam::Sine<>, N_PARTIALS> oscs;
-    std::array<std::atomic<float>, N_PARTIALS> partialAmps;
+    static constexpr int MAX_PARTIALS = 32;
+    std::array<gam::Sine<>, MAX_PARTIALS> oscs;
+    gam::ADSR<> env;
 
-    ParameterBool playing {"playing", "", true};
-    Parameter f0      {"f0_Hz",       "",        110.0f,  40.0f,  440.0f};
-    Parameter master  {"master",      "",          0.25f,  0.0f,    1.0f};
-    Parameter a1{"a1","partials",1.00f,0.f,1.f}; Parameter a2{"a2","partials",0.f,0.f,1.f};
-    Parameter a3{"a3","partials",0.00f,0.f,1.f}; Parameter a4{"a4","partials",0.f,0.f,1.f};
-    Parameter a5{"a5","partials",0.00f,0.f,1.f}; Parameter a6{"a6","partials",0.f,0.f,1.f};
-    Parameter a7{"a7","partials",0.00f,0.f,1.f}; Parameter a8{"a8","partials",0.f,0.f,1.f};
-    Parameter tailDecay {"tail_decay","",  0.5f, 0.0f, 1.0f};
-    Parameter rotate    {"rotate",    "",  0.3f, -2.0f, 2.0f};
-    Parameter R0        {"base_radius","", 0.7f, 0.2f, 2.0f};
-    Parameter atk_ms    {"attack_ms",  "",  10.0f, 1.0f, 500.0f};
-    Parameter dec_ms    {"decay_ms",   "", 200.0f, 5.0f, 2000.0f};
-    Parameter rel_ms    {"release_ms", "", 600.0f, 5.0f, 4000.0f};
-    ParameterBool bandlimit {"bandlimit","", true};
-    ParameterBool wireframe {"wireframe","", false};
-    Trigger sawPreset    {"preset_saw",   ""};
-    Trigger squarePreset {"preset_square",""};
-    Trigger clearPreset  {"preset_clear", ""};
+    void init() override {
+      createInternalTriggerParameter("freq",     220.0f, 20.0f, 4000.0f);
+      createInternalTriggerParameter("partials",   8.0f,  1.0f,   32.0f);
+      createInternalTriggerParameter("spread",     1.0f,  0.8f,    1.5f);
+      createInternalTriggerParameter("falloff",    1.0f,  0.0f,    3.0f);
+      createInternalTriggerParameter("attack",     0.02f, 0.001f,  2.0f);
+      createInternalTriggerParameter("decay",      0.20f, 0.001f,  3.0f);
+      createInternalTriggerParameter("sustain",    0.50f, 0.0f,    1.0f);
+      createInternalTriggerParameter("release",    0.80f, 0.001f,  5.0f);
+      createInternalTriggerParameter("amp",        0.25f, 0.0f,    1.0f);
+    }
 
+    void onTriggerOn() override {
+      const float f = getInternalParameterValue("freq");
+      const float spread = getInternalParameterValue("spread");
+      for (int k = 0; k < MAX_PARTIALS; ++k) {
+        const float ratio = std::pow(static_cast<float>(k + 1), spread);
+        oscs[k].freq(f * ratio);
+      }
+      env.attack(getInternalParameterValue("attack"));
+      env.decay(getInternalParameterValue("decay"));
+      env.sustain(getInternalParameterValue("sustain"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
+    }
+
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      const int N = std::max(1, std::min(MAX_PARTIALS,
+                    static_cast<int>(getInternalParameterValue("partials"))));
+      const float a = getInternalParameterValue("falloff");
+      const float amp = getInternalParameterValue("amp");
+      while (io()) {
+        float s = 0.f;
+        float norm = 0.f;
+        for (int k = 0; k < N; ++k) {
+          const float w = 1.0f / std::pow(static_cast<float>(k + 1), a);
+          s += oscs[k]() * w;
+          norm += w;
+        }
+        if (norm > 0.f) s /= norm;
+        const float e = env();
+        const float y = s * e * amp;
+        io.out(0) += y;
+        io.out(1) += y;
+      }
+      if (env.done()) free();
+    }
+
+    void onProcess(Graphics& g) override {
+      const int N = std::max(1, std::min(MAX_PARTIALS,
+                    static_cast<int>(getInternalParameterValue("partials"))));
+      const float a = getInternalParameterValue("falloff");
+      const int slot = id() % 7;
+      const float xOff = -1.2f + slot * 0.4f;
+      Mesh m;
+      m.primitive(Mesh::LINES);
+      for (int k = 0; k < N; ++k) {
+        const float w = 1.0f / std::pow(static_cast<float>(k + 1), a);
+        const float r = 0.04f + 0.10f * w;
+        const float yy = -0.55f + (static_cast<float>(k) / MAX_PARTIALS) * 1.2f;
+        const int seg = 18;
+        for (int s = 0; s < seg; ++s) {
+          const float a0 = 2.f * static_cast<float>(M_PI) * s / seg;
+          const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
+          m.vertex(xOff + r * std::cos(a0), yy, r * std::sin(a0));
+          m.vertex(xOff + r * std::cos(a1), yy, r * std::sin(a1));
+          const float t = static_cast<float>(k) / MAX_PARTIALS;
+          m.color(0.4f + 0.6f * t, 0.7f - 0.3f * t, 0.95f - 0.5f * t);
+          m.color(0.4f + 0.6f * t, 0.7f - 0.3f * t, 0.95f - 0.5f * t);
+        }
+      }
+      g.meshColor();
+      g.draw(m);
+    }
+  };
+
+  class AdditiveGeoApp : public App {
+  public:
+    ParameterBool playing{"playing", "", true};
     ControlGUI gui;
-
-    // ADSR-style envelope (attack/decay/release; sustain pinned at 1).
-    gam::Env<3> ampEnv;
-    std::atomic<int> envTrigPending{0};
-
-    Mesh surface, scope, miniSpec, miniSpecBg;
-    static constexpr int N_LON = 64;
-    static constexpr int N_LAT = 32;
-    float yaw = 0.0f;
-    int frameCount = 0;
-
-    // Mini-spectrum world rect (top-right corner, billboarded by depth-off draw).
-    static constexpr float SPEC_X0 =  0.55f, SPEC_X1 = 1.55f;
-    static constexpr float SPEC_Y0 =  0.55f, SPEC_Y1 = 0.95f;
-    bool painting = false;
-
-    std::atomic<float> sampleRateHz{48000.f};
+    SynthGUIManager<AddGeoVoice> synthManager{"AdditiveGeo"};
 
     void onInit() override {
-      for (int i = 0; i < N_PARTIALS; ++i) partialAmps[i].store(0.0f);
-      partialAmps[0].store(1.0f);
-
-      // Envelope: A->1, D->1 (sustain), R->0
-      ampEnv.levels(0.f, 1.f, 1.f, 0.f);
-      ampEnv.lengths()[0] = atk_ms.get() / 1000.f;
-      ampEnv.lengths()[1] = dec_ms.get() / 1000.f;
-      ampEnv.lengths()[2] = rel_ms.get() / 1000.f;
-      ampEnv.sustainPoint(2);
-
-      Parameter* live[8] = {&a1,&a2,&a3,&a4,&a5,&a6,&a7,&a8};
-      for (int i = 0; i < 8; ++i) {
-        const int idx = i;
-        live[i]->registerChangeCallback([this, idx](float v) {
-          partialAmps[idx].store(v);
-        });
-      }
-
-      sawPreset.registerChangeCallback([this, live](float){
-        for (int i = 0; i < 8; ++i) live[i]->set(1.0f / float(i + 1));
-        for (int i = 8; i < N_PARTIALS; ++i) partialAmps[i].store(1.0f / float(i + 1));
-      });
-      squarePreset.registerChangeCallback([this, live](float){
-        for (int i = 0; i < 8; ++i) {
-          const int n = i + 1;
-          live[i]->set((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
-        }
-        for (int i = 8; i < N_PARTIALS; ++i) {
-          const int n = i + 1;
-          partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
-        }
-      });
-      clearPreset.registerChangeCallback([this, live](float){
-        for (int i = 0; i < 8; ++i) live[i]->set(0.0f);
-        for (int i = 8; i < N_PARTIALS; ++i) partialAmps[i].store(0.0f);
-      });
-
-      gui << playing << f0 << master
-          << a1 << a2 << a3 << a4 << a5 << a6 << a7 << a8
-          << tailDecay << rotate << R0
-          << atk_ms << dec_ms << rel_ms
-          << bandlimit << wireframe
-          << sawPreset << squarePreset << clearPreset;
+      gui << playing;
     }
 
     void onCreate() override {
       gui.init();
       nav().pos(0, 0, 4.0f);
-      for (auto& o : oscs) o.freq(110.0f);
-      surface.primitive(Mesh::TRIANGLES);
-      scope.primitive(Mesh::LINE_STRIP);
-      rebuildMesh();
-    }
-
-    // Bandlimit attenuation: cos^2 taper centred on Nyquist. Returns 1 when
-    // the partial is well below Nyquist, 0 once it reaches Nyquist.
-    float bandlimitGain(int n /*1-indexed*/) {
-      if (!bandlimit.get()) return 1.0f;
-      const float sr = sampleRateHz.load(std::memory_order_relaxed);
-      const float nyq = 0.5f * sr;
-      const float fp = float(n) * f0.get();
-      if (fp >= nyq) return 0.0f;
-      const float c = std::cos(static_cast<float>(M_PI) * fp / (2.0f * nyq));
-      return c * c;
-    }
-
-    float radiusAt(float theta) {
-      float sum = 0.0f, norm = 0.0f;
-      for (int i = 0; i < N_PARTIALS; ++i) {
-        const float a = partialAmps[i].load(std::memory_order_relaxed)
-                      * bandlimitGain(i + 1);
-        sum  += a * std::cos(float(i + 1) * theta);
-        norm += a;
-      }
-      if (norm < 1e-4f) norm = 1.0f;
-      return R0.get() + 0.5f * sum / norm;
-    }
-
-    int dominantPartial() {
-      int best = 0;
-      float bestVal = -1.0f;
-      for (int i = 0; i < N_PARTIALS; ++i) {
-        const float a = partialAmps[i].load(std::memory_order_relaxed)
-                      * bandlimitGain(i + 1);
-        if (a > bestVal) { bestVal = a; best = i; }
-      }
-      return best;
-    }
-
-    static void hsv2rgb(float h, float s, float v, float& r, float& g, float& b) {
-      const float i = std::floor(h * 6.0f);
-      const float f = h * 6.0f - i;
-      const float p = v * (1.0f - s);
-      const float q = v * (1.0f - f * s);
-      const float t = v * (1.0f - (1.0f - f) * s);
-      const int ii = int(i) % 6;
-      switch (ii) {
-        case 0: r=v; g=t; b=p; break;
-        case 1: r=q; g=v; b=p; break;
-        case 2: r=p; g=v; b=t; break;
-        case 3: r=p; g=q; b=v; break;
-        case 4: r=t; g=p; b=v; break;
-        default: r=v; g=p; b=q; break;
-      }
-    }
-
-    void rebuildMesh() {
-      surface.reset();
-      surface.primitive(wireframe.get() ? Mesh::LINES : Mesh::TRIANGLES);
-
-      const int dom = dominantPartial();
-      const float hue = float(dom) / float(N_PARTIALS);
-      float domR, domG, domB; hsv2rgb(hue, 0.85f, 1.0f, domR, domG, domB);
-
-      std::vector<Vec3f> verts;
-      std::vector<float> rgb;
-      verts.reserve((N_LAT + 1) * (N_LON + 1));
-      rgb.reserve((N_LAT + 1) * (N_LON + 1) * 3);
-
-      for (int j = 0; j <= N_LAT; ++j) {
-        const float v = float(j) / float(N_LAT);
-        const float phi = v * static_cast<float>(M_PI);
-        const float sinPhi = std::sin(phi);
-        const float cosPhi = std::cos(phi);
-        for (int i = 0; i <= N_LON; ++i) {
-          const float u = float(i) / float(N_LON);
-          const float theta = u * 2.0f * static_cast<float>(M_PI);
-          const float r = radiusAt(theta);
-          const float taper = 0.5f + 0.5f * sinPhi;
-          const float rEff = R0.get() + (r - R0.get()) * taper;
-          const float x = rEff * sinPhi * std::cos(theta);
-          const float y = rEff * cosPhi;
-          const float z = rEff * sinPhi * std::sin(theta);
-          verts.push_back(Vec3f(x, y, z));
-          float bright = 0.4f + 0.6f * std::max(0.0f, (r - R0.get()) * 1.5f + 0.5f);
-          if (bright > 1.0f) bright = 1.0f;
-          float cr, cg, cb;
-          hsv2rgb(hue, 0.85f, bright, cr, cg, cb);
-          rgb.push_back(cr); rgb.push_back(cg); rgb.push_back(cb);
-        }
-      }
-
-      auto idx = [](int j, int i) { return j * (N_LON + 1) + i; };
-      auto emit = [&](int p) {
-        surface.vertex(verts[p]);
-        surface.color(rgb[p*3], rgb[p*3+1], rgb[p*3+2]);
-      };
-
-      for (int j = 0; j < N_LAT; ++j) {
-        for (int i = 0; i < N_LON; ++i) {
-          const int a = idx(j, i);
-          const int b = idx(j, i + 1);
-          const int c = idx(j + 1, i);
-          const int d = idx(j + 1, i + 1);
-          if (wireframe.get()) {
-            emit(a); emit(b);
-            emit(a); emit(c);
-          } else {
-            emit(a); emit(c); emit(b);
-            emit(b); emit(c); emit(d);
-          }
-        }
-      }
-
-      // Equator scope ribbon — slice through the mesh at z=0 (cosPhi=0,
-      // sinPhi=1, taper=1). Lives on the rotating mesh itself, not a
-      // separate translated panel. Coloured by dominant-partial hue.
-      scope.reset();
-      scope.primitive(Mesh::LINE_STRIP);
-      constexpr int SCOPE_N = 256;
-      for (int i = 0; i <= SCOPE_N; ++i) {
-        const float u = float(i) / float(SCOPE_N);
-        const float theta = u * 2.0f * static_cast<float>(M_PI);
-        const float r = radiusAt(theta);
-        // Equator: y = 0, x = r cos(theta), z = r sin(theta).
-        scope.vertex(r * std::cos(theta), 0.0f, r * std::sin(theta));
-        scope.color(domR, domG, domB);
-      }
-
-      rebuildMiniSpec();
-    }
-
-    // 16-bar mini-spectrum, top-right. Bars dim past the bandlimit point.
-    void rebuildMiniSpec() {
-      miniSpecBg.reset();
-      miniSpecBg.primitive(Mesh::TRIANGLE_STRIP);
-      miniSpecBg.vertex(SPEC_X0, SPEC_Y0, 0.f); miniSpecBg.color(0.10f,0.10f,0.14f);
-      miniSpecBg.vertex(SPEC_X1, SPEC_Y0, 0.f); miniSpecBg.color(0.10f,0.10f,0.14f);
-      miniSpecBg.vertex(SPEC_X0, SPEC_Y1, 0.f); miniSpecBg.color(0.14f,0.14f,0.18f);
-      miniSpecBg.vertex(SPEC_X1, SPEC_Y1, 0.f); miniSpecBg.color(0.14f,0.14f,0.18f);
-
-      miniSpec.reset();
-      miniSpec.primitive(Mesh::TRIANGLES);
-      const float barW = (SPEC_X1 - SPEC_X0) / float(N_PARTIALS);
-      for (int i = 0; i < N_PARTIALS; ++i) {
-        const float a = std::min(1.0f,
-          partialAmps[i].load(std::memory_order_relaxed));
-        const float bl = bandlimitGain(i + 1);
-        const float h = (SPEC_Y1 - SPEC_Y0) * a;
-        const float x0 = SPEC_X0 + i * barW + barW * 0.1f;
-        const float x1 = SPEC_X0 + (i + 1) * barW - barW * 0.1f;
-        const float y0 = SPEC_Y0;
-        const float y1 = SPEC_Y0 + h;
-        // Hue per partial; dim by bandlimit gain.
-        const float hue = float(i) / float(N_PARTIALS);
-        float cr, cg, cb;
-        hsv2rgb(hue, 0.85f, 0.95f, cr, cg, cb);
-        const float dim = 0.25f + 0.75f * bl;
-        cr *= dim; cg *= dim; cb *= dim;
-        // Two triangles per bar.
-        miniSpec.vertex(x0, y0, 0.f); miniSpec.color(cr, cg, cb);
-        miniSpec.vertex(x1, y0, 0.f); miniSpec.color(cr, cg, cb);
-        miniSpec.vertex(x0, y1, 0.f); miniSpec.color(cr, cg, cb);
-        miniSpec.vertex(x1, y0, 0.f); miniSpec.color(cr, cg, cb);
-        miniSpec.vertex(x1, y1, 0.f); miniSpec.color(cr, cg, cb);
-        miniSpec.vertex(x0, y1, 0.f); miniSpec.color(cr, cg, cb);
-      }
-    }
-
-    void onAnimate(double dt) override {
-      yaw += float(dt) * rotate.get();
-      if (++frameCount % 3 == 0) rebuildMesh();
-      const float base = f0.get();
-      for (int i = 0; i < N_PARTIALS; ++i) {
-        oscs[i].freq(base * float(i + 1));
-      }
-    }
-
-    void onDraw(Graphics& g) override {
-      g.clear(0.04f, 0.04f, 0.07f);
-      g.depthTesting(true);
-
-      g.pushMatrix();
-      g.rotate(yaw * 57.2958f, Vec3f(0, 1, 0));
-      g.rotate(15.0f, Vec3f(1, 0, 0));
-      g.meshColor();
-      g.draw(surface);
-      // Equator ribbon rides ON the mesh — same model space, same rotation.
-      g.draw(scope);
-      g.popMatrix();
-
-      // Mini-spectrum panel — screen-space, depth off so it always sits
-      // on top of the rotating mesh in the corner.
-      g.depthTesting(false);
-      g.meshColor();
-      g.draw(miniSpecBg);
-      g.draw(miniSpec);
-
-      gui.draw(g);
     }
 
     void onSound(AudioIOData& io) override {
@@ -6109,146 +5700,61 @@ ALLOLIB_WEB_MAIN(CombSwept)
         while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
         return;
       }
-      const float sr = io.framesPerSecond();
-      sampleRateHz.store(sr, std::memory_order_relaxed);
-
-      // Update envelope segment lengths from params each block.
-      ampEnv.lengths()[0] = atk_ms.get() / 1000.f;
-      ampEnv.lengths()[1] = dec_ms.get() / 1000.f;
-      ampEnv.lengths()[2] = rel_ms.get() / 1000.f;
-
-      if (envTrigPending.exchange(0, std::memory_order_acquire)) {
-        ampEnv.reset();
-      }
-
-      const float amp = master.get();
-      const float decay = tailDecay.get();
-      float amps[N_PARTIALS];
-      float norm = 0.0f;
-      for (int i = 0; i < N_PARTIALS; ++i) {
-        amps[i] = partialAmps[i].load(std::memory_order_relaxed)
-                * std::pow(1.0f - 0.4f * decay, float(i))
-                * bandlimitGain(i + 1);
-        norm += amps[i];
-      }
-      if (norm < 1e-4f) norm = 1.0f;
-      const float invNorm = amp / norm;
-
-      while (io()) {
-        float s = 0.0f;
-        for (int i = 0; i < N_PARTIALS; ++i) s += amps[i] * oscs[i]();
-        s *= invNorm * ampEnv();
-        if (s >  1.0f) s =  1.0f;
-        if (s < -1.0f) s = -1.0f;
-        io.out(0) = s;
-        io.out(1) = s;
-      }
+      synthManager.render(io);
     }
 
-    // --- mini-spec paint surface ---------------------------------------
-    // Mouse coords from al::Mouse are in pixels (top-left origin); convert
-    // to the [-1.6, 1.6]-ish world rect by treating the mouse as
-    // normalised to viewport then mapping linearly. We use the same
-    // x-range (-1.6..1.6) and y-range (-1..1) the GUI lives in.
-    bool mouseToBar(const Mouse& m, int& barOut, float& ampOut) {
-      const float px = float(m.x()) / float(std::max(1, width()));
-      const float py = float(m.y()) / float(std::max(1, height()));
-      // World rect — matches the world units used elsewhere in the app.
-      const float wx = -1.6f + px * 3.2f;
-      const float wy =  1.0f - py * 2.0f;
-      if (wx < SPEC_X0 || wx > SPEC_X1) return false;
-      if (wy < SPEC_Y0 || wy > SPEC_Y1) return false;
-      const float u = (wx - SPEC_X0) / (SPEC_X1 - SPEC_X0);
-      int bar = int(u * N_PARTIALS);
-      if (bar < 0) bar = 0;
-      if (bar >= N_PARTIALS) bar = N_PARTIALS - 1;
-      float a = (wy - SPEC_Y0) / (SPEC_Y1 - SPEC_Y0);
-      if (a < 0.f) a = 0.f;
-      if (a > 1.f) a = 1.f;
-      barOut = bar;
-      ampOut = a;
+    void onDraw(Graphics& g) override {
+      g.clear(0.04f, 0.05f, 0.08f);
+      g.meshColor();
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
       return true;
     }
 
-    void paintBar(int bar, float a) {
-      partialAmps[bar].store(a);
-      // Mirror to slider parameters so the GUI sliders move in sync.
-      Parameter* live[8] = {&a1,&a2,&a3,&a4,&a5,&a6,&a7,&a8};
-      if (bar < 8) live[bar]->set(a);
-    }
-
-    bool onMouseDown(const Mouse& m) override {
-      int bar; float a;
-      if (mouseToBar(m, bar, a)) {
-        painting = true;
-        paintBar(bar, a);
-      }
-      return false;
-    }
-    bool onMouseDrag(const Mouse& m) override {
-      if (!painting) return false;
-      int bar; float a;
-      if (mouseToBar(m, bar, a)) paintBar(bar, a);
-      return false;
-    }
-    bool onMouseUp(const Mouse&) override {
-      painting = false;
-      return false;
-    }
-
-    // Musical keyboard sets the fundamental f0; harmonics scale automatically.
-    // Each keypress retriggers the ADSR envelope to remove pitch-change clicks.
-    static int noteFromKey(int key) {
-      static const int kbd[] = {
-        'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
-        'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
-        'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
-      };
-      for (int i = 0; i < 21; ++i) {
-        const int K = kbd[i*2];
-        if (key == K || key == K + 32) return kbd[i*2 + 1];
-      }
-      return -1;
-    }
-    bool onKeyDown(const Keyboard& k) override {
-      const int n = noteFromKey(k.key());
-      if (n >= 0) {
-        f0.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
-        envTrigPending.store(1, std::memory_order_release);
-      }
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
       return true;
     }
   };
 
-  ALLOLIB_WEB_MAIN(AdditiveGeometry)
+  ALLOLIB_WEB_MAIN(AdditiveGeoApp)
   `,
   },
   {
     id: 'mat-additive-sculptor',
-    title: 'Additive Partial Sculptor',
+    title: 'Modal Sculptor',
     description:
-      'Paint a 64-partial harmonic spectrum and hear it instantly. The top panel is a click-and-drag bar chart where each bar is the amplitude of partial n (frequency = f0 * n); the bottom panel is a live time-domain trace showing one period of the resulting waveform, computed by summing all 64 sines across [0, 2pi]. Sculpt sawtooth, square, and triangle approximations from the preset triggers, watch a dim reference waveform and a "% match" badge tell you how close your spectrum is to the ideal Fourier coefficients, and notice partials past 0.9*Nyquist greyed-out with a red "!" warning so you can see where aliasing kicks in. Color ticks at bars 8/16/32/64 give a sense of how high up the spectrum you are painting.',
+      'Polyphonic modal-synthesis instrument: each note excites up to 16 stretched-harmonic resonant modes (ratios 1, 2.76, 5.40, 8.93, ...) implemented as biquad bandpass filters fed a noise burst. The result is a struck-metal/bell timbre. Per voice: freq, modes (1..16), damping, attack, release. Visualization: per-voice concentric ringing arcs whose radii match mode ratios and brightness tracks instantaneous mode amplitude. Keys ZXCVBNM, ASDFGHJ, QWERTYU as on the additive instrument.',
     category: 'mat-synthesis',
-    subcategory: 'additive',
+    subcategory: 'modal',
     code: `/**
-   * Additive Partial Sculptor — MAT200B Phase 2 (additive synthesis)
+   * Modal Sculptor — MAT200B Phase 3
    *
-   * 64 harmonic partials of a fundamental, painted by mouse drag.
-   * Top panel: bar chart (the spectrum you sculpt) with bandlimit
-   *            warnings, colored frequency-ladder ticks, and a
-   *            "% match" badge that scores against the ideal
-   *            Fourier coefficients of the most recent preset.
-   * Bottom panel: time-domain trace, one period summed from all 64
-   *               sines, with a dim reference of the IDEAL preset
-   *               target overlaid underneath the live trace.
+   * Polyphonic modal-synthesis instrument. Each voice rings up to 16
+   * resonant biquad bandpass filters at stretched-harmonic ratios
+   * (1, 2.76, 5.40, 8.93, ...) excited by a short noise burst — the
+   * canonical "metallic struck object" sound. Energy-based free():
+   * voice releases when peak mode amplitude < 1e-4 OR after 30 s.
+   *
+   * Visual: per-voice concentric arcs at mode-ratio radii; alpha tracks
+   * each mode's instantaneous amplitude.
    */
 
   #include "al_playground_compat.hpp"
-  #include "Gamma/Oscillator.h"
 
   #include <array>
-  #include <atomic>
   #include <cmath>
+  #include <cstdlib>
 
   #ifndef M_PI
   #define M_PI 3.14159265358979323846
@@ -6256,484 +5762,188 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  static const int NUM_PARTIALS = 64;
-  static const int WAVE_SAMPLES = 384;
+  struct Biquad {
+    float b0 = 0.f, b1 = 0.f, b2 = 0.f, a1 = 0.f, a2 = 0.f;
+    float z1 = 0.f, z2 = 0.f;
+    float lastOut = 0.f;
 
-  class AdditiveSculptor : public App {
-  public:
-  ParameterBool playing {"playing", "", true};
-  Parameter pitch_hz   {"pitch_hz",   "", 110.0f, 40.0f, 1200.0f};
-  Parameter master_amp {"master_amp", "", 0.25f,   0.0f,    1.0f};
-  Trigger reset            {"reset",            ""};
-  Trigger preset_saw       {"preset_saw",       ""};
-  Trigger preset_square    {"preset_square",    ""};
-  Trigger preset_triangle  {"preset_triangle",  ""};
-
-  ControlGUI gui;
-
-  std::array<gam::Sine<>, NUM_PARTIALS> osc;
-  std::array<std::atomic<float>, NUM_PARTIALS> partialAmps;
-  std::array<float, NUM_PARTIALS> ampsSnapshot{};
-  std::array<float, WAVE_SAMPLES> waveBuf{};
-  std::array<float, WAVE_SAMPLES> targetWave{};
-
-  // Sample rate published from audio thread (defaults to 48 k until
-  // the first onSound callback updates it).
-  std::atomic<float> sampleRateHz{48000.0f};
-
-  enum LastPreset { PRESET_NONE, PRESET_SAW, PRESET_SQUARE, PRESET_TRIANGLE };
-  std::atomic<int> lastPreset{PRESET_NONE};
-
-  bool dragging = false;
-
-  // Bar panel rect in world coords.
-  static constexpr float BAR_X0 = -1.30f, BAR_X1 = 1.30f;
-  static constexpr float BAR_Y0 =  0.10f, BAR_Y1 = 0.85f;
-  static constexpr float WAV_X0 = -1.30f, WAV_X1 = 1.30f;
-  static constexpr float WAV_Y0 = -0.85f, WAV_Y1 = -0.10f;
-
-  // Closed-form ideal Fourier coefficient for partial n (1-indexed).
-  // Saw       a_n = -2 / (pi * n)            (all n)
-  // Square    a_n =  4 / (pi * n)            (odd n only)
-  // Triangle  a_n =  8 / (pi^2 * n^2) * (-1)^((n-1)/2)   (odd n only)
-  // We compare absolute amplitudes (the bars are unsigned), so we use
-  // |a_n| for the "% match" score and the signed value (with the same
-  // normalisation used by the audio loop) for the target waveform.
-  static float idealCoefSigned(int preset, int n /*1-indexed*/) {
-    const float pi = static_cast<float>(M_PI);
-    if (preset == PRESET_SAW) return -2.0f / (pi * float(n));
-    if (preset == PRESET_SQUARE) {
-      if (n % 2 == 0) return 0.0f;
-      return 4.0f / (pi * float(n));
+    void setBandpass(float fc, float Q, float sr) {
+      const float w0 = 2.0f * static_cast<float>(M_PI) * fc / sr;
+      const float cw = std::cos(w0);
+      const float sw = std::sin(w0);
+      const float alpha = sw / (2.0f * Q);
+      const float a0 = 1.0f + alpha;
+      b0 = alpha / a0;
+      b1 = 0.0f;
+      b2 = -alpha / a0;
+      a1 = -2.0f * cw / a0;
+      a2 = (1.0f - alpha) / a0;
     }
-    if (preset == PRESET_TRIANGLE) {
-      if (n % 2 == 0) return 0.0f;
-      const int k = (n - 1) / 2;
-      const float sign = (k % 2 == 0) ? 1.0f : -1.0f;
-      return sign * 8.0f / (pi * pi * float(n) * float(n));
+    float process(float x) {
+      const float y = b0 * x + z1;
+      z1 = b1 * x - a1 * y + z2;
+      z2 = b2 * x - a2 * y;
+      lastOut = y;
+      return y;
     }
-    return 0.0f;
-  }
-  static float idealCoefMag(int preset, int n) {
-    return std::fabs(idealCoefSigned(preset, n));
-  }
-
-  void onInit() override {
-    for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
-
-    reset.registerChangeCallback([this](float) {
-      for (int i = 0; i < NUM_PARTIALS; ++i) partialAmps[i].store(0.0f);
-      lastPreset.store(PRESET_NONE);
-    });
-    preset_saw.registerChangeCallback([this](float) {
-      for (int i = 0; i < NUM_PARTIALS; ++i)
-        partialAmps[i].store(1.0f / float(i + 1));
-      lastPreset.store(PRESET_SAW);
-    });
-    preset_square.registerChangeCallback([this](float) {
-      for (int i = 0; i < NUM_PARTIALS; ++i) {
-        const int n = i + 1;
-        partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n) : 0.0f);
-      }
-      lastPreset.store(PRESET_SQUARE);
-    });
-    preset_triangle.registerChangeCallback([this](float) {
-      for (int i = 0; i < NUM_PARTIALS; ++i) {
-        const int n = i + 1;
-        partialAmps[i].store((n % 2 == 1) ? 1.0f / float(n * n) : 0.0f);
-      }
-      lastPreset.store(PRESET_TRIANGLE);
-    });
-
-    gui << playing << pitch_hz << master_amp << reset
-        << preset_saw << preset_square << preset_triangle;
-  }
-
-  void onCreate() override {
-    gui.init();
-    nav().pos(0, 0, 4.0f);
-    for (int i = 0; i < NUM_PARTIALS; ++i) osc[i].freq(pitch_hz.get() * float(i + 1));
-  }
-
-  void onSound(AudioIOData& io) override {
-    sampleRateHz.store(static_cast<float>(io.framesPerSecond()),
-                       std::memory_order_relaxed);
-    if (!playing.get()) {
-      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-      return;
-    }
-    const float f0  = pitch_hz.get();
-    const float amp = master_amp.get();
-    for (int i = 0; i < NUM_PARTIALS; ++i) osc[i].freq(f0 * float(i + 1));
-
-    float a[NUM_PARTIALS];
-    float norm = 0.0f;
-    for (int i = 0; i < NUM_PARTIALS; ++i) {
-      a[i] = partialAmps[i].load(std::memory_order_relaxed);
-      norm += a[i];
-    }
-    const float invNorm = (norm > 1.0f) ? (1.0f / norm) : 1.0f;
-
-    while (io()) {
-      float s = 0.0f;
-      for (int i = 0; i < NUM_PARTIALS; ++i) s += a[i] * osc[i]();
-      s *= amp * invNorm;
-      io.out(0) = s;
-      io.out(1) = s;
-    }
-  }
-
-  // Mean-squared closeness over partials 1..NUM_PARTIALS, normalised so
-  // that "you matched the preset perfectly" ~ 1.0 and "everything else"
-  // approaches 0. We compare each bar amplitude to |ideal_n| AFTER
-  // normalising the ideal vector to its own max so the units match the
-  // [0,1] painted bars.
-  float computeMatch(int preset) const {
-    if (preset == PRESET_NONE) return 0.0f;
-    float ideal[NUM_PARTIALS];
-    float maxIdeal = 0.0f;
-    for (int i = 0; i < NUM_PARTIALS; ++i) {
-      ideal[i] = idealCoefMag(preset, i + 1);
-      if (ideal[i] > maxIdeal) maxIdeal = ideal[i];
-    }
-    if (maxIdeal <= 0.0f) return 0.0f;
-    for (int i = 0; i < NUM_PARTIALS; ++i) ideal[i] /= maxIdeal;
-
-    float mse = 0.0f;
-    for (int i = 0; i < NUM_PARTIALS; ++i) {
-      float a = ampsSnapshot[i];
-      if (a < 0.f) a = 0.f; else if (a > 1.f) a = 1.f;
-      const float d = a - ideal[i];
-      mse += d * d;
-    }
-    mse /= float(NUM_PARTIALS);
-    // Convert MSE to a 0..1 score; 0 MSE -> 1.0, MSE >= 0.25 -> 0.0.
-    float score = 1.0f - (mse / 0.25f);
-    if (score < 0.f) score = 0.f;
-    if (score > 1.f) score = 1.f;
-    return score;
-  }
-
-  void onAnimate(double /*dt*/) override {
-    for (int i = 0; i < NUM_PARTIALS; ++i)
-      ampsSnapshot[i] = partialAmps[i].load(std::memory_order_relaxed);
-
-    float norm = 0.0f;
-    for (int i = 0; i < NUM_PARTIALS; ++i) norm += ampsSnapshot[i];
-    const float invNorm = (norm > 1.0f) ? (1.0f / norm) : 1.0f;
-
-    for (int s = 0; s < WAVE_SAMPLES; ++s) {
-      const float t = float(s) / float(WAVE_SAMPLES);
-      const float phase = 2.0f * float(M_PI) * t;
-      float v = 0.0f;
-      for (int i = 0; i < NUM_PARTIALS; ++i)
-        v += ampsSnapshot[i] * std::sin(phase * float(i + 1));
-      waveBuf[s] = v * invNorm;
-    }
-
-    // Build the IDEAL target waveform for the most recent preset using
-    // the SIGNED Fourier coefficients (so saw really looks like a saw,
-    // not a wobble). Normalised the same way as the live trace.
-    const int preset = lastPreset.load(std::memory_order_relaxed);
-    if (preset == PRESET_NONE) {
-      for (int s = 0; s < WAVE_SAMPLES; ++s) targetWave[s] = 0.0f;
-    } else {
-      float coef[NUM_PARTIALS];
-      float coefNorm = 0.0f;
-      for (int i = 0; i < NUM_PARTIALS; ++i) {
-        coef[i] = idealCoefSigned(preset, i + 1);
-        coefNorm += std::fabs(coef[i]);
-      }
-      const float invCoefNorm = (coefNorm > 1.0f) ? (1.0f / coefNorm) : 1.0f;
-      for (int s = 0; s < WAVE_SAMPLES; ++s) {
-        const float t = float(s) / float(WAVE_SAMPLES);
-        const float phase = 2.0f * float(M_PI) * t;
-        float v = 0.0f;
-        for (int i = 0; i < NUM_PARTIALS; ++i)
-          v += coef[i] * std::sin(phase * float(i + 1));
-        targetWave[s] = v * invCoefNorm;
-      }
-    }
-    (void)invNorm;
-  }
-
-  // Convert mouse pixel coords to the same world space we draw into.
-  void mouseToWorld(const Mouse& m, float& wx, float& wy) const {
-    const float w = (float)width();
-    const float h = (float)height();
-    const float u = (w > 0.f) ? (float)m.x() / w : 0.f;
-    const float v = (h > 0.f) ? (float)m.y() / h : 0.f;
-    wx = -1.5f + u * 3.0f;
-    wy =  0.9f - v * 1.8f;
-  }
-
-  bool inBarPanel(float wx, float wy) const {
-    return wx >= BAR_X0 && wx <= BAR_X1 && wy >= BAR_Y0 && wy <= BAR_Y1;
-  }
-
-  void paintAt(float wx, float wy) {
-    float u = (wx - BAR_X0) / (BAR_X1 - BAR_X0);
-    if (u < 0.f) u = 0.f; else if (u > 0.9999f) u = 0.9999f;
-    int idx = int(u * float(NUM_PARTIALS));
-    if (idx < 0) idx = 0; else if (idx >= NUM_PARTIALS) idx = NUM_PARTIALS - 1;
-
-    float v = (wy - BAR_Y0) / (BAR_Y1 - BAR_Y0);
-    if (v < 0.f) v = 0.f; else if (v > 1.f) v = 1.f;
-    partialAmps[idx].store(v);
-    // Manual painting invalidates the preset-matching reference.
-    lastPreset.store(PRESET_NONE);
-  }
-
-  bool onMouseDown(const Mouse& m) override {
-    float wx, wy;
-    mouseToWorld(m, wx, wy);
-    if (inBarPanel(wx, wy)) {
-      dragging = true;
-      paintAt(wx, wy);
-    }
-    return false;
-  }
-
-  bool onMouseDrag(const Mouse& m) override {
-    if (!dragging) return false;
-    float wx, wy;
-    mouseToWorld(m, wx, wy);
-    if (wx < BAR_X0) wx = BAR_X0;
-    if (wx > BAR_X1) wx = BAR_X1;
-    if (wy < BAR_Y0) wy = BAR_Y0;
-    if (wy > BAR_Y1) wy = BAR_Y1;
-    paintAt(wx, wy);
-    return false;
-  }
-
-  bool onMouseUp(const Mouse&) override {
-    dragging = false;
-    return false;
-  }
-
-  static void emitRect(Mesh& m, float x0, float y0, float x1, float y1,
-                       float r, float g, float b) {
-    m.vertex(x0, y0, 0.f); m.color(r, g, b);
-    m.vertex(x1, y0, 0.f); m.color(r, g, b);
-    m.vertex(x0, y1, 0.f); m.color(r, g, b);
-    m.vertex(x1, y0, 0.f); m.color(r, g, b);
-    m.vertex(x1, y1, 0.f); m.color(r, g, b);
-    m.vertex(x0, y1, 0.f); m.color(r, g, b);
-  }
-
-  // Triangle (3-vertex fan) — used for the red "!" alias warning marker.
-  static void emitTri(Mesh& m, float x0, float y0, float x1, float y1,
-                      float x2, float y2, float r, float g, float b) {
-    m.vertex(x0, y0, 0.f); m.color(r, g, b);
-    m.vertex(x1, y1, 0.f); m.color(r, g, b);
-    m.vertex(x2, y2, 0.f); m.color(r, g, b);
-  }
-
-  static void partialColor(int i, float& r, float& g, float& b) {
-    const float t = float(i) / float(NUM_PARTIALS - 1);
-    if (t < 0.5f) {
-      const float u = t * 2.0f;
-      r = 0.10f * (1 - u) + 0.20f * u;
-      g = 0.40f * (1 - u) + 0.90f * u;
-      b = 0.90f * (1 - u) + 0.30f * u;
-    } else {
-      const float u = (t - 0.5f) * 2.0f;
-      r = 0.20f * (1 - u) + 1.00f * u;
-      g = 0.90f * (1 - u) + 0.30f * u;
-      b = 0.30f * (1 - u) + 0.10f * u;
-    }
-  }
-
-  void onDraw(Graphics& g) override {
-    g.clear(0.06f, 0.07f, 0.09f);
-    g.meshColor();
-
-    const float f0       = pitch_hz.get();
-    const float sr       = sampleRateHz.load(std::memory_order_relaxed);
-    const float nyquist  = 0.5f * sr;
-    const float aliasCap = 0.9f * nyquist;
-    const int   preset   = lastPreset.load(std::memory_order_relaxed);
-
-    Mesh grid; grid.primitive(Mesh::LINES);
-    auto hline = [&](float y, float r, float gC, float b) {
-      grid.vertex(BAR_X0, y, 0); grid.color(r, gC, b);
-      grid.vertex(BAR_X1, y, 0); grid.color(r, gC, b);
-    };
-    hline(BAR_Y1, 0.18f, 0.20f, 0.24f);
-    hline(BAR_Y0 + 0.5f * (BAR_Y1 - BAR_Y0), 0.18f, 0.20f, 0.24f);
-    hline(BAR_Y0, 0.18f, 0.20f, 0.24f);
-    for (int i = 0; i <= NUM_PARTIALS; i += 4) {
-      const float u = float(i) / float(NUM_PARTIALS);
-      const float x = BAR_X0 + u * (BAR_X1 - BAR_X0);
-      grid.vertex(x, BAR_Y0, 0); grid.color(0.18f, 0.20f, 0.24f);
-      grid.vertex(x, BAR_Y1, 0); grid.color(0.18f, 0.20f, 0.24f);
-    }
-    g.draw(grid);
-
-    Mesh bars;    bars.primitive(Mesh::TRIANGLES);
-    Mesh markers; markers.primitive(Mesh::TRIANGLES);
-    const float barW = (BAR_X1 - BAR_X0) / float(NUM_PARTIALS);
-    for (int i = 0; i < NUM_PARTIALS; ++i) {
-      float a = ampsSnapshot[i];
-      if (a < 0.f) a = 0.f; else if (a > 1.f) a = 1.f;
-      const float x0 = BAR_X0 + float(i) * barW + barW * 0.08f;
-      const float x1 = BAR_X0 + float(i + 1) * barW - barW * 0.08f;
-      const float y0 = BAR_Y0;
-      const float y1 = BAR_Y0 + a * (BAR_Y1 - BAR_Y0);
-
-      const float partialFreq = f0 * float(i + 1);
-      const bool aliasing = (partialFreq > aliasCap);
-
-      float cr, cg, cb;
-      partialColor(i, cr, cg, cb);
-      if (aliasing) {
-        // Dim/grey the bar so it visually retreats.
-        cr = cr * 0.25f + 0.10f;
-        cg = cg * 0.25f + 0.10f;
-        cb = cb * 0.25f + 0.10f;
-      }
-      emitRect(bars, x0, y0, x1, y1, cr, cg, cb);
-
-      if (aliasing) {
-        // Tiny red "!" — a triangle pointing down above the bar tip.
-        const float cx = 0.5f * (x0 + x1);
-        const float my = (y1 < BAR_Y1 - 0.04f) ? (y1 + 0.025f) : (BAR_Y1 - 0.02f);
-        const float halfW = std::min(barW * 0.45f, 0.018f);
-        emitTri(markers,
-                cx - halfW, my + 0.030f,
-                cx + halfW, my + 0.030f,
-                cx,         my,
-                0.95f, 0.20f, 0.20f);
-      }
-    }
-    g.draw(bars);
-    g.draw(markers);
-
-    // Frequency-ladder ticks at bars 8 / 16 / 32 / 64 — colored verticals
-    // so the eye sees how high up the spectrum the painting is reaching.
-    Mesh ticks; ticks.primitive(Mesh::LINES);
-    auto tickAt = [&](int barIndex /*1-indexed*/, float r, float gC, float b,
-                      float lenScale) {
-      if (barIndex < 1 || barIndex > NUM_PARTIALS) return;
-      const float u = float(barIndex - 1 + 0.5f) / float(NUM_PARTIALS);
-      const float x = BAR_X0 + u * (BAR_X1 - BAR_X0);
-      const float y0 = BAR_Y0 - 0.005f;
-      const float y1 = BAR_Y0 - 0.005f - 0.05f * lenScale;
-      ticks.vertex(x, y0, 0); ticks.color(r, gC, b);
-      ticks.vertex(x, y1, 0); ticks.color(r, gC, b);
-    };
-    tickAt(8,  0.95f, 0.85f, 0.30f, 1.0f);  // yellow,  short
-    tickAt(16, 0.95f, 0.55f, 0.20f, 1.5f);  // orange,  medium
-    tickAt(32, 0.95f, 0.25f, 0.20f, 2.0f);  // red,     long
-    tickAt(64, 0.30f, 0.95f, 0.55f, 2.5f);  // green,   longest
-    g.draw(ticks);
-
-    // Wave panel.
-    const float waveMidY = WAV_Y0 + 0.5f * (WAV_Y1 - WAV_Y0);
-    Mesh wgrid; wgrid.primitive(Mesh::LINES);
-    auto whline = [&](float y) {
-      wgrid.vertex(WAV_X0, y, 0); wgrid.color(0.18f, 0.20f, 0.24f);
-      wgrid.vertex(WAV_X1, y, 0); wgrid.color(0.18f, 0.20f, 0.24f);
-    };
-    whline(WAV_Y0); whline(WAV_Y1); whline(waveMidY);
-    g.draw(wgrid);
-
-    // Dim white reference of the IDEAL preset target (drawn first so the
-    // bright yellow live trace overlays it).
-    if (preset != PRESET_NONE) {
-      Mesh tgt; tgt.primitive(Mesh::LINE_STRIP);
-      for (int s = 0; s < WAVE_SAMPLES; ++s) {
-        const float u = float(s) / float(WAVE_SAMPLES - 1);
-        const float x = WAV_X0 + u * (WAV_X1 - WAV_X0);
-        float v = targetWave[s];
-        if (v < -1.f) v = -1.f; else if (v > 1.f) v = 1.f;
-        const float y = waveMidY + 0.5f * v * (WAV_Y1 - WAV_Y0);
-        tgt.vertex(x, y, 0.f);
-        tgt.color(0.55f, 0.55f, 0.55f);
-      }
-      g.draw(tgt);
-    }
-
-    Mesh wave; wave.primitive(Mesh::LINE_STRIP);
-    for (int s = 0; s < WAVE_SAMPLES; ++s) {
-      const float u = float(s) / float(WAVE_SAMPLES - 1);
-      const float x = WAV_X0 + u * (WAV_X1 - WAV_X0);
-      float v = waveBuf[s];
-      if (v < -1.f) v = -1.f; else if (v > 1.f) v = 1.f;
-      const float y = waveMidY + 0.5f * v * (WAV_Y1 - WAV_Y0);
-      wave.vertex(x, y, 0.f);
-      wave.color(0.95f, 0.85f, 0.35f);
-    }
-    g.draw(wave);
-
-    Mesh borders; borders.primitive(Mesh::LINES);
-    auto rectOutline = [&](float x0, float y0, float x1, float y1,
-                           float r, float gC, float b) {
-      borders.vertex(x0, y0, 0); borders.color(r, gC, b);
-      borders.vertex(x1, y0, 0); borders.color(r, gC, b);
-      borders.vertex(x1, y0, 0); borders.color(r, gC, b);
-      borders.vertex(x1, y1, 0); borders.color(r, gC, b);
-      borders.vertex(x1, y1, 0); borders.color(r, gC, b);
-      borders.vertex(x0, y1, 0); borders.color(r, gC, b);
-      borders.vertex(x0, y1, 0); borders.color(r, gC, b);
-      borders.vertex(x0, y0, 0); borders.color(r, gC, b);
-    };
-    rectOutline(BAR_X0, BAR_Y0, BAR_X1, BAR_Y1, 0.30f, 0.55f, 0.80f);
-    rectOutline(WAV_X0, WAV_Y0, WAV_X1, WAV_Y1, 0.85f, 0.55f, 0.25f);
-    g.draw(borders);
-
-    // "% match" badge: a small horizontal progress bar in the top-right
-    // showing how close the current spectrum is to the active preset.
-    if (preset != PRESET_NONE) {
-      const float score = computeMatch(preset);
-      Mesh badge; badge.primitive(Mesh::TRIANGLES);
-      const float bx0 = 0.85f, bx1 = 1.30f;
-      const float by0 = 0.90f, by1 = 0.96f;
-      // Background track.
-      emitRect(badge, bx0, by0, bx1, by1, 0.15f, 0.16f, 0.20f);
-      // Filled portion.
-      const float fillX = bx0 + score * (bx1 - bx0);
-      // Color goes red -> yellow -> green with score.
-      float rr = 0.95f - 0.65f * score;
-      float gg = 0.30f + 0.60f * score;
-      float bb = 0.25f + 0.10f * score;
-      emitRect(badge, bx0, by0 + 0.005f, fillX, by1 - 0.005f, rr, gg, bb);
-      g.draw(badge);
-
-      // Notch tick marks at 25 / 50 / 75 / 100 % — gives a sense of scale.
-      Mesh notches; notches.primitive(Mesh::LINES);
-      for (int q = 1; q <= 4; ++q) {
-        const float fx = bx0 + 0.25f * float(q) * (bx1 - bx0);
-        notches.vertex(fx, by0 - 0.005f, 0); notches.color(0.7f, 0.7f, 0.75f);
-        notches.vertex(fx, by1 + 0.005f, 0); notches.color(0.7f, 0.7f, 0.75f);
-      }
-      g.draw(notches);
-    }
-
-    gui.draw(g);
-  }
-
-  // Musical keyboard: each key sets the fundamental.
-  static int noteFromKey(int key) {
-    static const int kbd[] = {
-      'Z',48,'X',50,'C',52,'V',53,'B',55,'N',57,'M',59,
-      'A',60,'S',62,'D',64,'F',65,'G',67,'H',69,'J',71,
-      'Q',72,'W',74,'E',76,'R',77,'T',79,'Y',81,'U',83
-    };
-    for (int i = 0; i < 21; ++i) {
-      const int K = kbd[i*2];
-      if (key == K || key == K + 32) return kbd[i*2 + 1];
-    }
-    return -1;
-  }
-  bool onKeyDown(const Keyboard& k) override {
-    const int n = noteFromKey(k.key());
-    if (n >= 0) pitch_hz.set(440.0f * std::pow(2.0f, (n - 69) / 12.0f));
-    return true;
-  }
+    void reset() { z1 = z2 = lastOut = 0.f; }
   };
 
-  ALLOLIB_WEB_MAIN(AdditiveSculptor)
+  class SculptorVoice : public SynthVoice {
+  public:
+    static constexpr int MAX_MODES = 16;
+    std::array<Biquad, MAX_MODES> filters;
+
+    // Stretched-harmonic ratios (struck-bar / bell-like).
+    static constexpr float RATIOS[16] = {
+      1.000f, 2.756f, 5.404f, 8.933f, 13.345f, 18.638f, 24.814f, 31.871f,
+      39.811f, 48.633f, 58.336f, 68.922f, 80.390f, 92.741f, 105.974f, 120.089f
+    };
+
+    float burstSamples = 0.f;
+    float runtimeSamples = 0.f;
+    float sampleRate = 48000.f;
+
+    void init() override {
+      createInternalTriggerParameter("freq",    220.0f, 30.0f, 2000.0f);
+      createInternalTriggerParameter("modes",     8.0f,  1.0f,   16.0f);
+      createInternalTriggerParameter("damping",   0.30f, 0.01f,   2.0f);
+      createInternalTriggerParameter("attack",    0.001f,0.0005f, 0.1f);
+      createInternalTriggerParameter("release",   1.50f, 0.05f,  10.0f);
+      createInternalTriggerParameter("amp",       0.25f, 0.0f,    1.0f);
+    }
+
+    void onTriggerOn() override {
+      const float f = getInternalParameterValue("freq");
+      const float damping = getInternalParameterValue("damping");
+      for (int k = 0; k < MAX_MODES; ++k) {
+        const float fk = f * RATIOS[k];
+        const float Q = std::max(5.0f, 200.0f / damping / (1.0f + 0.2f * k));
+        if (fk < sampleRate * 0.45f) {
+          filters[k].setBandpass(fk, Q, sampleRate);
+        }
+        filters[k].reset();
+      }
+      burstSamples = sampleRate * getInternalParameterValue("attack");
+      runtimeSamples = 0.f;
+    }
+
+    void onTriggerOff() override {
+      burstSamples = 0.f;
+    }
+
+    void onProcess(AudioIOData& io) override {
+      sampleRate = io.framesPerSecond();
+      const int N = std::max(1, std::min(MAX_MODES,
+                    static_cast<int>(getInternalParameterValue("modes"))));
+      const float amp = getInternalParameterValue("amp");
+      const float maxRuntime = sampleRate * 30.0f;
+
+      while (io()) {
+        const float exc = (burstSamples > 0.f)
+            ? ((static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f)
+            : 0.0f;
+        if (burstSamples > 0.f) burstSamples -= 1.0f;
+
+        float s = 0.f;
+        float peak = 0.f;
+        for (int k = 0; k < N; ++k) {
+          const float y = filters[k].process(exc);
+          s += y;
+          const float ay = std::fabs(y);
+          if (ay > peak) peak = ay;
+        }
+        const float y = s * amp * 0.4f;
+        io.out(0) += y;
+        io.out(1) += y;
+
+        runtimeSamples += 1.f;
+        if (runtimeSamples > maxRuntime ||
+            (runtimeSamples > sampleRate * 0.1f && peak < 1.0e-4f)) {
+          free();
+          break;
+        }
+      }
+    }
+
+    void onProcess(Graphics& g) override {
+      const int N = std::max(1, std::min(MAX_MODES,
+                    static_cast<int>(getInternalParameterValue("modes"))));
+      const int slot = id() % 7;
+      const float cx = -1.2f + slot * 0.4f;
+      const float cy = 0.0f;
+      Mesh m;
+      m.primitive(Mesh::LINES);
+      for (int k = 0; k < N; ++k) {
+        const float r = 0.05f + 0.04f * std::log(1.0f + RATIOS[k]);
+        if (r > 0.5f) break;
+        const float intensity = std::min(1.0f, std::fabs(filters[k].lastOut) * 50.0f);
+        const int seg = 24;
+        for (int s = 0; s < seg; ++s) {
+          const float a0 = 2.f * static_cast<float>(M_PI) * s / seg;
+          const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
+          m.vertex(cx + r * std::cos(a0), cy + r * std::sin(a0), 0.f);
+          m.vertex(cx + r * std::cos(a1), cy + r * std::sin(a1), 0.f);
+          const float c = 0.2f + 0.8f * intensity;
+          m.color(c, c * 0.7f, c * 0.4f);
+          m.color(c, c * 0.7f, c * 0.4f);
+        }
+      }
+      g.meshColor();
+      g.draw(m);
+    }
+  };
+
+  constexpr float SculptorVoice::RATIOS[16];
+
+  class SculptorApp : public App {
+  public:
+    ParameterBool playing{"playing", "", true};
+    ControlGUI gui;
+    SynthGUIManager<SculptorVoice> synthManager{"Sculptor"};
+
+    void onInit() override {
+      gui << playing;
+    }
+
+    void onCreate() override {
+      gui.init();
+      nav().pos(0, 0, 4.0f);
+    }
+
+    void onSound(AudioIOData& io) override {
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+        return;
+      }
+      synthManager.render(io);
+    }
+
+    void onDraw(Graphics& g) override {
+      g.clear(0.04f, 0.04f, 0.06f);
+      g.meshColor();
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      const int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.0f * std::pow(2.0f, (n - 69) / 12.0f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
+      return true;
+    }
+
+    bool onKeyUp(const Keyboard& k) override {
+      const int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
+  };
+
+  ALLOLIB_WEB_MAIN(SculptorApp)
   `,
   },
   {
