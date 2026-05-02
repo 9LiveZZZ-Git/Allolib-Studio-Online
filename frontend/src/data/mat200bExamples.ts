@@ -2426,32 +2426,30 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-drawable-wavetable',
-    title: 'Drawable Wavetable',
+    title: 'Drawable Wavetable (Polyphonic)',
     description:
-    'Click-and-drag inside the dashed rectangle to draw a 256-point waveform; the oscillator plays it back at the carrier pitch. Linear interp of an arbitrary hand-drawn table aliases hard — every brush stroke injects energy above Nyquist that folds back as inharmonic hash, and "randomize" is a wall of it. Toggle "bandlimit" to filter the table in the frequency domain (256-pt DFT, zero bins above min(64, Nyquist/carrier_hz), IDFT into a separate playTable) and play THAT version. Bright green = the table you drew; dim cyan overlay = the bandlimited table actually playing.',
+      "Polyphonic wavetable instrument: paint a 256-point waveform inside the dashed rectangle, then play it polyphonically. Each note triggers a SynthVoice that snapshots the App's painted table at note-on, runs an inline 256-pt DFT, zeros bins above min(64, Nyquist/freq), and IDFTs into its own private playTable — the bandlimit lesson is now a function of pitch (high notes lose more harmonics than low). When App-level bandlimit is OFF, voices read the painted table directly and high notes alias hard. clear_to_sine and randomize remain App-level patch-edit triggers. Spectrum at bottom shows the audio mix of every active voice.",
     category: 'mat-synthesis',
     subcategory: 'wavetable',
     code: `/**
-   * Drawable Wavetable — MAT200B Phase 2 (bandlimit upgrade)
+   * Drawable Wavetable (Polyphonic) — MAT200B v0.13 refactor
    *
-   * Drag inside the dashed draw zone to paint a 256-point waveform.
-   * The naive playback path (bandlimit OFF) reads 'table' directly with
-   * linear interpolation — any hand-drawn shape contains harmonics
-   * above Nyquist that alias back as inharmonic hash, especially after
-   * a 'randomize' press.
+   * Paint a 256-point waveform inside the dashed rectangle, then play it
+   * polyphonically across the keyboard:
+   *   ZXCVBNM = C3..B3   ASDFGHJ = C4..B4   QWERTYU = C5..B5
    *
-   * The bandlimit path (default ON) runs an inline 256-pt DFT of the
-   * drawn table, zeros all bins above min(64, Nyquist / carrier_hz),
-   * and runs an inline IDFT into a separate 'playTable'. The audio
-   * thread reads playTable when bandlimit is on. We rebuild on any
-   * mutation: drag, clear, randomize, smoothing change, carrier change,
-   * or toggle.
+   * Each note triggers a WavetableVoice that snapshots the App's painted
+   * table at note-on. If the App-level 'bandlimit' toggle is ON, the
+   * voice runs a 256-pt DFT, zeros bins above min(64, Nyquist/freq), and
+   * IDFTs into its own private playTable — so high notes lose more
+   * harmonics than low notes (the bandlimit budget is a function of
+   * pitch). If 'bandlimit' is OFF, voices read the App's painted table
+   * directly via a shared pointer and high notes alias hard.
    *
-   * Visual:
-   *   dashed rectangle — the draw zone (only strokes inside it write).
-   *   bright green     — the table you drew.
-   *   dim cyan         — playTable (bandlimited, only when toggle on).
-   *   bottom strip     — live magnitude spectrum from a 256-pt DFT.
+   *   bright green     — the table you drew (App-owned)
+   *   stacked traces   — each active voice's playTable, slot-stacked Y
+   *   bottom strip     — live magnitude spectrum of the audio MIX
+   *   dashed rect      — paint zone (drag inside to write)
    */
 
   #include "al_playground_compat.hpp"
@@ -2467,361 +2465,333 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  class DrawableWavetable : public App {
-  public:
-  ParameterBool  playing    {"playing",    "", true};
-  ParameterBool  bandlimit  {"bandlimit",  "", true};
-  Parameter      carrier_hz {"carrier_hz", "", 220.0f,  20.0f, 2000.0f};
-  Parameter      amp        {"amplitude",  "",  0.30f,  0.0f,  1.0f};
-  Parameter      smoothing  {"smoothing",  "",  0.20f,  0.0f,  0.95f};
-  Trigger        clearTbl   {"clear_to_sine", ""};
-  Trigger        randomize  {"randomize", ""};
-
-  ControlGUI gui;
-
   static constexpr int TBL = 256;
-  std::array<float, TBL> table{};      // what you drew
-  std::array<float, TBL> playTable{};  // bandlimited copy
-  double phase = 0.0;
 
-  // Cached sample rate so onAnimate can compute the DFT cutoff.
-  std::atomic<float> sampleRate{48000.0f};
+  static std::array<float, TBL>* gPaintedTable = nullptr;
+  static std::atomic<bool>* gBandlimit = nullptr;
 
-  static constexpr int N = 256;
-  std::array<float, N> blockBuf{};
-  std::atomic<int> blockW{0};
+  class WavetableVoice : public SynthVoice {
+  public:
+    std::array<float, TBL> playTable{};
+    double phase = 0.0;
+    bool   useApp = false;
+    gam::ADSR<> env;
 
-  std::atomic<float> playheadIdx{0.0f};
+    Mesh trace;
 
-  std::atomic<int>   pendingIdx{-1};
-  std::atomic<float> pendingVal{0.f};
+    void init() override {
+      createInternalTriggerParameter("freq",    220.f, 30.f, 4000.f);
+      createInternalTriggerParameter("amp",     0.20f, 0.f,  1.f);
+      createInternalTriggerParameter("attack",  0.01f, 0.001f, 1.f);
+      createInternalTriggerParameter("release", 0.30f, 0.01f, 4.f);
 
-  std::atomic<bool> tableDirty{true};
+      env.attack(0.01f);
+      env.decay(0.05f);
+      env.sustain(0.85f);
+      env.release(0.30f);
 
-  Mesh tableMesh, playMesh, spectrum, gridMesh, drawZone, playMarker;
-
-  // Inline DFT/IDFT — N=256, called only on table-change events.
-  static void bandlimitTable(const std::array<float, TBL>& src,
-                             std::array<float, TBL>& dst,
-                             int cutoff) {
-    std::array<float, TBL> re{}, im{};
-    for (int k = 0; k < TBL; ++k) {
-      float ar = 0.f, ai = 0.f;
-      const float ang = -2.0f * static_cast<float>(M_PI) * k / TBL;
-      for (int n = 0; n < TBL; ++n) {
-        ar += src[n] * std::cos(ang * n);
-        ai += src[n] * std::sin(ang * n);
+      for (int i = 0; i < TBL; ++i) {
+        playTable[i] = std::sin(2.f * static_cast<float>(M_PI) * i / TBL);
       }
-      re[k] = ar;
-      im[k] = ai;
+      trace.primitive(Mesh::LINE_STRIP);
     }
-    // Zero bins above cutoff (and their conjugate mirror at TBL-k).
-    for (int k = 0; k < TBL; ++k) {
-      const int kSym = (k <= TBL / 2) ? k : (TBL - k);
-      if (kSym > cutoff) {
-        re[k] = 0.f;
-        im[k] = 0.f;
-      }
-    }
-    // IDFT — real part only (input is real, bins are conjugate-symmetric).
-    for (int n = 0; n < TBL; ++n) {
-      float acc = 0.f;
-      const float ang = 2.0f * static_cast<float>(M_PI) * n / TBL;
+
+    void snapshot(float freq, float fs) {
+      if (!gPaintedTable) return;
+      const auto& src = *gPaintedTable;
+      useApp = !(gBandlimit && gBandlimit->load());
+      if (useApp) return;
+
+      const float nyquist = 0.5f * fs;
+      int cutoff = static_cast<int>(nyquist / std::max(1.f, freq));
+      if (cutoff > 64) cutoff = 64;
+      if (cutoff < 1)  cutoff = 1;
+
+      std::array<float, TBL> re{}, im{};
       for (int k = 0; k < TBL; ++k) {
-        acc += re[k] * std::cos(ang * k) - im[k] * std::sin(ang * k);
-      }
-      dst[n] = acc / TBL;
-    }
-  }
-
-  void rebuildPlayTable() {
-    const float sr = sampleRate.load(std::memory_order_relaxed);
-    const float ny = sr * 0.5f;
-    const float fc = carrier_hz.get();
-    const int   maxHarm = (fc > 1.f) ? static_cast<int>(ny / fc) : 64;
-    const int   cutoff  = std::min(64, std::max(1, maxHarm));
-    bandlimitTable(table, playTable, cutoff);
-  }
-
-  void onInit() override {
-    gui << playing << bandlimit << carrier_hz << amp << smoothing
-        << clearTbl << randomize;
-
-    clearTbl.registerChangeCallback([this](float) {
-      for (int i = 0; i < TBL; ++i) {
-        table[i] = std::sin(2.0f * static_cast<float>(M_PI) * i / TBL);
-      }
-      tableDirty.store(true, std::memory_order_release);
-    });
-    randomize.registerChangeCallback([this](float) {
-      for (int i = 0; i < TBL; ++i) {
-        table[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
-      }
-      for (int pass = 0; pass < 2; ++pass) {
-        float prev = table[0];
-        for (int i = 1; i < TBL; ++i) {
-          const float y = 0.5f * (prev + table[i]);
-          prev = table[i];
-          table[i] = y;
+        float r = 0.f, im0 = 0.f;
+        for (int n = 0; n < TBL; ++n) {
+          const float a = -2.f * static_cast<float>(M_PI) * k * n / TBL;
+          r   += src[n] * std::cos(a);
+          im0 += src[n] * std::sin(a);
         }
+        re[k] = r; im[k] = im0;
       }
-      tableDirty.store(true, std::memory_order_release);
-    });
-    carrier_hz.registerChangeCallback([this](float) {
-      tableDirty.store(true, std::memory_order_release);
-    });
-    bandlimit.registerChangeCallback([this](float) {
-      tableDirty.store(true, std::memory_order_release);
-    });
-
-    for (int i = 0; i < TBL; ++i) {
-      table[i] = std::sin(2.0f * static_cast<float>(M_PI) * i / TBL);
-    }
-    playTable = table;
-  }
-
-  void onCreate() override {
-    gui.init();
-    nav().pos(0, 0, 4.0f);
-  }
-
-  void onSound(AudioIOData& io) override {
-    sampleRate.store(io.framesPerSecond(), std::memory_order_relaxed);
-    if (!playing.get()) {
-      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-      return;
-    }
-    const float sr = io.framesPerSecond();
-    const float dPh = TBL * carrier_hz.get() / sr;
-    const float a   = amp.get();
-    const bool  bl  = bandlimit.get();
-
-    while (io()) {
-      const int i0 = static_cast<int>(phase) % TBL;
-      const int i1 = (i0 + 1) % TBL;
-      const float frac = static_cast<float>(phase - std::floor(phase));
-      float s;
-      if (bl) {
-        s = (playTable[i0] + (playTable[i1] - playTable[i0]) * frac) * a;
-      } else {
-        s = (table[i0] + (table[i1] - table[i0]) * frac) * a;
-      }
-      io.out(0) = s;
-      io.out(1) = s;
-
-      phase += dPh;
-      if (phase >= TBL) phase -= TBL;
-
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockBuf[w] = s;
-      blockW.store((w + 1) % N, std::memory_order_release);
-    }
-    playheadIdx.store(static_cast<float>(phase), std::memory_order_release);
-  }
-
-  void computeSpectrum(std::array<float, N / 2>& mag) {
-    const int w = blockW.load(std::memory_order_acquire);
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
-      x[i] = blockBuf[idx] * win;
-    }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
-      }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
-    }
-  }
-
-  void onAnimate(double /*dt*/) override {
-    const int pIdx = pendingIdx.exchange(-1, std::memory_order_acquire);
-    if (pIdx >= 0 && pIdx < TBL) {
-      table[pIdx] = std::max(-1.0f, std::min(1.0f, pendingVal.load()));
-      const float s = smoothing.get();
-      if (s > 0.f) {
-        const int j0 = (pIdx - 1 + TBL) % TBL;
-        const int j2 = (pIdx + 1)        % TBL;
-        const float avg = (table[j0] + table[pIdx] + table[j2]) / 3.f;
-        table[pIdx] = table[pIdx] * (1.f - s) + avg * s;
-      }
-      tableDirty.store(true, std::memory_order_release);
-    }
-
-    if (tableDirty.exchange(false, std::memory_order_acq_rel)) {
-      if (bandlimit.get()) {
-        rebuildPlayTable();
-      } else {
-        playTable = table;
+      for (int k = cutoff + 1; k < TBL - cutoff; ++k) { re[k] = 0; im[k] = 0; }
+      for (int n = 0; n < TBL; ++n) {
+        float s = 0.f;
+        for (int k = 0; k < TBL; ++k) {
+          const float a = 2.f * static_cast<float>(M_PI) * k * n / TBL;
+          s += re[k] * std::cos(a) - im[k] * std::sin(a);
+        }
+        playTable[n] = s / TBL;
       }
     }
 
-    // Drawn table: bright green LINE_STRIP centered at y = 0.55.
-    tableMesh.reset();
-    tableMesh.primitive(Mesh::LINE_STRIP);
-    for (int i = 0; i < TBL; ++i) {
-      const float xx = -1.4f + (static_cast<float>(i) / (TBL - 1)) * 2.8f;
-      const float yy = 0.55f + table[i] * 0.40f;
-      tableMesh.vertex(xx, yy, 0.f);
-      tableMesh.color(0.6f, 0.95f, 0.4f);
+    void onTriggerOn() override {
+      env.attack(getInternalParameterValue("attack"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
+      phase = 0.0;
+      snapshot(getInternalParameterValue("freq"), 48000.f);
+    }
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      const float freq = getInternalParameterValue("freq");
+      const float amp  = getInternalParameterValue("amp");
+      const float fs   = io.framesPerSecond();
+      const double inc = static_cast<double>(freq) / static_cast<double>(fs);
+
+      while (io()) {
+        const float* src = (useApp && gPaintedTable)
+          ? gPaintedTable->data()
+          : playTable.data();
+        double idx = phase * TBL;
+        int i0 = static_cast<int>(idx) % TBL;
+        int i1 = (i0 + 1) % TBL;
+        float frac = static_cast<float>(idx - std::floor(idx));
+        float s = src[i0] * (1.f - frac) + src[i1] * frac;
+        const float e = env();
+        const float out = s * e * amp;
+        io.out(0) += out;
+        io.out(1) += out;
+        phase += inc;
+        if (phase >= 1.0) phase -= 1.0;
+      }
+      if (env.done()) free();
     }
 
-    // Bandlimited overlay (dim cyan) — only when bandlimit is on.
-    playMesh.reset();
-    if (bandlimit.get()) {
-      playMesh.primitive(Mesh::LINE_STRIP);
+    void onProcess(Graphics& g) override {
+      const int slot = id() % 7;
+      const float yOff = -0.55f + slot * 0.06f;
+      const float* src = (useApp && gPaintedTable)
+        ? gPaintedTable->data()
+        : playTable.data();
+      trace.reset();
+      trace.primitive(Mesh::LINE_STRIP);
       for (int i = 0; i < TBL; ++i) {
-        const float xx = -1.4f + (static_cast<float>(i) / (TBL - 1)) * 2.8f;
-        const float yy = 0.55f + playTable[i] * 0.40f;
-        playMesh.vertex(xx, yy, 0.f);
-        playMesh.color(0.35f, 0.75f, 0.85f);
+        const float t = static_cast<float>(i) / TBL;
+        const float x = -1.4f + 2.8f * t;
+        const float y = yOff + 0.04f * src[i];
+        trace.vertex(x, y, 0.f);
+        trace.color(0.4f + 0.6f * t, 0.9f - 0.4f * t, 0.5f);
       }
+      g.meshColor();
+      g.draw(trace);
     }
-
-    // Spectrum across the bottom: y in [-0.95, +0.05] max.
-    std::array<float, N / 2> mag{};
-    computeSpectrum(mag);
-    spectrum.reset();
-    spectrum.primitive(Mesh::LINE_STRIP);
-    for (int k = 0; k < N / 2; ++k) {
-      const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-      const float h  = std::min(1.0f, mag[k] * 7.0f);
-      const float yy = -0.90f + h;
-      spectrum.vertex(xx, yy, 0.f);
-      const float t = static_cast<float>(k) / (N / 2);
-      spectrum.color(0.4f + 0.5f * t, 0.5f, 0.95f - 0.3f * t);
-    }
-
-    gridMesh.reset();
-    gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(-1.4f, 0.55f, 0.f); gridMesh.vertex(1.4f, 0.55f, 0.f);
-    gridMesh.vertex(-1.4f,-0.90f, 0.f); gridMesh.vertex(1.4f,-0.90f, 0.f);
-    for (int k = 0; k < 4; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
-
-    // Dashed-rectangle draw zone — top of canvas (matches writeFromMouse).
-    drawZone.reset();
-    drawZone.primitive(Mesh::LINES);
-    {
-      const float top = 0.90f, bot = 0.20f;
-      const float left = -1.4f, right = 1.4f;
-      const int   hDashes = 28;
-      const float dx = (right - left) / hDashes;
-      for (int i = 0; i < hDashes; i += 2) {
-        const float x0 = left + i * dx;
-        const float x1 = left + (i + 1) * dx;
-        drawZone.vertex(x0, top, 0.f); drawZone.vertex(x1, top, 0.f);
-        drawZone.vertex(x0, bot, 0.f); drawZone.vertex(x1, bot, 0.f);
-      }
-      const int   vDashes = 12;
-      const float dy = (top - bot) / vDashes;
-      for (int j = 0; j < vDashes; j += 2) {
-        const float y0 = bot + j * dy;
-        const float y1 = bot + (j + 1) * dy;
-        drawZone.vertex(left,  y0, 0.f); drawZone.vertex(left,  y1, 0.f);
-        drawZone.vertex(right, y0, 0.f); drawZone.vertex(right, y1, 0.f);
-      }
-    }
-    for (size_t v = 0; v < drawZone.vertices().size(); ++v) {
-      drawZone.color(0.55f, 0.45f, 0.25f);
-    }
-
-    // Playhead disc tracks whatever the audio thread is reading.
-    const float p = playheadIdx.load(std::memory_order_acquire) / TBL;
-    const float px = -1.4f + p * 2.8f;
-    const int idx = static_cast<int>(p * (TBL - 1));
-    const float src = bandlimit.get() ? playTable[idx] : table[idx];
-    const float py = 0.55f + src * 0.40f;
-    playMarker.reset();
-    playMarker.primitive(Mesh::TRIANGLES);
-    {
-      const int seg = 14;
-      const float radius = 0.045f;
-      for (int s = 0; s < seg; ++s) {
-        const float a0 = 2.f * static_cast<float>(M_PI) * s       / seg;
-        const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
-        playMarker.vertex(px, py, 0.f);
-        playMarker.vertex(px + radius * std::cos(a0), py + radius * std::sin(a0), 0.f);
-        playMarker.vertex(px + radius * std::cos(a1), py + radius * std::sin(a1), 0.f);
-        playMarker.color(1.0f, 0.85f, 0.2f);
-        playMarker.color(1.0f, 0.85f, 0.2f);
-        playMarker.color(1.0f, 0.85f, 0.2f);
-      }
-    }
-  }
-
-  void onDraw(Graphics& g) override {
-    g.clear(0.04f, 0.05f, 0.07f);
-    g.meshColor();
-    g.draw(gridMesh);
-    g.draw(drawZone);
-    g.draw(playMesh);
-    g.draw(tableMesh);
-    g.draw(playMarker);
-    g.draw(spectrum);
-    gui.draw(g);
-  }
-
-  void writeFromMouse(const Mouse& m) {
-    const float w = static_cast<float>(width());
-    const float h = static_cast<float>(height());
-    if (w < 1.f || h < 1.f) return;
-    const float u  = std::max(0.0f, std::min(1.0f, m.x() / w));
-    const float vy = std::max(0.0f, std::min(1.0f, m.y() / h));
-    if (vy > 0.7f) return;
-    const int idx = std::min(TBL - 1, static_cast<int>(u * TBL));
-    const float val = 1.0f - 2.0f * (vy / 0.7f);
-    pendingIdx.store(idx, std::memory_order_release);
-    pendingVal.store(val, std::memory_order_release);
-  }
-
-  bool onMouseDown(const Mouse& m) override { writeFromMouse(m); return false; }
-  bool onMouseDrag(const Mouse& m) override { writeFromMouse(m); return false; }
-  bool onMouseUp(const Mouse&)     override { return false; }
   };
 
-  ALLOLIB_WEB_MAIN(DrawableWavetable)
+  class DrawableWavetableSynth : public App {
+  public:
+    ParameterBool playing  {"playing",   "", true};
+    ParameterBool bandlimit{"bandlimit", "", true};
+    Trigger       clearTbl {"clear_to_sine", ""};
+    Trigger       randomize{"randomize", ""};
+
+    ControlGUI gui;
+    SynthGUIManager<WavetableVoice> synthManager{"DrawableWavetable"};
+
+    std::array<float, TBL> table{};
+    std::atomic<bool> bandlimitFlag{true};
+
+    static constexpr int N = 256;
+    std::array<float, N> mixBuf{};
+    std::atomic<int> mixW{0};
+
+    bool   painting = false;
+    double lastPaintX = 0.0;
+    double lastPaintY = 0.0;
+
+    Mesh tableMesh, drawZone, voiceTraces, spectrum;
+
+    void onInit() override {
+      gui << playing << bandlimit << clearTbl << randomize;
+      bandlimit.registerChangeCallback([this](float v) {
+        bandlimitFlag.store(v > 0.5f);
+      });
+      clearTbl.registerChangeCallback([this](float) {
+        for (int i = 0; i < TBL; ++i) {
+          table[i] = std::sin(2.f * static_cast<float>(M_PI) * i / TBL);
+        }
+      });
+      randomize.registerChangeCallback([this](float) {
+        for (int i = 0; i < TBL; ++i) {
+          table[i] = -1.f + 2.f * (static_cast<float>(std::rand()) / RAND_MAX);
+        }
+      });
+      for (int i = 0; i < TBL; ++i) {
+        table[i] = std::sin(2.f * static_cast<float>(M_PI) * i / TBL);
+      }
+    }
+
+    void onCreate() override {
+      gui.init();
+      nav().pos(0, 0, 4.0f);
+      gPaintedTable = &table;
+      gBandlimit    = &bandlimitFlag;
+      bandlimitFlag.store(true);
+    }
+
+    void onSound(AudioIOData& io) override {
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+        return;
+      }
+      const int frames = io.framesPerBuffer();
+      for (int f = 0; f < frames; ++f) { io.out(0, f) = 0.f; io.out(1, f) = 0.f; }
+      synthManager.render(io);
+
+      int w = mixW.load(std::memory_order_relaxed);
+      for (int f = 0; f < frames; ++f) {
+        mixBuf[w] = 0.5f * (io.out(0, f) + io.out(1, f));
+        w = (w + 1) % N;
+      }
+      mixW.store(w, std::memory_order_release);
+    }
+
+    void onAnimate(double /*dt*/) override {
+      tableMesh.reset();
+      tableMesh.primitive(Mesh::LINE_STRIP);
+      for (int i = 0; i < TBL; ++i) {
+        const float t = static_cast<float>(i) / TBL;
+        const float x = -1.2f + 2.4f * t;
+        const float y =  0.40f + 0.45f * table[i];
+        tableMesh.vertex(x, y, 0.f);
+        tableMesh.color(0.30f, 1.f, 0.50f);
+      }
+
+      drawZone.reset();
+      drawZone.primitive(Mesh::LINES);
+      auto pushSeg = [&](float x0, float y0, float x1, float y1) {
+        drawZone.vertex(x0, y0, 0.f); drawZone.color(0.6f, 0.6f, 0.7f);
+        drawZone.vertex(x1, y1, 0.f); drawZone.color(0.6f, 0.6f, 0.7f);
+      };
+      for (int s = 0; s < 12; ++s) {
+        const float t0 = s / 12.f, t1 = (s + 0.6f) / 12.f;
+        pushSeg(-1.2f + 2.4f * t0, 0.85f, -1.2f + 2.4f * t1, 0.85f);
+        pushSeg(-1.2f + 2.4f * t0,-0.05f, -1.2f + 2.4f * t1,-0.05f);
+      }
+      pushSeg(-1.2f, -0.05f, -1.2f, 0.85f);
+      pushSeg( 1.2f, -0.05f,  1.2f, 0.85f);
+
+      spectrum.reset();
+      spectrum.primitive(Mesh::LINE_STRIP);
+      const int wEnd = mixW.load(std::memory_order_acquire);
+      std::array<float, N> snapshot{};
+      for (int i = 0; i < N; ++i) {
+        snapshot[i] = mixBuf[(wEnd + i) % N];
+      }
+      const int half = N / 2;
+      for (int k = 0; k < half; ++k) {
+        float r = 0.f, im = 0.f;
+        for (int n = 0; n < N; ++n) {
+          const float a = -2.f * static_cast<float>(M_PI) * k * n / N;
+          r  += snapshot[n] * std::cos(a);
+          im += snapshot[n] * std::sin(a);
+        }
+        const float mag = std::sqrt(r * r + im * im) / N;
+        const float t = static_cast<float>(k) / (half - 1);
+        const float x = -1.4f + 2.8f * t;
+        const float y = -0.95f + 0.18f * std::min(1.f, mag * 8.f);
+        spectrum.vertex(x, y, 0.f);
+        spectrum.color(0.5f + 0.5f * t, 0.4f, 1.0f - 0.5f * t);
+      }
+    }
+
+    bool paintAt(double mx, double my) {
+      const float fx = static_cast<float>(mx);
+      const float fy = static_cast<float>(my);
+      if (fx < -1.2f || fx > 1.2f || fy < -0.05f || fy > 0.85f) return false;
+      const float u = (fx + 1.2f) / 2.4f;
+      int idx = static_cast<int>(u * TBL);
+      if (idx < 0) idx = 0;
+      if (idx >= TBL) idx = TBL - 1;
+      const float v = (fy - 0.40f) / 0.45f;
+      table[idx] = std::max(-1.f, std::min(1.f, v));
+      return true;
+    }
+
+    bool onMouseDown(const Mouse& m) override {
+      if (gui.usingInput()) return true;
+      const double mx = (m.x() / static_cast<double>(width()))  * 3.2 - 1.6;
+      const double my = 1.0 - (m.y() / static_cast<double>(height())) * 2.0;
+      if (paintAt(mx, my)) {
+        painting = true;
+        lastPaintX = mx; lastPaintY = my;
+      }
+      return true;
+    }
+    bool onMouseDrag(const Mouse& m) override {
+      if (!painting) return true;
+      const double mx = (m.x() / static_cast<double>(width()))  * 3.2 - 1.6;
+      const double my = 1.0 - (m.y() / static_cast<double>(height())) * 2.0;
+      paintAt(mx, my);
+      lastPaintX = mx; lastPaintY = my;
+      return true;
+    }
+    bool onMouseUp(const Mouse& /*m*/) override { painting = false; return true; }
+
+    void onDraw(Graphics& g) override {
+      g.clear(0.04f, 0.04f, 0.07f);
+      g.meshColor();
+      g.draw(tableMesh);
+      g.draw(drawZone);
+      g.draw(spectrum);
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.f * std::pow(2.f, (n - 69) / 12.f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
+      return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+      int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
+  };
+
+  ALLOLIB_WEB_MAIN(DrawableWavetableSynth)
   `,
   },
   {
     id: 'mat-waveshaper',
-    title: 'Waveshaper Distortion Explorer',
+    title: 'Waveshaper Distortion (Polyphonic)',
     description:
-    'Pure waveshaping: input -> arbitrary memoryless transfer function -> output. Pick the source (sine/saw/noise) and the curve (tanh/atan/hardclip/cubic/sin), then crank "drive" to push the signal into saturation. A memoryless nonlinearity generates harmonics at integer multiples of the input frequency — the moment any harmonic exceeds Nyquist it folds back as inharmonic aliasing. Toggle "oversample" to process at 4x sr (linear-upsample, shape, 4-tap FIR average, decimate). When on, both spectra are drawn: orange = aliased (1x shaping), white = clean (oversampled). The orange spikes above the white curve are exactly the aliasing artifacts the FIR removes. The yellow disc tracks the live input on the transfer curve.',
+      "Polyphonic waveshaping instrument — driven oscillator into memoryless transfer function (tanh/atan/hardclip/cubic/sin), per-voice ADSR, optional 4x oversampling per voice. Holding a chord stacks intermodulation: each pair of voices passes through the same nonlinearity, producing sum-and-difference frequencies between the notes — Buchla 259e-style timbre stage. The transfer-curve panel tracks the most-recently-triggered voice; the spectrum panel shows the aggregate audio mix.",
     category: 'mat-synthesis',
     subcategory: 'distortion',
     code: `/**
-   * Waveshaper Distortion Explorer — MAT200B Phase 2 (oversample upgrade)
+   * Waveshaper Distortion (Polyphonic) — MAT200B v0.13 refactor
    *
-   * Memoryless nonlinearity y = f(drive * x). Aliasing in 1x processing
-   * is the central pedagogical point: any frequency content the shaper
-   * generates above Nyquist folds back. With 'oversample' on we run the
-   * shaper at 4x sr (linear interpolation up, shape, 4-tap boxcar FIR
-   * LPF, decimate by 4). The boxcar is a simple but valid decimation
-   * filter for demonstration purposes.
+   * Each key triggers a WaveshaperVoice with its own oscillator (sine,
+   * saw, or noise), drive, transfer function (tanh/atan/hardclip/cubic/
+   * sin), output gain, optional 4x oversampling, and ADSR. Holding a
+   * chord stacks intermodulation: every pair of voices passes through
+   * the same memoryless nonlinearity, producing sum-and-difference
+   * frequencies between the notes — Buchla 259e timbre stage.
    *
-   * Source menu: sine / saw / noise.
-   * Shape menu: tanh / atan / hardclip / cubic / sin.
+   *   ZXCVBNM = C3..B3   ASDFGHJ = C4..B4   QWERTYU = C5..B5
    *
-   * Visual:
-   *   transfer curve (top) with a yellow disc tracking the live input.
-   *   input + output waveforms (middle).
-   *   spectrum (bottom): when oversample is on, BOTH the aliased
-   *   (orange) and clean (white) spectra are drawn — the orange spikes
-   *   above the white curve are the folded-back harmonics. When
-   *   oversample is off, only the orange spectrum is drawn.
+   *   left panel   — transfer curve y = f(drive*x), tracks most-recent
+   *                  voice; cursor disc = its current input value
+   *   right panel  — magnitude spectrum of the audio mix
+   *   per-voice    — small bar at slot Y showing voice output level
    */
 
   #include "al_playground_compat.hpp"
-  #include "Gamma/Oscillator.h"
-  #include "Gamma/Noise.h"
 
   #include <array>
   #include <atomic>
   #include <cmath>
+  #include <cstdlib>
 
   #ifndef M_PI
   #define M_PI 3.14159265358979323846
@@ -2829,248 +2799,248 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  class Waveshaper : public App {
-  public:
-  ParameterBool playing    {"playing",    "", true};
-  ParameterBool oversample {"oversample", "", true};
-  Parameter     freq       {"freq",       "", 220.0f, 50.0f, 2000.0f};
-  Parameter     drive      {"drive",      "",   2.0f,  0.1f,  20.0f};
-  Parameter     output     {"output",     "",   0.30f, 0.0f,  1.0f};
-  ParameterMenu source     {"source",     ""};
-  ParameterMenu shape      {"shape",      ""};
+  static std::atomic<float> gLastVoiceX{0.f};
+  static std::atomic<int>   gLastShape{0};
+  static std::atomic<float> gLastDrive{2.f};
 
-  ControlGUI gui;
-
-  gam::Sine<>       oscSine;
-  gam::Saw<>        oscSaw;
-  gam::NoiseWhite<> noise;
-
-  static constexpr int N = 256;
-  std::array<float, N> blockIn{};
-  std::array<float, N> blockAliased{};
-  std::array<float, N> blockClean{};
-  std::atomic<int> blockW{0};
-
-  std::atomic<float> cursorIn{0.0f};
-
-  // Audio-thread state for 4x linear interpolation.
-  float prevIn = 0.0f;
-
-  Mesh transferCurve, waveIn, waveOut, spectrumA, spectrumC, gridMesh, cursorDisc;
-
-  static float shapeFn(int s, float x) {
-    switch (s) {
+  static inline float shape(float x, int kind) {
+    switch (kind) {
       case 0: return std::tanh(x);
-      case 1: return (2.0f / static_cast<float>(M_PI)) * std::atan(x);
-      case 2: return std::max(-1.0f, std::min(1.0f, x));
-      case 3: {
-        const float y = std::max(-1.5f, std::min(1.5f, x));
-        return y - (y * y * y) / 3.0f;
+      case 1: return (2.f / static_cast<float>(M_PI)) * std::atan(x);
+      case 2: { if (x >  1.f) return  1.f; if (x < -1.f) return -1.f; return x; }
+      case 3: { float c = x - (x*x*x) / 3.f; if (c >  1.f) c =  1.f; if (c < -1.f) c = -1.f; return c; }
+      default: return std::sin(x);
+    }
+  }
+
+  class WaveshaperVoice : public SynthVoice {
+  public:
+    gam::Sine<> osc;
+    gam::Saw<>  saw;
+    gam::ADSR<> env;
+    Mesh bar;
+    float lastOut = 0.f;
+
+    void init() override {
+      createInternalTriggerParameter("freq",       220.f,  20.f, 4000.f);
+      createInternalTriggerParameter("source",     0.f,    0.f,  2.f);
+      createInternalTriggerParameter("shape",      0.f,    0.f,  4.f);
+      createInternalTriggerParameter("drive",      2.f,    0.1f, 10.f);
+      createInternalTriggerParameter("output",     0.25f,  0.f,  1.f);
+      createInternalTriggerParameter("oversample", 0.f,    0.f,  1.f);
+      createInternalTriggerParameter("attack",     0.005f, 0.001f, 1.f);
+      createInternalTriggerParameter("release",    0.25f,  0.01f, 4.f);
+
+      env.attack(0.005f);
+      env.decay(0.05f);
+      env.sustain(0.85f);
+      env.release(0.25f);
+      bar.primitive(Mesh::TRIANGLES);
+    }
+
+    void onTriggerOn() override {
+      env.attack(getInternalParameterValue("attack"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
+      osc.freq(getInternalParameterValue("freq"));
+      saw.freq(getInternalParameterValue("freq"));
+      gLastShape.store(static_cast<int>(getInternalParameterValue("shape")));
+      gLastDrive.store(getInternalParameterValue("drive"));
+    }
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      const int   src    = static_cast<int>(getInternalParameterValue("source"));
+      const int   shp    = static_cast<int>(getInternalParameterValue("shape"));
+      const float drive  = getInternalParameterValue("drive");
+      const float outAmp = getInternalParameterValue("output");
+      const bool  os     = getInternalParameterValue("oversample") > 0.5f;
+      const float fs     = io.framesPerSecond();
+
+      osc.freq(getInternalParameterValue("freq"));
+      saw.freq(getInternalParameterValue("freq"));
+
+      while (io()) {
+        float raw = 0.f;
+        switch (src) {
+          case 0: raw = osc(); break;
+          case 1: raw = saw(); break;
+          default: raw = -1.f + 2.f * (static_cast<float>(std::rand()) / RAND_MAX); break;
+        }
+        float s;
+        if (os) {
+          float u0 = raw, u1 = 0.5f * raw, u2 = 0.f, u3 = 0.5f * raw;
+          float y0 = shape(drive * u0, shp);
+          float y1 = shape(drive * u1, shp);
+          float y2 = shape(drive * u2, shp);
+          float y3 = shape(drive * u3, shp);
+          s = 0.25f * (y0 + y1 + y2 + y3);
+          (void)fs;
+        } else {
+          s = shape(drive * raw, shp);
+        }
+        const float e = env();
+        const float v = s * e * outAmp;
+        io.out(0) += v;
+        io.out(1) += v;
+        lastOut = v;
+        gLastVoiceX.store(drive * raw);
       }
-      case 4: return std::sin((static_cast<float>(M_PI) * 0.5f) *
-                              std::max(-1.0f, std::min(1.0f, x)));
-      default: return std::tanh(x);
-    }
-  }
-
-  void onInit() override {
-    source.setElements({"sine", "saw", "noise"});
-    source.set(0);
-    shape.setElements({"tanh", "atan", "hardclip", "cubic", "sin"});
-    shape.set(0);
-    gui << playing << oversample << freq << drive << output << source << shape;
-  }
-
-  void onCreate() override {
-    gui.init();
-    nav().pos(0, 0, 4.0f);
-  }
-
-  inline float nextSource(int src) {
-    switch (src) {
-      case 0: return oscSine();
-      case 1: return oscSaw();
-      case 2: return noise() * 0.7f;
-      default: return oscSine();
-    }
-  }
-
-  void onSound(AudioIOData& io) override {
-    if (!playing.get()) {
-      while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-      return;
-    }
-    oscSine.freq(freq.get());
-    oscSaw.freq(freq.get());
-    const float dr  = drive.get();
-    const float og  = output.get();
-    const int   sh  = shape.get();
-    const int   src = source.get();
-    const bool  os  = oversample.get();
-
-    while (io()) {
-      const float xin = nextSource(src);
-
-      // Aliased (1x) — always computed as the spectrum reference.
-      const float yAliased = shapeFn(sh, dr * xin);
-
-      // Clean path: 4x linear-upsample, shape each, 4-tap boxcar
-      // FIR LPF, decimate. Boxcar averaging is the simplest valid
-      // decimation filter — adequate for the pedagogical comparison.
-      float yClean;
-      if (os) {
-        const float u0 = 0.75f * prevIn + 0.25f * xin;
-        const float u1 = 0.50f * prevIn + 0.50f * xin;
-        const float u2 = 0.25f * prevIn + 0.75f * xin;
-        const float u3 = xin;
-        const float s0 = shapeFn(sh, dr * u0);
-        const float s1 = shapeFn(sh, dr * u1);
-        const float s2 = shapeFn(sh, dr * u2);
-        const float s3 = shapeFn(sh, dr * u3);
-        yClean = 0.25f * (s0 + s1 + s2 + s3);
-      } else {
-        yClean = yAliased;
-      }
-      prevIn = xin;
-
-      const float y = (os ? yClean : yAliased) * og;
-      io.out(0) = y;
-      io.out(1) = y;
-
-      const int w = blockW.load(std::memory_order_relaxed);
-      blockIn[w]      = xin;
-      blockAliased[w] = yAliased;
-      blockClean[w]   = yClean;
-      blockW.store((w + 1) % N, std::memory_order_release);
-
-      cursorIn.store(xin, std::memory_order_relaxed);
-    }
-  }
-
-  void computeSpectrum(std::array<float, N / 2>& mag, const std::array<float, N>& srcBuf) {
-    std::array<float, N> x{};
-    for (int i = 0; i < N; ++i) {
-      const float win = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * i / (N - 1)));
-      x[i] = srcBuf[i] * win;
-    }
-    for (int k = 0; k < N / 2; ++k) {
-      float re = 0.f, im = 0.f;
-      const float ang = -2.0f * static_cast<float>(M_PI) * k / N;
-      for (int n = 0; n < N; ++n) {
-        re += x[n] * std::cos(ang * n);
-        im += x[n] * std::sin(ang * n);
-      }
-      mag[k] = std::sqrt(re * re + im * im) * (2.0f / N);
-    }
-  }
-
-  void onAnimate(double /*dt*/) override {
-    const int sh = shape.get();
-    const float dr = drive.get();
-    const bool  os = oversample.get();
-
-    // Transfer curve sampled at 240 points across [-1, +1] input.
-    transferCurve.reset();
-    transferCurve.primitive(Mesh::LINE_STRIP);
-    constexpr int TC = 240;
-    for (int i = 0; i < TC; ++i) {
-      const float xin = -1.0f + 2.0f * i / (TC - 1);
-      const float y   = shapeFn(sh, dr * xin);
-      const float xx = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
-      const float yy = 0.30f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.32f;
-      transferCurve.vertex(xx, yy, 0.f);
-      transferCurve.color(0.4f, 0.95f, 0.6f);
+      if (env.done()) free();
     }
 
-    // Yellow cursor disc on transfer curve at the current input value.
-    {
-      const float xin = std::max(-1.0f, std::min(1.0f,
-                          cursorIn.load(std::memory_order_relaxed)));
-      const float y   = shapeFn(sh, dr * xin);
-      const float cx  = -1.4f + (xin + 1.f) * 0.5f * 2.8f;
-      const float cy  = 0.4f + (std::max(-1.f, std::min(1.f, y)) + 1.f) * 0.5f;
-      cursorDisc.reset();
-      cursorDisc.primitive(Mesh::TRIANGLES);
-      const int seg = 16;
-      const float radius = 0.04f;
-      for (int s = 0; s < seg; ++s) {
-        const float a0 = 2.f * static_cast<float>(M_PI) * s       / seg;
-        const float a1 = 2.f * static_cast<float>(M_PI) * (s + 1) / seg;
-        cursorDisc.vertex(cx, cy, 0.f);
-        cursorDisc.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
-        cursorDisc.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
-        cursorDisc.color(1.0f, 0.9f, 0.2f);
-        cursorDisc.color(1.0f, 0.9f, 0.2f);
-        cursorDisc.color(1.0f, 0.9f, 0.2f);
-      }
+    void onProcess(Graphics& g) override {
+      const int slot = id() % 7;
+      const float yOff = -0.65f + slot * 0.05f;
+      const float w = 0.18f * std::min(1.f, std::abs(lastOut) * 4.f);
+      bar.reset();
+      bar.primitive(Mesh::TRIANGLES);
+      auto quad = [&](float x0, float y0, float x1, float y1, float r, float gC, float b) {
+        bar.vertex(x0,y0,0); bar.color(r,gC,b);
+        bar.vertex(x1,y0,0); bar.color(r,gC,b);
+        bar.vertex(x1,y1,0); bar.color(r,gC,b);
+        bar.vertex(x0,y0,0); bar.color(r,gC,b);
+        bar.vertex(x1,y1,0); bar.color(r,gC,b);
+        bar.vertex(x0,y1,0); bar.color(r,gC,b);
+      };
+      quad(1.20f, yOff, 1.20f + w, yOff + 0.025f, 1.f, 0.5f, 0.3f);
+      g.meshColor();
+      g.draw(bar);
     }
-
-    // Input + output waveforms.
-    const int w = blockW.load(std::memory_order_acquire);
-    waveIn.reset(); waveOut.reset();
-    waveIn.primitive(Mesh::LINE_STRIP);
-    waveOut.primitive(Mesh::LINE_STRIP);
-    for (int i = 0; i < N; ++i) {
-      const int idx = (w + i) % N;
-      const float xx = -1.4f + (static_cast<float>(i) / (N - 1)) * 2.8f;
-      waveIn.vertex (xx, blockIn[idx]  * 0.18f - 0.10f, 0.f);
-      waveIn.color(0.5f, 0.7f, 0.95f);
-      const float outSamp = os ? blockClean[idx] : blockAliased[idx];
-      waveOut.vertex(xx, outSamp * 0.18f - 0.45f, 0.f);
-      waveOut.color(0.95f, 0.6f, 0.35f);
-    }
-
-    // Aliased (orange) — always drawn.
-    spectrumA.reset();
-    spectrumA.primitive(Mesh::LINE_STRIP);
-    {
-      std::array<float, N / 2> magA{};
-      computeSpectrum(magA, blockAliased);
-      for (int k = 0; k < N / 2; ++k) {
-        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-        const float h  = std::min(0.7f, magA[k] * 4.0f);
-        spectrumA.vertex(xx, -1.0f + h, 0.f);
-        spectrumA.color(0.95f, 0.55f, 0.25f);
-      }
-    }
-    // Clean (white) — only when oversample is on.
-    spectrumC.reset();
-    if (os) {
-      spectrumC.primitive(Mesh::LINE_STRIP);
-      std::array<float, N / 2> magC{};
-      computeSpectrum(magC, blockClean);
-      for (int k = 0; k < N / 2; ++k) {
-        const float xx = -1.4f + (static_cast<float>(k) / (N / 2 - 1)) * 2.8f;
-        const float h  = std::min(0.7f, magC[k] * 4.0f);
-        spectrumC.vertex(xx, -1.0f + h, 0.f);
-        spectrumC.color(0.95f, 0.95f, 0.95f);
-      }
-    }
-
-    gridMesh.reset();
-    gridMesh.primitive(Mesh::LINES);
-    gridMesh.vertex(-1.4f, 0.4f, 0.f); gridMesh.vertex(1.4f, 0.4f, 0.f);
-    gridMesh.vertex(-1.4f,-0.10f,0.f); gridMesh.vertex(1.4f,-0.10f,0.f);
-    gridMesh.vertex(-1.4f,-0.45f,0.f); gridMesh.vertex(1.4f,-0.45f,0.f);
-    gridMesh.vertex(-1.4f,-1.00f,0.f); gridMesh.vertex(1.4f,-1.00f,0.f);
-    for (int k = 0; k < 8; ++k) gridMesh.color(0.22f, 0.22f, 0.22f);
-  }
-
-  void onDraw(Graphics& g) override {
-    g.clear(0.04f, 0.05f, 0.06f);
-    g.meshColor();
-    g.draw(gridMesh);
-    g.draw(transferCurve);
-    g.draw(cursorDisc);
-    g.draw(waveIn);
-    g.draw(waveOut);
-    g.draw(spectrumA);
-    g.draw(spectrumC);
-    gui.draw(g);
-  }
   };
 
-  ALLOLIB_WEB_MAIN(Waveshaper)
+  class WaveshaperSynth : public App {
+  public:
+    ParameterBool playing{"playing", "", true};
+    ControlGUI    gui;
+    SynthGUIManager<WaveshaperVoice> synthManager{"Waveshaper"};
+
+    static constexpr int N = 256;
+    std::array<float, N> mixBuf{};
+    std::atomic<int> mixW{0};
+
+    Mesh curveMesh, cursorDisc, spectrum, panelFrame;
+
+    void onInit() override { gui << playing; }
+
+    void onCreate() override {
+      gui.init();
+      nav().pos(0, 0, 4.0f);
+    }
+
+    void onSound(AudioIOData& io) override {
+      if (!playing.get()) {
+        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
+        return;
+      }
+      const int frames = io.framesPerBuffer();
+      for (int f = 0; f < frames; ++f) { io.out(0, f) = 0.f; io.out(1, f) = 0.f; }
+      synthManager.render(io);
+
+      int w = mixW.load(std::memory_order_relaxed);
+      for (int f = 0; f < frames; ++f) {
+        mixBuf[w] = 0.5f * (io.out(0, f) + io.out(1, f));
+        w = (w + 1) % N;
+      }
+      mixW.store(w, std::memory_order_release);
+    }
+
+    void onAnimate(double /*dt*/) override {
+      const int   shp   = gLastShape.load();
+      const float drive = gLastDrive.load();
+      const float xCur  = std::max(-3.f, std::min(3.f, gLastVoiceX.load()));
+
+      curveMesh.reset();
+      curveMesh.primitive(Mesh::LINE_STRIP);
+      const int curvePts = 200;
+      for (int i = 0; i < curvePts; ++i) {
+        const float u = -3.f + 6.f * (static_cast<float>(i) / (curvePts - 1));
+        const float v = shape(drive * (u / 3.f), shp);
+        const float x = -1.45f + 0.55f * (u / 3.f);
+        const float y =  0.10f + 0.55f * v;
+        curveMesh.vertex(x, y, 0.f);
+        curveMesh.color(0.4f, 0.95f, 1.f);
+      }
+
+      cursorDisc.reset();
+      cursorDisc.primitive(Mesh::TRIANGLES);
+      const float cx = -1.45f + 0.55f * std::max(-1.f, std::min(1.f, xCur / 3.f));
+      const float cy =  0.10f + 0.55f * shape(drive * std::max(-1.f, std::min(1.f, xCur / 3.f)), shp);
+      const float r = 0.025f;
+      const int   seg = 18;
+      for (int i = 0; i < seg; ++i) {
+        const float a0 = 2.f * static_cast<float>(M_PI) * i / seg;
+        const float a1 = 2.f * static_cast<float>(M_PI) * (i + 1) / seg;
+        cursorDisc.vertex(cx, cy, 0); cursorDisc.color(1.f, 0.5f, 0.3f);
+        cursorDisc.vertex(cx + r * std::cos(a0), cy + r * std::sin(a0), 0);
+        cursorDisc.color(1.f, 0.5f, 0.3f);
+        cursorDisc.vertex(cx + r * std::cos(a1), cy + r * std::sin(a1), 0);
+        cursorDisc.color(1.f, 0.5f, 0.3f);
+      }
+
+      const int wEnd = mixW.load(std::memory_order_acquire);
+      std::array<float, N> snap{};
+      for (int i = 0; i < N; ++i) snap[i] = mixBuf[(wEnd + i) % N];
+      spectrum.reset();
+      spectrum.primitive(Mesh::LINE_STRIP);
+      const int half = N / 2;
+      for (int k = 0; k < half; ++k) {
+        float r2 = 0.f, im = 0.f;
+        for (int n = 0; n < N; ++n) {
+          const float a = -2.f * static_cast<float>(M_PI) * k * n / N;
+          r2 += snap[n] * std::cos(a);
+          im += snap[n] * std::sin(a);
+        }
+        const float mag = std::sqrt(r2 * r2 + im * im) / N;
+        const float t = static_cast<float>(k) / (half - 1);
+        const float x = 0.30f + 1.10f * t;
+        const float y = -0.40f + 0.45f * std::min(1.f, mag * 8.f);
+        spectrum.vertex(x, y, 0.f);
+        spectrum.color(0.4f + 0.6f * t, 0.4f, 1.0f - 0.5f * t);
+      }
+
+      panelFrame.reset();
+      panelFrame.primitive(Mesh::LINES);
+      auto frame = [&](float x0, float y0, float x1, float y1) {
+        auto seg = [&](float ax, float ay, float bx, float by) {
+          panelFrame.vertex(ax, ay, 0); panelFrame.color(0.35f, 0.35f, 0.45f);
+          panelFrame.vertex(bx, by, 0); panelFrame.color(0.35f, 0.35f, 0.45f);
+        };
+        seg(x0, y0, x1, y0); seg(x1, y0, x1, y1);
+        seg(x1, y1, x0, y1); seg(x0, y1, x0, y0);
+      };
+      frame(-1.55f, -0.55f, -0.35f, 0.75f);
+      frame( 0.20f, -0.55f,  1.50f, 0.75f);
+    }
+
+    void onDraw(Graphics& g) override {
+      g.clear(0.04f, 0.04f, 0.07f);
+      g.meshColor();
+      g.draw(panelFrame);
+      g.draw(curveMesh);
+      g.draw(cursorDisc);
+      g.draw(spectrum);
+      synthManager.render(g);
+      gui.draw(g);
+    }
+
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float f = 440.f * std::pow(2.f, (n - 69) / 12.f);
+      synthManager.voice()->setInternalParameterValue("freq", f);
+      synthManager.triggerOn(n);
+      return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+      int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
+  };
+
+  ALLOLIB_WEB_MAIN(WaveshaperSynth)
   `,
   },
   {
@@ -3864,28 +3834,26 @@ ALLOLIB_WEB_MAIN(CombSwept)
   },
   {
     id: 'mat-granular-cloud',
-    title: 'Granular Cloud Visualizer',
+    title: 'Granular Cloud (Polyphonic)',
     description:
-      'Granular synthesis lab fed by a bundled CC0 loop. Each grain reads a Hann-windowed slice of the source at a randomized position and pitch shift. Visualization plots every active grain as a glowing dot in (current source position x semitone) space — pitch-shifted dots drift visibly faster or slower than unpitched ones because dot X = the grain\\u2019s CURRENT playhead, not its spawn position. Dot SIZE breathes with the Hann envelope amplitude. A faint horizontal source-envelope strip across the top maps each X coordinate back to the underlying audio. Density compensation (Parseval-style 1/sqrt(density*grainMs)) keeps level constant as overlap grows.',
+      "Polyphonic granular instrument: each key triggers a SynthVoice that spawns its own sub-cloud of up to 8 grains reading from a bundled CC0 loop, transposed to the note pitch. An outer ADSR wraps the whole sub-cloud so released keys finish their grains naturally. App-level source menu (drums/pad/mixed), playing gate, source-envelope strip, centerPos marker. Per-voice grain dots are hue-coded by transposeSt (rainbow over -24..+24 st). Holding a major chord lets you watch three independent sub-clouds breathe simultaneously, each reading the same source at a different transposition.",
     category: 'mat-synthesis',
     subcategory: 'granular',
     code: `/**
-   * Granular Cloud Visualizer — MAT200B granular synthesis (v0.13.x upgrade)
+   * Granular Cloud (Polyphonic) — MAT200B v0.13 refactor
    *
-   * Streams a bundled CC0 loop through a fixed-size pool of 32 grains.
-   * Each grain has a Hann envelope, randomized start position, pitch
-   * shift, and pan; advances by srcSR/hostSR per output sample.
+   * Each key spawns a GranularVoice — its own sub-cloud of up to 8
+   * Hann-windowed grains reading from a bundled CC0 loop. transposeSt =
+   * MIDI - 60, so the source is transposed up/down by the played
+   * interval. An outer ADSR wraps the sub-cloud so released keys finish
+   * their grains naturally rather than getting cut.
    *
-   * Upgrades:
-   *   - Density compensation: divide output by sqrt(density_hz * grain_ms*1e-3)
-   *     (Parseval-style; same pattern mat-granul-stretch uses) so density
-   *     1->50 Hz at 80 ms doesn't 4x the level.
-   *   - Grain dots TRAVEL: dot X = current grain playhead in source, not
-   *     just spawn position. Pitch-shifted grains have visible non-flat
-   *     drift slope, making pitch-vs-time decoupling obvious.
-   *   - Dot SIZE = current Hann envelope amplitude. Cloud breathes.
-   *   - Faint horizontal source-envelope strip across the top with a
-   *     gold centerPos marker, linking the scatter X axis to the audio.
+   *   ZXCVBNM = C3..B3   ASDFGHJ = C4..B4   QWERTYU = C5..B5
+   *
+   *   top strip      — source amplitude envelope (App-level, shared)
+   *   gold marker    — centerPos in the source
+   *   per-voice dots — grains at (current playhead x slot Y), hue-coded
+   *                    by transposeSt (rainbow over -24..+24 st)
    */
 
   #include "al_playground_compat.hpp"
@@ -3903,65 +3871,203 @@ ALLOLIB_WEB_MAIN(CombSwept)
 
   using namespace al;
 
-  class GranularCloud : public App {
+  static WebSamplePlayer* gCurrentSource = nullptr;
+
+  static float frand(float lo, float hi) {
+    const float u = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+    return lo + u * (hi - lo);
+  }
+
+  static void hsv1(float h, float& r, float& g, float& b) {
+    h = h - std::floor(h);
+    const float c = 1.f;
+    const float x = c * (1.f - std::abs(std::fmod(h * 6.f, 2.f) - 1.f));
+    if      (h < 1.f/6.f) { r = c; g = x; b = 0; }
+    else if (h < 2.f/6.f) { r = x; g = c; b = 0; }
+    else if (h < 3.f/6.f) { r = 0; g = c; b = x; }
+    else if (h < 4.f/6.f) { r = 0; g = x; b = c; }
+    else if (h < 5.f/6.f) { r = x; g = 0; b = c; }
+    else                  { r = c; g = 0; b = x; }
+  }
+
+  class GranularVoice : public SynthVoice {
   public:
-    ParameterMenu source         {"source",          ""};
-    ParameterBool playing        {"playing",         "", true};
-    Parameter     density_hz     {"density_hz",      "",  8.0f,  1.0f,  50.0f};
-    Parameter     grain_ms       {"grain_ms",        "", 80.0f, 10.0f, 500.0f};
-    Parameter     position_spread{"position_spread", "",  0.30f, 0.0f,   1.0f};
-    Parameter     centerPos      {"centerPos",       "",  0.30f, 0.0f,   1.0f};
-    Parameter     pitch_spread   {"pitch_spread",    "",  4.0f,  0.0f,  12.0f};
-    Parameter     pan_spread     {"pan_spread",      "",  0.60f, 0.0f,   1.0f};
-    Parameter     amp            {"amp",             "",  0.40f, 0.0f,   1.0f};
+    static constexpr int SUB = 8;
+
+    struct Grain {
+      bool   active = false;
+      double curFrame = 0.0;
+      int    dur = 1;
+      int    age = 0;
+      float  pitchRatio = 1.f;
+      float  pan = 0.f;
+    };
+    std::array<Grain, SUB> grains{};
+
+    gam::ADSR<> env;
+    double grainAccumulator = 0.0;
+
+    Mesh dots;
+
+    void init() override {
+      createInternalTriggerParameter("transposeSt", 0.f,   -36.f, 36.f);
+      createInternalTriggerParameter("centerPos",   0.30f,  0.f,   1.f);
+      createInternalTriggerParameter("posSpread",   0.20f,  0.f,   1.f);
+      createInternalTriggerParameter("density_hz",  10.f,   1.f,   50.f);
+      createInternalTriggerParameter("grain_ms",    80.f,  10.f,  500.f);
+      createInternalTriggerParameter("pitchSpread", 1.f,    0.f,  12.f);
+      createInternalTriggerParameter("panSpread",   0.40f,  0.f,   1.f);
+      createInternalTriggerParameter("attack",      0.05f,  0.001f, 2.f);
+      createInternalTriggerParameter("release",     0.40f,  0.01f, 4.f);
+
+      env.attack(0.05f);
+      env.decay(0.10f);
+      env.sustain(0.85f);
+      env.release(0.40f);
+      dots.primitive(Mesh::TRIANGLES);
+    }
+
+    int allocGrain() {
+      for (int i = 0; i < SUB; ++i) if (!grains[i].active) return i;
+      return -1;
+    }
+
+    void onTriggerOn() override {
+      env.attack(getInternalParameterValue("attack"));
+      env.release(getInternalParameterValue("release"));
+      env.reset();
+      grainAccumulator = 0.0;
+      for (auto& g : grains) g.active = false;
+    }
+    void onTriggerOff() override { env.release(); }
+
+    void onProcess(AudioIOData& io) override {
+      if (!gCurrentSource || !gCurrentSource->ready()) {
+        while (io()) { (void)env(); }
+        if (env.done()) free();
+        return;
+      }
+      const float fs       = io.framesPerSecond();
+      const float density  = getInternalParameterValue("density_hz");
+      const float grainMs  = getInternalParameterValue("grain_ms");
+      const float trans    = getInternalParameterValue("transposeSt");
+      const float center   = getInternalParameterValue("centerPos");
+      const float posSpr   = getInternalParameterValue("posSpread");
+      const float pitchSpr = getInternalParameterValue("pitchSpread");
+      const float panSpr   = getInternalParameterValue("panSpread");
+
+      const int srcFrames = gCurrentSource->frames();
+      const float srcSR   = gCurrentSource->sampleRate();
+      const double srRat  = static_cast<double>(srcSR) / static_cast<double>(fs);
+      const float baseRat = std::pow(2.f, trans / 12.f);
+      const int   grainSamples = std::max(1, static_cast<int>(grainMs * 0.001f * fs));
+      const float grainPeriod  = 1.f / std::max(0.5f, density);
+      const float comp = 1.f / std::sqrt(std::max(1e-3f, density * grainMs * 0.001f));
+
+      while (io()) {
+        grainAccumulator += 1.0 / fs;
+        while (grainAccumulator >= grainPeriod) {
+          grainAccumulator -= grainPeriod;
+          if (env.done()) break;
+          int idx = allocGrain();
+          if (idx >= 0) {
+            auto& g = grains[idx];
+            g.active = true;
+            g.dur = grainSamples;
+            g.age = 0;
+            float pos = center + frand(-posSpr, posSpr);
+            if (pos < 0.f) pos = 0.f; if (pos > 1.f) pos = 1.f;
+            g.curFrame = pos * srcFrames;
+            g.pitchRatio = baseRat * std::pow(2.f, frand(-pitchSpr, pitchSpr) / 12.f);
+            g.pan = frand(-panSpr, panSpr);
+          }
+        }
+
+        float l = 0.f, r = 0.f;
+        for (auto& g : grains) {
+          if (!g.active) continue;
+          const float t = static_cast<float>(g.age) / static_cast<float>(g.dur);
+          const float w = 0.5f - 0.5f * std::cos(2.f * static_cast<float>(M_PI) * t);
+          const float s = gCurrentSource->readInterp(0,
+                            static_cast<float>(g.curFrame));
+          const float panL = 0.5f * (1.f - g.pan);
+          const float panR = 0.5f * (1.f + g.pan);
+          l += s * w * panL;
+          r += s * w * panR;
+          g.curFrame += srRat * g.pitchRatio;
+          if (g.curFrame >= srcFrames) g.curFrame -= srcFrames;
+          g.age += 1;
+          if (g.age >= g.dur) g.active = false;
+        }
+        const float e = env();
+        io.out(0) += l * e * comp * 0.30f;
+        io.out(1) += r * e * comp * 0.30f;
+      }
+      if (env.done()) {
+        bool anyAlive = false;
+        for (auto& g : grains) if (g.active) { anyAlive = true; break; }
+        if (!anyAlive) free();
+      }
+    }
+
+    void onProcess(Graphics& g) override {
+      if (!gCurrentSource) return;
+      const float trans = getInternalParameterValue("transposeSt");
+      const float hue = (trans + 24.f) / 48.f;
+      float cr, cg, cb; hsv1(std::max(0.f, std::min(1.f, hue)), cr, cg, cb);
+
+      const int slot = id() % 7;
+      const float yOff = -0.2f + slot * 0.10f;
+      const int srcFrames = gCurrentSource->frames();
+
+      dots.reset();
+      dots.primitive(Mesh::TRIANGLES);
+      for (auto& gr : grains) {
+        if (!gr.active) continue;
+        const float u = static_cast<float>(gr.curFrame) / static_cast<float>(srcFrames);
+        const float t = static_cast<float>(gr.age) / static_cast<float>(gr.dur);
+        const float w = 0.5f - 0.5f * std::cos(2.f * static_cast<float>(M_PI) * t);
+        const float x = -1.4f + 2.8f * u;
+        const float y = yOff;
+        const float r = 0.012f + 0.030f * w;
+        const int seg = 6;
+        for (int i = 0; i < seg; ++i) {
+          const float a0 = 2.f * static_cast<float>(M_PI) * i / seg;
+          const float a1 = 2.f * static_cast<float>(M_PI) * (i + 1) / seg;
+          dots.vertex(x, y, 0); dots.color(cr, cg, cb);
+          dots.vertex(x + r * std::cos(a0), y + r * std::sin(a0), 0);
+          dots.color(cr, cg, cb);
+          dots.vertex(x + r * std::cos(a1), y + r * std::sin(a1), 0);
+          dots.color(cr, cg, cb);
+        }
+      }
+      g.meshColor();
+      g.draw(dots);
+    }
+  };
+
+  class GranularCloudSynth : public App {
+  public:
+    ParameterMenu source   {"source",    ""};
+    ParameterBool playing  {"playing",   "", true};
+    Parameter     centerPos{"centerPos", "", 0.30f, 0.f, 1.f};
 
     ControlGUI gui;
+    SynthGUIManager<GranularVoice> synthManager{"GranularCloud"};
 
     WebSamplePlayer drums, pad, mixed;
     WebSamplePlayer* current = &drums;
 
-    static constexpr int MAX_GRAINS = 32;
-
-    struct Grain {
-      bool   active     = false;
-      int    startFrame = 0;
-      double curFrame   = 0.0;
-      float  pitchRatio = 1.f;
-      int    dur        = 1;
-      int    age        = 0;
-      float  pan        = 0.f;
-      float  semitones  = 0.f;
-    };
-    std::array<Grain, MAX_GRAINS> grains{};
-
-    struct GrainSnap {
-      bool  active;
-      float curNorm;     // current playhead, normalized 0..1
-      float semitones;
-      float ageNorm;     // 0..1
-      float envAmp;      // Hann envelope at this age
-    };
-    std::array<GrainSnap, MAX_GRAINS> snap{};
-    std::atomic<int> snapPublish{0};
-
-    // Source envelope strip (top-of-canvas) — built once on source change.
     static constexpr int kEnvBins = 256;
     std::vector<float> envMin, envMax;
     int envSourceIdx = -1;
 
-    static float frand(float lo, float hi) {
-      const float u = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
-      return lo + u * (hi - lo);
-    }
-
-    Mesh cloudMesh, gridMesh, bandMesh, envStripMesh;
+    Mesh envStripMesh, centerMarker;
 
     void onInit() override {
       source.setElements({"drums", "pad", "mixed"});
       source.set(0);
-
-      gui << source << playing << density_hz << grain_ms << position_spread
-          << centerPos << pitch_spread << pan_spread << amp;
+      gui << source << playing << centerPos;
 
       source.registerChangeCallback([this](float v) {
         switch (static_cast<int>(v)) {
@@ -3969,252 +4075,101 @@ ALLOLIB_WEB_MAIN(CombSwept)
           case 1: current = &pad;   break;
           case 2: current = &mixed; break;
         }
-        for (auto& g : grains) g.active = false;
+        gCurrentSource = current;
         envSourceIdx = -1;
       });
     }
 
     void onCreate() override {
       gui.init();
+      nav().pos(0, 0, 4.0f);
       drums.load("drum_loop_120bpm.wav");
       pad.load("pad_loop.wav");
       mixed.load("mixed_loop.wav");
-      nav().pos(0, 0, 4.0f);
-    }
-
-    int allocGrain() {
-      for (int i = 0; i < MAX_GRAINS; ++i) {
-        if (!grains[i].active) return i;
-      }
-      return -1;
-    }
-
-    void buildEnvelopeStrip(WebSamplePlayer* sp) {
-      envMin.assign(kEnvBins, 0.0f);
-      envMax.assign(kEnvBins, 0.0f);
-      if (!sp || !sp->ready()) return;
-      const int frames = sp->frames();
-      if (frames <= 0) return;
-      const int per = std::max(1, frames / kEnvBins);
-      for (int b = 0; b < kEnvBins; ++b) {
-        const int s0 = (b * frames) / kEnvBins;
-        const int s1 = std::min(frames, s0 + per);
-        float lo = 1.0f, hi = -1.0f;
-        for (int i = s0; i < s1; ++i) {
-          const float v = sp->readInterp(0, static_cast<float>(i));
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
-        }
-        if (lo > hi) { lo = 0.f; hi = 0.f; }
-        envMin[b] = lo;
-        envMax[b] = hi;
-      }
+      gCurrentSource = current;
     }
 
     void onSound(AudioIOData& io) override {
-      if (!playing.get() || !current || !current->ready()) {
+      if (!playing.get()) {
         while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
         return;
       }
-      const float  sr        = io.framesPerSecond();
-      const float  srcSR     = current->sampleRate() > 1.f ? current->sampleRate() : sr;
-      const double rateRatio = static_cast<double>(srcSR) / static_cast<double>(sr);
-      const int    nFrames   = current->frames();
-      if (nFrames <= 1) {
-        while (io()) { io.out(0) = 0.f; io.out(1) = 0.f; }
-        return;
-      }
+      const int frames = io.framesPerBuffer();
+      for (int f = 0; f < frames; ++f) { io.out(0, f) = 0.f; io.out(1, f) = 0.f; }
+      synthManager.render(io);
+    }
 
-      const float density = density_hz.get();
-      const float gMs     = grain_ms.get();
-      const float posSpr  = position_spread.get();
-      const float ctr     = centerPos.get();
-      const float pSpr    = pitch_spread.get();
-      const float panSpr  = pan_spread.get();
-      const float gain    = amp.get();
-      const float pSpawn  = density / sr;
-      const int   gDur    = std::max(1, static_cast<int>(gMs * 0.001f * sr));
-
-      // Density compensation (Parseval-style).
-      const float densNorm = 1.0f / std::sqrt(std::max(1.0f, density * gMs * 0.001f));
-
-      while (io()) {
-        if (frand(0.f, 1.f) < pSpawn) {
-          const int slot = allocGrain();
-          if (slot >= 0) {
-            Grain& gr = grains[slot];
-            const float posNorm = std::min(0.999f, std::max(0.f,
-                ctr + frand(-posSpr, +posSpr)));
-            const float st = frand(-pSpr, +pSpr);
-            gr.active     = true;
-            gr.startFrame = static_cast<int>(posNorm * (nFrames - 1));
-            gr.curFrame   = static_cast<double>(gr.startFrame);
-            gr.pitchRatio = std::pow(2.0f, st / 12.0f);
-            gr.dur        = gDur;
-            gr.age        = 0;
-            gr.pan        = frand(-panSpr, +panSpr);
-            gr.semitones  = st;
-          }
+    void rebuildEnvStrip() {
+      if (!current || !current->ready()) return;
+      const int idx = (current == &drums) ? 0 : (current == &pad ? 1 : 2);
+      if (idx == envSourceIdx) return;
+      envSourceIdx = idx;
+      envMin.assign(kEnvBins, 0.f);
+      envMax.assign(kEnvBins, 0.f);
+      const int frames = current->frames();
+      for (int b = 0; b < kEnvBins; ++b) {
+        const int f0 = static_cast<int>((static_cast<long long>(b)     * frames) / kEnvBins);
+        const int f1 = static_cast<int>((static_cast<long long>(b + 1) * frames) / kEnvBins);
+        float lo =  1.f, hi = -1.f;
+        for (int f = f0; f < f1; ++f) {
+          const float s = current->read(0, f);
+          if (s < lo) lo = s;
+          if (s > hi) hi = s;
         }
-
-        float outL = 0.f, outR = 0.f;
-        for (auto& gr : grains) {
-          if (!gr.active) continue;
-          const float in = current->readInterp(0, static_cast<float>(gr.curFrame));
-          const float t = static_cast<float>(gr.age) / static_cast<float>(gr.dur);
-          const float w = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * t));
-          const float v = in * w;
-          const float panAng = (gr.pan + 1.0f) * 0.25f * static_cast<float>(M_PI);
-          outL += v * std::cos(panAng);
-          outR += v * std::sin(panAng);
-          gr.curFrame += static_cast<double>(gr.pitchRatio) * rateRatio;
-          if (gr.curFrame >= nFrames) gr.curFrame -= nFrames;
-          if (gr.curFrame < 0)        gr.curFrame += nFrames;
-          ++gr.age;
-          if (gr.age >= gr.dur) gr.active = false;
-        }
-
-        io.out(0) = outL * gain * densNorm;
-        io.out(1) = outR * gain * densNorm;
-      }
-
-      for (int i = 0; i < MAX_GRAINS; ++i) {
-        const Grain& gr = grains[i];
-        GrainSnap& s = snap[i];
-        s.active   = gr.active;
-        s.curNorm  = (nFrames > 1)
-            ? static_cast<float>(gr.curFrame) / static_cast<float>(nFrames - 1)
-            : 0.f;
-        s.semitones = gr.semitones;
-        const float t = (gr.dur > 0)
-            ? std::min(1.0f, static_cast<float>(gr.age) / static_cast<float>(gr.dur))
-            : 1.f;
-        s.ageNorm = t;
-        s.envAmp  = 0.5f * (1.0f - std::cos(2.0f * static_cast<float>(M_PI) * t));
-      }
-      snapPublish.fetch_add(1, std::memory_order_release);
-    }
-
-    static float startToX(float startNorm) {
-      return -1.4f + startNorm * 2.8f;
-    }
-    static float semiToY(float st) {
-      return -1.0f + (st + 12.0f) / 24.0f * 2.0f;
-    }
-
-    // Inline disc emitter — TRIANGLES fan centred at (cx,cy).
-    static void emitDisc(Mesh& m, float cx, float cy, float radius, int segs,
-                         float r, float gC, float b) {
-      for (int i = 0; i < segs; ++i) {
-        const float a0 = 2.0f * static_cast<float>(M_PI) * i       / segs;
-        const float a1 = 2.0f * static_cast<float>(M_PI) * (i + 1) / segs;
-        m.vertex(cx, cy, 0.f);
-        m.vertex(cx + radius * std::cos(a0), cy + radius * std::sin(a0), 0.f);
-        m.vertex(cx + radius * std::cos(a1), cy + radius * std::sin(a1), 0.f);
-        m.color(r, gC, b); m.color(r, gC, b); m.color(r, gC, b);
+        envMin[b] = lo; envMax[b] = hi;
       }
     }
 
     void onAnimate(double /*dt*/) override {
-      (void)snapPublish.load(std::memory_order_acquire);
+      rebuildEnvStrip();
 
-      // Rebuild source envelope strip if the source changed.
-      const int sIdx = static_cast<int>(source.get());
-      if (sIdx != envSourceIdx && current && current->ready()) {
-        buildEnvelopeStrip(current);
-        envSourceIdx = sIdx;
-      }
-
-      gridMesh.reset();
-      gridMesh.primitive(Mesh::LINES);
-      gridMesh.vertex(-1.4f, semiToY(0.f), 0.f);
-      gridMesh.vertex( 1.4f, semiToY(0.f), 0.f);
-      gridMesh.color(0.55f, 0.55f, 0.55f);
-      gridMesh.color(0.55f, 0.55f, 0.55f);
-      for (int st = -12; st <= 12; st += 6) {
-        if (st == 0) continue;
-        gridMesh.vertex(-1.4f, semiToY(static_cast<float>(st)), 0.f);
-        gridMesh.vertex( 1.4f, semiToY(static_cast<float>(st)), 0.f);
-        gridMesh.color(0.18f, 0.18f, 0.22f);
-        gridMesh.color(0.18f, 0.18f, 0.22f);
-      }
-      gridMesh.vertex(-1.4f, -1.0f, 0.f); gridMesh.vertex(1.4f, -1.0f, 0.f);
-      gridMesh.vertex(-1.4f,  1.0f, 0.f); gridMesh.vertex(1.4f,  1.0f, 0.f);
-      for (int k = 0; k < 4; ++k) gridMesh.color(0.25f, 0.25f, 0.30f);
-
-      bandMesh.reset();
-      bandMesh.primitive(Mesh::LINES);
-      const float ctr   = centerPos.get();
-      const float spr   = position_spread.get();
-      auto clamp01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
-      const float xL    = startToX(clamp01(ctr - spr));
-      const float xC    = startToX(clamp01(ctr));
-      const float xR    = startToX(clamp01(ctr + spr));
-      auto vline = [&](float x, float r, float gg, float b) {
-        bandMesh.vertex(x, -1.0f, 0.f);
-        bandMesh.vertex(x,  1.0f, 0.f);
-        bandMesh.color(r, gg, b);
-        bandMesh.color(r, gg, b);
-      };
-      vline(xL, 0.40f, 0.65f, 0.90f);
-      vline(xC, 0.95f, 0.95f, 0.45f);
-      vline(xR, 0.40f, 0.65f, 0.90f);
-
-      // Faint horizontal source-envelope strip across the top.
       envStripMesh.reset();
       envStripMesh.primitive(Mesh::LINES);
-      if (static_cast<int>(envMin.size()) == kEnvBins) {
-        const float stripY  = 0.85f;
-        const float stripH  = 0.08f;
-        for (int i = 0; i < kEnvBins; ++i) {
-          const float xx = -1.4f + (static_cast<float>(i) / (kEnvBins - 1)) * 2.8f;
-          envStripMesh.vertex(xx, stripY + envMin[i] * stripH, 0.f);
-          envStripMesh.color(0.35f, 0.50f, 0.65f);
-          envStripMesh.vertex(xx, stripY + envMax[i] * stripH, 0.f);
-          envStripMesh.color(0.35f, 0.50f, 0.65f);
+      if (envSourceIdx >= 0) {
+        for (int b = 0; b < kEnvBins; ++b) {
+          const float t = static_cast<float>(b) / (kEnvBins - 1);
+          const float x = -1.4f + 2.8f * t;
+          const float yLo = 0.65f + 0.20f * envMin[b];
+          const float yHi = 0.65f + 0.20f * envMax[b];
+          envStripMesh.vertex(x, yLo, 0); envStripMesh.color(0.4f, 0.6f, 0.9f);
+          envStripMesh.vertex(x, yHi, 0); envStripMesh.color(0.4f, 0.6f, 0.9f);
         }
-        // Vertical centerPos marker on the strip (gold).
-        const float cx = startToX(clamp01(ctr));
-        envStripMesh.vertex(cx, stripY - stripH * 1.3f, 0.f);
-        envStripMesh.color(0.95f, 0.80f, 0.25f);
-        envStripMesh.vertex(cx, stripY + stripH * 1.3f, 0.f);
-        envStripMesh.color(0.95f, 0.80f, 0.25f);
       }
 
-      cloudMesh.reset();
-      cloudMesh.primitive(Mesh::TRIANGLES);
-      for (int i = 0; i < MAX_GRAINS; ++i) {
-        const GrainSnap& s = snap[i];
-        if (!s.active) continue;
-        // Dots TRAVEL: x = current playhead position, not just spawn.
-        const float px = startToX(s.curNorm);
-        const float py = semiToY(s.semitones);
-        const float bright = std::max(0.0f, 1.0f - s.ageNorm);
-        const float r  = 0.20f + 0.80f * bright;
-        const float gC = 0.10f + 0.85f * bright * bright;
-        const float b  = 0.05f + 0.40f * bright * bright * bright;
-        // Dot SIZE = current Hann envelope amplitude (breathes).
-        const float radius = 0.012f + 0.045f * s.envAmp;
-        emitDisc(cloudMesh, px, py, radius, 14, r, gC, b);
-      }
+      centerMarker.reset();
+      centerMarker.primitive(Mesh::LINES);
+      const float cx = -1.4f + 2.8f * std::max(0.f, std::min(1.f, centerPos.get()));
+      centerMarker.vertex(cx, 0.45f, 0); centerMarker.color(1.f, 0.85f, 0.2f);
+      centerMarker.vertex(cx, 0.85f, 0); centerMarker.color(1.f, 0.85f, 0.2f);
     }
 
     void onDraw(Graphics& g) override {
       g.clear(0.04f, 0.04f, 0.07f);
       g.meshColor();
-      g.draw(gridMesh);
       g.draw(envStripMesh);
-      g.draw(bandMesh);
-      g.draw(cloudMesh);
+      g.draw(centerMarker);
+      synthManager.render(g);
       gui.draw(g);
     }
 
-    bool onMouseDown(const Mouse& /*m*/) override { return false; }
-    bool onMouseDrag(const Mouse& /*m*/) override { return false; }
-    bool onMouseUp  (const Mouse& /*m*/) override { return false; }
+    bool onKeyDown(const Keyboard& k) override {
+      if (gui.usingInput()) return true;
+      int n = asciiToMIDI(k.key());
+      if (n <= 0) return true;
+      const float st = static_cast<float>(n - 60);
+      synthManager.voice()->setInternalParameterValue("transposeSt", st);
+      synthManager.voice()->setInternalParameterValue("centerPos",   centerPos.get());
+      synthManager.triggerOn(n);
+      return true;
+    }
+    bool onKeyUp(const Keyboard& k) override {
+      int n = asciiToMIDI(k.key());
+      if (n > 0) synthManager.triggerOff(n);
+      return true;
+    }
   };
 
-  ALLOLIB_WEB_MAIN(GranularCloud)
+  ALLOLIB_WEB_MAIN(GranularCloudSynth)
   `,
   },
   {
